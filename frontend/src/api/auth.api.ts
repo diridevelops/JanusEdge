@@ -58,3 +58,13 @@ export async function updateTimezone(
   const res = await apiClient.put<User>('/auth/timezone', { timezone });
   return res.data;
 }
+
+/** Update the current user's display timezone. */
+export async function updateDisplayTimezone(
+  displayTimezone: string
+): Promise<User> {
+  const res = await apiClient.put<User>('/auth/display-timezone', {
+    display_timezone: displayTimezone,
+  });
+  return res.data;
+}

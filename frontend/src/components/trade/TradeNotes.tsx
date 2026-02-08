@@ -35,7 +35,8 @@ export function TradeNotes({
     setIsSaving(true);
     try {
       await updateTrade(tradeId, {
-        notes: JSON.stringify({ pre_trade: preTrade, post_trade: postTrade }),
+        pre_trade_notes: preTrade || null,
+        post_trade_notes: postTrade || null,
       });
       addToast('success', 'Notes saved');
       setIsEditing(false);

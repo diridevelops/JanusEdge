@@ -3,6 +3,7 @@ export interface User {
   id: string;
   username: string;
   timezone: string;
+  display_timezone: string;
   created_at: string;
 }
 

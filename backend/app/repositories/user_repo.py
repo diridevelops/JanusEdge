@@ -73,3 +73,28 @@ class UserRepository(BaseRepository):
                 }
             },
         )
+
+    def update_display_timezone(
+        self, user_id: str, display_timezone: str
+    ) -> bool:
+        """
+        Update a user's display timezone.
+
+        Parameters:
+            user_id: The user's ObjectId string.
+            display_timezone: New display timezone.
+
+        Returns:
+            True if updated successfully.
+        """
+        from app.utils.datetime_utils import utc_now
+
+        return self.update_one(
+            user_id,
+            {
+                "$set": {
+                    "display_timezone": display_timezone,
+                    "updated_at": utc_now(),
+                }
+            },
+        )

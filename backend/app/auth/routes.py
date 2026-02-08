@@ -13,6 +13,7 @@ from app.auth.schemas import (
     RegisterSchema,
     ChangePasswordSchema,
     UpdateTimezoneSchema,
+    UpdateDisplayTimezoneSchema,
 )
 from app.auth.service import AuthService
 from app.utils.errors import ValidationError
@@ -22,6 +23,7 @@ register_schema = RegisterSchema()
 login_schema = LoginSchema()
 change_password_schema = ChangePasswordSchema()
 update_timezone_schema = UpdateTimezoneSchema()
+update_display_timezone_schema = UpdateDisplayTimezoneSchema()
 
 
 @auth_bp.route("/health", methods=["GET"])
@@ -161,5 +163,35 @@ def update_timezone():
     profile = auth_service.update_timezone(
         user_id=user_id,
         timezone=validated["timezone"],
+    )
+    return jsonify(profile), 200
+
+
+@auth_bp.route("/display-timezone", methods=["PUT"])
+@jwt_required()
+def update_display_timezone():
+    """
+    Update the current user's display timezone.
+
+    Expects JSON: {display_timezone}
+    Returns: {user}
+    """
+    data = request.get_json()
+    if not data:
+        raise ValidationError("Request body is required.")
+
+    try:
+        validated = update_display_timezone_schema.load(
+            data
+        )
+    except MarshmallowError as e:
+        raise ValidationError(
+            "Validation failed.", details=e.messages
+        )
+
+    user_id = get_jwt_identity()
+    profile = auth_service.update_display_timezone(
+        user_id=user_id,
+        display_timezone=validated["display_timezone"],
     )
     return jsonify(profile), 200

@@ -69,6 +69,7 @@ class AuthService:
                 "id": user_id,
                 "username": username,
                 "timezone": timezone,
+                "display_timezone": timezone,
             },
         }
 
@@ -111,6 +112,10 @@ class AuthService:
                 "id": user_id,
                 "username": user["username"],
                 "timezone": user["timezone"],
+                "display_timezone": user.get(
+                    "display_timezone",
+                    user["timezone"],
+                ),
             },
         }
 
@@ -135,6 +140,10 @@ class AuthService:
             "id": str(user["_id"]),
             "username": user["username"],
             "timezone": user["timezone"],
+            "display_timezone": user.get(
+                "display_timezone",
+                user["timezone"],
+            ),
         }
 
     def change_password(
@@ -212,4 +221,47 @@ class AuthService:
             "id": str(user["_id"]),
             "username": user["username"],
             "timezone": timezone,
+            "display_timezone": user.get(
+                "display_timezone",
+                timezone,
+            ),
+        }
+
+    def update_display_timezone(
+        self,
+        user_id: str,
+        display_timezone: str,
+    ) -> dict:
+        """
+        Update a user's display timezone.
+
+        Parameters:
+            user_id: The user's ObjectId string.
+            display_timezone: New display timezone.
+
+        Returns:
+            Updated user profile dict.
+
+        Raises:
+            AuthenticationError: If user not found.
+            ValidationError: If timezone invalid.
+        """
+        if not is_valid_timezone(display_timezone):
+            raise ValidationError(
+                f"Invalid timezone: {display_timezone}"
+            )
+
+        user = self.user_repo.find_by_id(user_id)
+        if not user:
+            raise AuthenticationError("User not found.")
+
+        self.user_repo.update_display_timezone(
+            user_id, display_timezone
+        )
+
+        return {
+            "id": str(user["_id"]),
+            "username": user["username"],
+            "timezone": user["timezone"],
+            "display_timezone": display_timezone,
         }

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { changePassword, updateTimezone } from '../api/auth.api';
+import { changePassword, updateDisplayTimezone, updateTimezone } from '../api/auth.api';
 import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
 
@@ -36,6 +36,12 @@ export function SettingsPage() {
   const [timezone, setTimezone] = useState(user?.timezone ?? 'America/New_York');
   const [tzLoading, setTzLoading] = useState(false);
 
+  // Display timezone
+  const [displayTimezone, setDisplayTimezone] = useState(
+    user?.display_timezone ?? user?.timezone ?? 'America/New_York'
+  );
+  const [dtzLoading, setDtzLoading] = useState(false);
+
   async function handleChangePassword(e: React.FormEvent) {
     e.preventDefault();
     if (newPassword !== confirmPassword) {
@@ -67,7 +73,7 @@ export function SettingsPage() {
     setTzLoading(true);
     try {
       await updateTimezone(timezone);
-      addToast('success', 'Timezone updated successfully.');
+      addToast('success', 'Trading timezone updated successfully.');
       refreshProfile();
     } catch (err: unknown) {
       const message =
@@ -75,6 +81,22 @@ export function SettingsPage() {
       addToast('error', message);
     } finally {
       setTzLoading(false);
+    }
+  }
+
+  async function handleUpdateDisplayTimezone(e: React.FormEvent) {
+    e.preventDefault();
+    setDtzLoading(true);
+    try {
+      await updateDisplayTimezone(displayTimezone);
+      addToast('success', 'Display timezone updated successfully.');
+      refreshProfile();
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : 'Failed to update display timezone.';
+      addToast('error', message);
+    } finally {
+      setDtzLoading(false);
     }
   }
 
@@ -90,14 +112,18 @@ export function SettingsPage() {
       {/* Profile info */}
       <div className="card">
         <h2 className="text-sm font-semibold text-gray-700 mb-3">Profile</h2>
-        <div className="grid grid-cols-2 gap-4 text-sm">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
           <div>
             <span className="text-gray-500">Username</span>
             <p className="font-medium text-gray-900">{user?.username ?? '—'}</p>
           </div>
           <div>
-            <span className="text-gray-500">Timezone</span>
+            <span className="text-gray-500">Trading Timezone</span>
             <p className="font-medium text-gray-900">{user?.timezone ?? '—'}</p>
+          </div>
+          <div>
+            <span className="text-gray-500">Display Timezone</span>
+            <p className="font-medium text-gray-900">{user?.display_timezone ?? '—'}</p>
           </div>
         </div>
       </div>
@@ -155,11 +181,14 @@ export function SettingsPage() {
         </form>
       </div>
 
-      {/* Timezone */}
+      {/* Trading Timezone */}
       <div className="card">
         <h2 className="text-sm font-semibold text-gray-700 mb-4">
           Trading Timezone
         </h2>
+        <p className="text-xs text-gray-500 mb-3">
+          Used to interpret timestamps from platforms that don't include timezone info (e.g. NinjaTrader).
+        </p>
         <form onSubmit={handleUpdateTimezone} className="space-y-4">
           <div>
             <label htmlFor="timezone" className="block text-sm font-medium text-gray-700">
@@ -177,7 +206,37 @@ export function SettingsPage() {
             </select>
           </div>
           <button type="submit" className="btn-primary" disabled={tzLoading}>
-            {tzLoading ? 'Saving…' : 'Update Timezone'}
+            {tzLoading ? 'Saving…' : 'Update Trading Timezone'}
+          </button>
+        </form>
+      </div>
+
+      {/* Display Timezone */}
+      <div className="card">
+        <h2 className="text-sm font-semibold text-gray-700 mb-4">
+          Display Timezone
+        </h2>
+        <p className="text-xs text-gray-500 mb-3">
+          Used to display times throughout the app, including chart time axes and trade timestamps.
+        </p>
+        <form onSubmit={handleUpdateDisplayTimezone} className="space-y-4">
+          <div>
+            <label htmlFor="displayTimezone" className="block text-sm font-medium text-gray-700">
+              Timezone
+            </label>
+            <select
+              id="displayTimezone"
+              className="input-field mt-1"
+              value={displayTimezone}
+              onChange={(e) => setDisplayTimezone(e.target.value)}
+            >
+              {TIMEZONES.map((tz) => (
+                <option key={tz} value={tz}>{tz}</option>
+              ))}
+            </select>
+          </div>
+          <button type="submit" className="btn-primary" disabled={dtzLoading}>
+            {dtzLoading ? 'Saving…' : 'Update Display Timezone'}
           </button>
         </form>
       </div>

@@ -10,6 +10,7 @@ def create_user_doc(
     username: str,
     password_hash: str,
     timezone: str = "America/New_York",
+    display_timezone: str | None = None,
 ) -> dict:
     """
     Create a user document for MongoDB insertion.
@@ -18,6 +19,8 @@ def create_user_doc(
         username: Unique username.
         password_hash: Bcrypt-hashed password.
         timezone: User's trading timezone.
+        display_timezone: Timezone for UI display
+            (defaults to trading timezone).
 
     Returns:
         Dict ready for MongoDB insert.
@@ -27,6 +30,7 @@ def create_user_doc(
         "username": username,
         "password_hash": password_hash,
         "timezone": timezone,
+        "display_timezone": display_timezone or timezone,
         "created_at": now,
         "updated_at": now,
     }

@@ -48,7 +48,9 @@ export interface ManualTradeRequest {
 /** Payload for updating a trade. */
 export interface UpdateTradeRequest {
   fee?: number;
-  strategy?: string;
-  notes?: string;
+  fee_source?: string;
+  strategy?: string | null;
+  pre_trade_notes?: string | null;
+  post_trade_notes?: string | null;
   tag_ids?: string[];
 }

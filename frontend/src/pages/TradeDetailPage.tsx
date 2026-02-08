@@ -9,6 +9,7 @@ import { ExecutionList } from '../components/trade/ExecutionList';
 import { TagSelector } from '../components/trade/TagSelector';
 import { TradeNotes } from '../components/trade/TradeNotes';
 import { Spinner } from '../components/ui/Spinner';
+import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
 import type { Execution } from '../types/execution.types';
 import type { ChartInterval, OHLCDataPoint } from '../types/marketData.types';
@@ -20,6 +21,7 @@ export function TradeDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { addToast } = useToast();
+  const { user } = useAuth();
 
   const [trade, setTrade] = useState<Trade | null>(null);
   const [executions, setExecutions] = useState<Execution[]>([]);
@@ -198,6 +200,7 @@ export function TradeDetailPage() {
           avgEntryPrice={trade.avg_entry_price}
           avgExitPrice={trade.avg_exit_price}
           isLoading={isChartLoading}
+          displayTimezone={user?.display_timezone ?? user?.timezone}
         />
       </div>
 

@@ -1,4 +1,4 @@
-import { createChart, type IChartApi, type ISeriesApi } from 'lightweight-charts';
+import { createChart, type IChartApi, type IPriceLine, type ISeriesApi } from 'lightweight-charts';
 import { useCallback, useEffect, useRef } from 'react';
 import type { Execution } from '../../types/execution.types';
 import type { ChartInterval, OHLCDataPoint } from '../../types/marketData.types';
@@ -20,6 +20,45 @@ interface CandlestickChartProps {
   avgExitPrice?: number;
   /** Whether data is loading. */
   isLoading?: boolean;
+  /** Display timezone (IANA) for shifting chart times. */
+  displayTimezone?: string;
+}
+
+/**
+ * Compute the UTC offset in seconds for a given IANA
+ * timezone at a specific UTC epoch timestamp.
+ */
+function getTimezoneOffsetSeconds(
+  tz: string,
+  epochSeconds: number
+): number {
+  const d = new Date(epochSeconds * 1000);
+  // Format the datetime parts in the target timezone
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  }).formatToParts(d);
+
+  const get = (type: string) =>
+    parseInt(parts.find((p) => p.type === type)?.value ?? '0', 10);
+
+  const utcMs = d.getTime();
+  // Reconstruct the target-timezone wall time as if it were UTC
+  const targetWallUtcMs = Date.UTC(
+    get('year'),
+    get('month') - 1,
+    get('day'),
+    get('hour') === 24 ? 0 : get('hour'),
+    get('minute'),
+    get('second')
+  );
+  return Math.round((targetWallUtcMs - utcMs) / 1000);
 }
 
 /** TradingView Lightweight Charts wrapper for candlestick display. */
@@ -31,24 +70,38 @@ export function CandlestickChart({
   avgEntryPrice,
   avgExitPrice,
   isLoading,
+  displayTimezone,
 }: CandlestickChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const priceLinesRef = useRef<IPriceLine[]>([]);
+
+  /** Shift a UTC epoch timestamp to display timezone. */
+  const shiftTime = useCallback(
+    (utcEpoch: number): number => {
+      if (!displayTimezone) return utcEpoch;
+      return utcEpoch + getTimezoneOffsetSeconds(displayTimezone, utcEpoch);
+    },
+    [displayTimezone]
+  );
 
   const buildMarkers = useCallback(() => {
     if (!executions.length) return [];
 
     return executions
-      .map((exec) => ({
-        time: Math.floor(new Date(exec.timestamp).getTime() / 1000) as unknown as import('lightweight-charts').Time,
-        position: (exec.side === 'Buy' ? 'belowBar' : 'aboveBar') as 'belowBar' | 'aboveBar',
-        color: exec.side === 'Buy' ? '#22c55e' : '#ef4444',
-        shape: (exec.side === 'Buy' ? 'arrowUp' : 'arrowDown') as 'arrowUp' | 'arrowDown',
-        text: `${exec.side} ${exec.quantity} @ ${exec.price.toFixed(2)}`,
-      }))
+      .map((exec) => {
+        const utcEpoch = Math.floor(new Date(exec.timestamp).getTime() / 1000);
+        return {
+          time: shiftTime(utcEpoch) as unknown as import('lightweight-charts').Time,
+          position: (exec.side === 'Buy' ? 'belowBar' : 'aboveBar') as 'belowBar' | 'aboveBar',
+          color: exec.side === 'Buy' ? '#22c55e' : '#ef4444',
+          shape: (exec.side === 'Buy' ? 'arrowUp' : 'arrowDown') as 'arrowUp' | 'arrowDown',
+          text: `${exec.side} ${exec.quantity} @ ${exec.price.toFixed(2)}`,
+        };
+      })
       .sort((a, b) => (a.time as number) - (b.time as number));
-  }, [executions]);
+  }, [executions, shiftTime]);
 
   // Create / destroy chart
   useEffect(() => {
@@ -112,7 +165,7 @@ export function CandlestickChart({
     if (!seriesRef.current || !ohlcData.length) return;
 
     const data = ohlcData.map((d) => ({
-      time: d.time as unknown as import('lightweight-charts').Time,
+      time: shiftTime(d.time) as unknown as import('lightweight-charts').Time,
       open: d.open,
       high: d.high,
       low: d.low,
@@ -127,9 +180,15 @@ export function CandlestickChart({
       seriesRef.current.setMarkers(markers);
     }
 
+    // Remove previous price lines
+    for (const line of priceLinesRef.current) {
+      seriesRef.current.removePriceLine(line);
+    }
+    priceLinesRef.current = [];
+
     // Add price lines
     if (avgEntryPrice) {
-      seriesRef.current.createPriceLine({
+      const line = seriesRef.current.createPriceLine({
         price: avgEntryPrice,
         color: '#22c55e',
         lineWidth: 1,
@@ -137,10 +196,11 @@ export function CandlestickChart({
         axisLabelVisible: true,
         title: 'Avg Entry',
       });
+      priceLinesRef.current.push(line);
     }
 
     if (avgExitPrice) {
-      seriesRef.current.createPriceLine({
+      const line = seriesRef.current.createPriceLine({
         price: avgExitPrice,
         color: '#ef4444',
         lineWidth: 1,
@@ -148,11 +208,12 @@ export function CandlestickChart({
         axisLabelVisible: true,
         title: 'Avg Exit',
       });
+      priceLinesRef.current.push(line);
     }
 
     // Fit content
     chartRef.current?.timeScale().fitContent();
-  }, [ohlcData, buildMarkers, avgEntryPrice, avgExitPrice]);
+  }, [ohlcData, buildMarkers, avgEntryPrice, avgExitPrice, shiftTime]);
 
   return (
     <div className="space-y-2">
