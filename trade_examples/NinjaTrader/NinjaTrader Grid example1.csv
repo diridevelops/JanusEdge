@@ -1,0 +1,5 @@
+Instrument;Action;Quantity;Price;Time;ID;E/X;Position;Order ID;Name;Commission;Rate;Account;Connection;
+MES 03-26;Buy;1;6925,50;04/02/2026 10:05:21;335158452204;Entry;-;;;0,39 $;1;FNFTCH;Simulation;
+MES 03-26;Sell;1;6922,50;04/02/2026 10:05:49;335158452213;Exit;-;;;0,39 $;1;FNFTCH;Simulation;
+MES 03-26;Buy;1;6936,00;04/02/2026 10:14:46;335158452224;Entry;-;;;0,39 $;1;FNFTCH;Simulation;
+MES 03-26;Sell;1;6933,75;04/02/2026 10:16:23;335158452237;Exit;-;;;0,39 $;1;FNFTCH;Simulation;

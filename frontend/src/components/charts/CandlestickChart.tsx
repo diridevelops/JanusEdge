@@ -1,0 +1,192 @@
+import { createChart, type IChartApi, type ISeriesApi } from 'lightweight-charts';
+import { useCallback, useEffect, useRef } from 'react';
+import type { Execution } from '../../types/execution.types';
+import type { ChartInterval, OHLCDataPoint } from '../../types/marketData.types';
+
+const CHART_INTERVALS: ChartInterval[] = ['1m', '5m', '15m', '1h', '1d'];
+
+interface CandlestickChartProps {
+  /** OHLC data from backend market data API. */
+  ohlcData: OHLCDataPoint[];
+  /** Trade executions to render as markers. */
+  executions: Execution[];
+  /** Current chart interval. */
+  interval: ChartInterval;
+  /** Callback when user changes interval. */
+  onIntervalChange: (interval: ChartInterval) => void;
+  /** Average entry price line. */
+  avgEntryPrice?: number;
+  /** Average exit price line. */
+  avgExitPrice?: number;
+  /** Whether data is loading. */
+  isLoading?: boolean;
+}
+
+/** TradingView Lightweight Charts wrapper for candlestick display. */
+export function CandlestickChart({
+  ohlcData,
+  executions,
+  interval,
+  onIntervalChange,
+  avgEntryPrice,
+  avgExitPrice,
+  isLoading,
+}: CandlestickChartProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+  const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+
+  const buildMarkers = useCallback(() => {
+    if (!executions.length) return [];
+
+    return executions
+      .map((exec) => ({
+        time: Math.floor(new Date(exec.timestamp).getTime() / 1000) as unknown as import('lightweight-charts').Time,
+        position: (exec.side === 'Buy' ? 'belowBar' : 'aboveBar') as 'belowBar' | 'aboveBar',
+        color: exec.side === 'Buy' ? '#22c55e' : '#ef4444',
+        shape: (exec.side === 'Buy' ? 'arrowUp' : 'arrowDown') as 'arrowUp' | 'arrowDown',
+        text: `${exec.side} ${exec.quantity} @ ${exec.price.toFixed(2)}`,
+      }))
+      .sort((a, b) => (a.time as number) - (b.time as number));
+  }, [executions]);
+
+  // Create / destroy chart
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    const chart = createChart(containerRef.current, {
+      layout: {
+        background: { color: '#ffffff' },
+        textColor: '#374151',
+      },
+      grid: {
+        vertLines: { color: '#f3f4f6' },
+        horzLines: { color: '#f3f4f6' },
+      },
+      crosshair: {
+        mode: 0,
+      },
+      rightPriceScale: {
+        borderColor: '#e5e7eb',
+      },
+      timeScale: {
+        borderColor: '#e5e7eb',
+        timeVisible: true,
+        secondsVisible: false,
+      },
+      width: containerRef.current.clientWidth,
+      height: 400,
+    });
+
+    const series = chart.addCandlestickSeries({
+      upColor: '#22c55e',
+      downColor: '#ef4444',
+      borderUpColor: '#16a34a',
+      borderDownColor: '#dc2626',
+      wickUpColor: '#16a34a',
+      wickDownColor: '#dc2626',
+    });
+
+    chartRef.current = chart;
+    seriesRef.current = series;
+
+    // Resize observer
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) {
+        chart.applyOptions({ width: entry.contentRect.width });
+      }
+    });
+    observer.observe(containerRef.current);
+
+    return () => {
+      observer.disconnect();
+      chart.remove();
+      chartRef.current = null;
+      seriesRef.current = null;
+    };
+  }, []);
+
+  // Update data when ohlcData changes
+  useEffect(() => {
+    if (!seriesRef.current || !ohlcData.length) return;
+
+    const data = ohlcData.map((d) => ({
+      time: d.time as unknown as import('lightweight-charts').Time,
+      open: d.open,
+      high: d.high,
+      low: d.low,
+      close: d.close,
+    }));
+
+    seriesRef.current.setData(data);
+
+    // Set markers
+    const markers = buildMarkers();
+    if (markers.length > 0) {
+      seriesRef.current.setMarkers(markers);
+    }
+
+    // Add price lines
+    if (avgEntryPrice) {
+      seriesRef.current.createPriceLine({
+        price: avgEntryPrice,
+        color: '#22c55e',
+        lineWidth: 1,
+        lineStyle: 2, // Dashed
+        axisLabelVisible: true,
+        title: 'Avg Entry',
+      });
+    }
+
+    if (avgExitPrice) {
+      seriesRef.current.createPriceLine({
+        price: avgExitPrice,
+        color: '#ef4444',
+        lineWidth: 1,
+        lineStyle: 2,
+        axisLabelVisible: true,
+        title: 'Avg Exit',
+      });
+    }
+
+    // Fit content
+    chartRef.current?.timeScale().fitContent();
+  }, [ohlcData, buildMarkers, avgEntryPrice, avgExitPrice]);
+
+  return (
+    <div className="space-y-2">
+      {/* Interval selector */}
+      <div className="flex items-center gap-1">
+        {CHART_INTERVALS.map((iv) => (
+          <button
+            key={iv}
+            onClick={() => onIntervalChange(iv)}
+            className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
+              interval === iv
+                ? 'bg-brand-600 text-white'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            {iv}
+          </button>
+        ))}
+      </div>
+
+      {/* Chart container */}
+      <div className="relative border border-gray-200 rounded-lg overflow-hidden">
+        {isLoading && (
+          <div className="absolute inset-0 flex items-center justify-center bg-white/70 z-10">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-600" />
+          </div>
+        )}
+        {!ohlcData.length && !isLoading && (
+          <div className="absolute inset-0 flex items-center justify-center text-gray-400 text-sm">
+            No chart data available
+          </div>
+        )}
+        <div ref={containerRef} />
+      </div>
+    </div>
+  );
+}

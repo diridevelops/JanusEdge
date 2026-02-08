@@ -1,0 +1,11 @@
+node_modules
+.venv
+__pycache__
+*.pyc
+.git
+.github
+architecture
+trade_examples
+*.md
+!README.md
+.env

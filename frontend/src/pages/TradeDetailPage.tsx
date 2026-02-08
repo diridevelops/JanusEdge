@@ -1,0 +1,235 @@
+import { ArrowLeft, Trash2 } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { listExecutions } from '../api/executions.api';
+import { getOHLC } from '../api/marketData.api';
+import { deleteTrade, getTrade } from '../api/trades.api';
+import { CandlestickChart } from '../components/charts/CandlestickChart';
+import { ExecutionList } from '../components/trade/ExecutionList';
+import { TagSelector } from '../components/trade/TagSelector';
+import { TradeNotes } from '../components/trade/TradeNotes';
+import { Spinner } from '../components/ui/Spinner';
+import { useToast } from '../hooks/useToast';
+import type { Execution } from '../types/execution.types';
+import type { ChartInterval, OHLCDataPoint } from '../types/marketData.types';
+import type { Trade } from '../types/trade.types';
+import { formatCurrency, formatDateTime, formatDuration } from '../utils/formatters';
+
+/** Trade detail page — chart, executions, notes, tags. */
+export function TradeDetailPage() {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const { addToast } = useToast();
+
+  const [trade, setTrade] = useState<Trade | null>(null);
+  const [executions, setExecutions] = useState<Execution[]>([]);
+  const [ohlcData, setOhlcData] = useState<OHLCDataPoint[]>([]);
+  const [interval, setInterval] = useState<ChartInterval>('5m');
+  const [isLoading, setIsLoading] = useState(true);
+  const [isChartLoading, setIsChartLoading] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  const fetchTrade = useCallback(async () => {
+    if (!id) return;
+    setIsLoading(true);
+    try {
+      const [tradeData, execData] = await Promise.all([
+        getTrade(id),
+        listExecutions({ trade_id: id }),
+      ]);
+      setTrade(tradeData.trade);
+      setExecutions(execData.executions ?? execData.items);
+    } catch {
+      addToast('error', 'Failed to load trade');
+      navigate('/trades');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [id, addToast, navigate]);
+
+  const fetchChart = useCallback(async () => {
+    if (!trade) return;
+    setIsChartLoading(true);
+    try {
+      const data = await getOHLC({
+        symbol: trade.symbol,
+        interval,
+        start: trade.entry_time,
+        end: trade.exit_time,
+      });
+      setOhlcData(data);
+    } catch {
+      // Chart data may not be available for all symbols
+      setOhlcData([]);
+    } finally {
+      setIsChartLoading(false);
+    }
+  }, [trade, interval]);
+
+  useEffect(() => {
+    fetchTrade();
+  }, [fetchTrade]);
+
+  useEffect(() => {
+    if (trade) {
+      fetchChart();
+    }
+  }, [trade, fetchChart]);
+
+  async function handleDelete() {
+    if (!id || !confirm('Delete this trade? It can be restored later.')) return;
+    setIsDeleting(true);
+    try {
+      await deleteTrade(id);
+      addToast('success', 'Trade deleted');
+      navigate('/trades');
+    } catch {
+      addToast('error', 'Failed to delete trade');
+    } finally {
+      setIsDeleting(false);
+    }
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex justify-center py-24">
+        <Spinner size="lg" />
+      </div>
+    );
+  }
+
+  if (!trade) {
+    return (
+      <div className="text-center py-24 text-gray-500">
+        <p>Trade not found.</p>
+        <Link to="/trades" className="text-brand-600 hover:underline mt-2 inline-block">
+          Back to Trades
+        </Link>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Link
+            to="/trades"
+            className="text-gray-400 hover:text-gray-600"
+            aria-label="Back to trades"
+          >
+            <ArrowLeft className="h-5 w-5" />
+          </Link>
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">
+              {trade.symbol}{' '}
+              <span
+                className={`text-lg ${trade.side === 'Long' ? 'text-green-600' : 'text-red-600'}`}
+              >
+                {trade.side}
+              </span>
+            </h1>
+            <p className="text-sm text-gray-500">
+              {formatDateTime(trade.entry_time)} — {formatDateTime(trade.exit_time)}
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={handleDelete}
+          disabled={isDeleting}
+          className="btn-danger inline-flex items-center gap-1.5"
+        >
+          <Trash2 className="h-4 w-4" />
+          {isDeleting ? 'Deleting...' : 'Delete'}
+        </button>
+      </div>
+
+      {/* Trade summary card */}
+      <div className="card p-4">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-4 text-sm">
+          <div>
+            <p className="text-xs text-gray-500 uppercase">Quantity</p>
+            <p className="font-semibold text-gray-900">{trade.total_quantity}</p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-500 uppercase">Avg Entry</p>
+            <p className="font-semibold text-gray-900">{formatCurrency(trade.avg_entry_price)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-500 uppercase">Avg Exit</p>
+            <p className="font-semibold text-gray-900">{formatCurrency(trade.avg_exit_price)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-500 uppercase">Gross P&L</p>
+            <p className={`font-semibold ${trade.gross_pnl >= 0 ? 'text-profit' : 'text-loss'}`}>
+              {formatCurrency(trade.gross_pnl)}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-500 uppercase">Fees</p>
+            <p className="font-semibold text-gray-700">{formatCurrency(trade.fee)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-500 uppercase">Net P&L</p>
+            <p className={`font-bold ${trade.net_pnl >= 0 ? 'text-profit' : 'text-loss'}`}>
+              {formatCurrency(trade.net_pnl)}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-500 uppercase">Duration</p>
+            <p className="font-semibold text-gray-900">
+              {formatDuration(trade.holding_time_seconds)}
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Chart */}
+      <div className="card p-4">
+        <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wider mb-3">
+          Price Chart
+        </h2>
+        <CandlestickChart
+          ohlcData={ohlcData}
+          executions={executions}
+          interval={interval}
+          onIntervalChange={setInterval}
+          avgEntryPrice={trade.avg_entry_price}
+          avgExitPrice={trade.avg_exit_price}
+          isLoading={isChartLoading}
+        />
+      </div>
+
+      {/* Lower section: Executions + Notes/Tags */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Executions */}
+        <div className="card p-4">
+          <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wider mb-3">
+            Executions ({executions.length})
+          </h2>
+          <ExecutionList executions={executions} />
+        </div>
+
+        {/* Notes and Tags */}
+        <div className="space-y-6">
+          <div className="card p-4">
+            <TagSelector
+              tradeId={trade.id}
+              tagIds={trade.tag_ids}
+              onChanged={fetchTrade}
+            />
+          </div>
+          <div className="card p-4">
+            <TradeNotes
+              tradeId={trade.id}
+              preTradeNotes={trade.pre_trade_notes}
+              postTradeNotes={trade.post_trade_notes}
+              onSaved={fetchTrade}
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

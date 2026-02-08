@@ -1,0 +1,5 @@
+﻿Account,Date/Time,Symbol,Description,Symbol type,Expiration date,Strike price,Side,Order type,Quantity,Price,Gross P/L,Fee,Net P/L,Trade value,Trade ID,Order ID,Position ID,Connection name,Comment,Exchange,
+111222,03/04/2025 10:17:32 -05:00,MESM25,Micro E-mini S&P 500: June 2025,Futures,19/06/2025 20:00:00 -05:00,0,Sell,Stop,-1,"5490,25",-15,0,0,"-27451,25",64972843789,1432600881,,AMP/CQG,,CME E-Mini Futures,
+111222,03/04/2025 10:17:13 -05:00,MESM25,Micro E-mini S&P 500: June 2025,Futures,19/06/2025 20:00:00 -05:00,0,Buy,Market,1,"5493,25",0,0,0,"27466,25",64972836365,1432600880,,AMP/CQG,,CME E-Mini Futures,
+111222,03/04/2025 10:15:18 -05:00,MESM25,Micro E-mini S&P 500: June 2025,Futures,19/06/2025 20:00:00 -05:00,0,Buy,Stop,1,"5490,75",-15,0,0,"27453,75",64972702733,1432414255,,AMP/CQG,,CME E-Mini Futures,
+111222,03/04/2025 10:15:12 -05:00,MESM25,Micro E-mini S&P 500: June 2025,Futures,19/06/2025 20:00:00 -05:00,0,Sell,Market,-1,"5487,75",0,0,0,"-27438,75",64972688909,1432414254,,AMP/CQG,,CME E-Mini Futures,

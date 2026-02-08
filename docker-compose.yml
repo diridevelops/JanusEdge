@@ -1,0 +1,65 @@
+services:
+  mongo:
+    image: mongo:8.0
+    container_name: tradelogs-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - tradelogs-net
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.runCommand({ping:1})"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: tradelogs-backend
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/tests:/app/tests
+      - ./trade_examples:/app/trade_examples
+    environment:
+      - FLASK_APP=run.py
+      - FLASK_ENV=development
+      - FLASK_DEBUG=1
+      - MONGO_URI=mongodb://mongo:27017/tradelogs
+      - JWT_SECRET_KEY=dev-jwt-secret-change-in-production
+      - SECRET_KEY=dev-secret-change-in-production
+      - CORS_ORIGINS=http://localhost:5173
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - tradelogs-net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: tradelogs-frontend
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+    environment:
+      - VITE_API_URL=http://backend:5000
+    depends_on:
+      - backend
+    networks:
+      - tradelogs-net
+
+volumes:
+  mongo-data:
+
+networks:
+  tradelogs-net:
+    driver: bridge
