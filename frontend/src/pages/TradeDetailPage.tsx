@@ -133,7 +133,8 @@ export function TradeDetailPage() {
               </span>
             </h1>
             <p className="text-sm text-gray-500">
-              {formatDateTime(trade.entry_time)} — {formatDateTime(trade.exit_time)}
+              {formatDateTime(trade.entry_time, user?.display_timezone)} —{' '}
+              {formatDateTime(trade.exit_time, user?.display_timezone)}
             </p>
           </div>
         </div>

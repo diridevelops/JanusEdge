@@ -1,3 +1,4 @@
+import { useAuth } from '../../hooks/useAuth';
 import type { ParsedExecution } from '../../types/import.types';
 import { formatCurrency, formatDateTime } from '../../utils/formatters';
 
@@ -22,6 +23,7 @@ export function ImportPreview({
   totalRows,
   parsedRows,
 }: ImportPreviewProps) {
+  const { user } = useAuth();
   return (
     <div className="space-y-4">
       {/* Summary bar */}
@@ -80,7 +82,7 @@ export function ImportPreview({
               <tr key={idx} className="hover:bg-gray-50">
                 <td className="px-4 py-2 text-gray-400">{idx + 1}</td>
                 <td className="px-4 py-2 text-gray-900 whitespace-nowrap">
-                  {formatDateTime(exec.timestamp)}
+                  {formatDateTime(exec.timestamp, user?.display_timezone)}
                 </td>
                 <td className="px-4 py-2 font-medium text-gray-900">
                   {exec.symbol}

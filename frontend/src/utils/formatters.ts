@@ -75,15 +75,22 @@ export function formatDuration(seconds: number): string {
  * @param isoString - ISO 8601 date string.
  * @returns Formatted date string (e.g., "Jan 15, 2025 10:30 AM").
  */
-export function formatDateTime(isoString: string): string {
-  return new Date(isoString).toLocaleString('en-US', {
+export function formatDateTime(
+  isoString: string,
+  timezone?: string
+): string {
+  const opts: Intl.DateTimeFormatOptions = {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
     hour: 'numeric',
     minute: '2-digit',
     hour12: true,
-  });
+  };
+  if (timezone) {
+    opts.timeZone = timezone;
+  }
+  return new Date(isoString).toLocaleString('en-US', opts);
 }
 
 /**
@@ -92,12 +99,19 @@ export function formatDateTime(isoString: string): string {
  * @param isoString - ISO 8601 date string.
  * @returns Formatted date (e.g., "Jan 15, 2025").
  */
-export function formatDate(isoString: string): string {
-  return new Date(isoString).toLocaleDateString('en-US', {
+export function formatDate(
+  isoString: string,
+  timezone?: string
+): string {
+  const opts: Intl.DateTimeFormatOptions = {
     month: 'short',
     day: 'numeric',
     year: 'numeric',
-  });
+  };
+  if (timezone) {
+    opts.timeZone = timezone;
+  }
+  return new Date(isoString).toLocaleDateString('en-US', opts);
 }
 
 /**

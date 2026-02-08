@@ -1,4 +1,8 @@
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import { listTags } from '../../api/tags.api';
+import { useAuth } from '../../hooks/useAuth';
+import type { Tag } from '../../types/marketData.types';
 import type { Trade } from '../../types/trade.types';
 import { formatCurrency, formatDateTime, formatDuration } from '../../utils/formatters';
 
@@ -20,14 +24,29 @@ const SORTABLE_COLUMNS = [
   { key: 'total_quantity', label: 'Qty' },
   { key: 'avg_entry_price', label: 'Entry' },
   { key: 'avg_exit_price', label: 'Exit' },
-  { key: 'gross_pnl', label: 'Gross P&L' },
-  { key: 'fee', label: 'Fees' },
   { key: 'net_pnl', label: 'Net P&L' },
   { key: 'holding_time_seconds', label: 'Duration' },
 ] as const;
 
 /** Sortable, filterable trade list table. */
 export function TradeTable({ trades, sortBy, sortDir, onSortChange }: TradeTableProps) {
+  const { user } = useAuth();
+  const [tagMap, setTagMap] = useState<Map<string, Tag>>(new Map());
+
+  useEffect(() => {
+    listTags()
+      .then((tags) => {
+        const map = new Map<string, Tag>();
+        for (const tag of tags) {
+          map.set(tag.id, tag);
+        }
+        setTagMap(map);
+      })
+      .catch(() => {
+        // Tag lookup failure is non-critical
+      });
+  }, []);
+
   function renderSortIndicator(column: string) {
     if (sortBy !== column) return null;
     return <span className="ml-1">{sortDir === 'asc' ? '▲' : '▼'}</span>;
@@ -57,6 +76,9 @@ export function TradeTable({ trades, sortBy, sortDir, onSortChange }: TradeTable
                 {renderSortIndicator(col.key)}
               </th>
             ))}
+            <th className="px-4 py-2.5 text-left font-medium text-gray-500 uppercase tracking-wider text-xs whitespace-nowrap">
+              Tags
+            </th>
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-100 bg-white">
@@ -67,7 +89,7 @@ export function TradeTable({ trades, sortBy, sortDir, onSortChange }: TradeTable
                   to={`/trades/${trade.id}`}
                   className="text-brand-600 hover:text-brand-800 font-medium"
                 >
-                  {formatDateTime(trade.entry_time)}
+                  {formatDateTime(trade.entry_time, user?.display_timezone)}
                 </Link>
               </td>
               <td className="px-4 py-2.5 font-medium text-gray-900">
@@ -94,16 +116,6 @@ export function TradeTable({ trades, sortBy, sortDir, onSortChange }: TradeTable
                 {formatCurrency(trade.avg_exit_price)}
               </td>
               <td
-                className={`px-4 py-2.5 text-right font-medium ${
-                  trade.gross_pnl >= 0 ? 'text-profit' : 'text-loss'
-                }`}
-              >
-                {formatCurrency(trade.gross_pnl)}
-              </td>
-              <td className="px-4 py-2.5 text-right text-gray-500">
-                {formatCurrency(trade.fee)}
-              </td>
-              <td
                 className={`px-4 py-2.5 text-right font-semibold ${
                   trade.net_pnl >= 0 ? 'text-profit' : 'text-loss'
                 }`}
@@ -112,6 +124,26 @@ export function TradeTable({ trades, sortBy, sortDir, onSortChange }: TradeTable
               </td>
               <td className="px-4 py-2.5 text-gray-500 whitespace-nowrap">
                 {formatDuration(trade.holding_time_seconds)}
+              </td>
+              <td className="px-4 py-2.5">
+                <div className="flex flex-wrap gap-1">
+                  {trade.tag_ids.map((tagId) => {
+                    const tag = tagMap.get(tagId);
+                    if (!tag) return null;
+                    return (
+                      <span
+                        key={tagId}
+                        className="inline-flex px-2 py-0.5 rounded-full text-xs font-medium"
+                        style={{
+                          backgroundColor: tag.color + '20',
+                          color: tag.color,
+                        }}
+                      >
+                        {tag.name}
+                      </span>
+                    );
+                  })}
+                </div>
               </td>
             </tr>
           ))}

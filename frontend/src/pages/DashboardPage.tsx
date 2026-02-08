@@ -6,12 +6,14 @@ import { getEquityCurve, getSummary } from '../api/analytics.api';
 import { listTrades } from '../api/trades.api';
 import { EquityCurveChart } from '../components/charts/EquityCurveChart';
 import { Spinner } from '../components/ui/Spinner';
+import { useAuth } from '../hooks/useAuth';
 import type { AnalyticsSummary, EquityCurvePoint } from '../types/analytics.types';
 import type { Trade } from '../types/trade.types';
 import { formatCurrency, formatDateTime, formatPercent } from '../utils/formatters';
 
 /** Dashboard page — overview with key stats, recent trades, and equity curve. */
 export function DashboardPage() {
+  const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
   const [equityCurve, setEquityCurve] = useState<EquityCurvePoint[]>([]);
@@ -169,7 +171,7 @@ export function DashboardPage() {
                       {formatCurrency(trade.net_pnl)}
                     </td>
                     <td className="py-2 text-right text-gray-500 text-xs">
-                      {trade.exit_time ? formatDateTime(trade.exit_time) : '—'}
+                      {trade.exit_time ? formatDateTime(trade.exit_time, user?.display_timezone) : '—'}
                     </td>
                   </tr>
                 ))}

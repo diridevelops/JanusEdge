@@ -1,3 +1,4 @@
+import { useAuth } from '../../hooks/useAuth';
 import type { Execution } from '../../types/execution.types';
 import { formatCurrency, formatDateTime } from '../../utils/formatters';
 
@@ -8,6 +9,7 @@ interface ExecutionListProps {
 
 /** Execution table for trade detail page. */
 export function ExecutionList({ executions }: ExecutionListProps) {
+  const { user } = useAuth();
   if (executions.length === 0) {
     return (
       <p className="text-sm text-gray-500 py-4">No executions available.</p>
@@ -44,7 +46,7 @@ export function ExecutionList({ executions }: ExecutionListProps) {
             <tr key={exec.id || idx} className="hover:bg-gray-50">
               <td className="px-4 py-2 text-gray-400">{idx + 1}</td>
               <td className="px-4 py-2 text-gray-900 whitespace-nowrap">
-                {formatDateTime(exec.timestamp)}
+                {formatDateTime(exec.timestamp, user?.display_timezone)}
               </td>
               <td className="px-4 py-2">
                 <span

@@ -193,6 +193,8 @@ class BaseRepository:
         if isinstance(value, ObjectId):
             return str(value)
         if isinstance(value, datetime):
+            if value.tzinfo is None:
+                return value.isoformat() + "+00:00"
             return value.isoformat()
         return value
 
@@ -217,7 +219,10 @@ class BaseRepository:
             if isinstance(value, ObjectId):
                 result[out_key] = str(value)
             elif isinstance(value, datetime):
-                result[out_key] = value.isoformat()
+                if value.tzinfo is None:
+                    result[out_key] = value.isoformat() + "+00:00"
+                else:
+                    result[out_key] = value.isoformat()
             elif isinstance(value, list):
                 result[out_key] = [
                     BaseRepository._serialize_value(v)
