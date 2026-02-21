@@ -1,6 +1,6 @@
 import { Plus } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { listTrades } from '../api/trades.api';
 import { FilterBar } from '../components/filters/FilterBar';
 import { TradeTable } from '../components/trade/TradeTable';
@@ -12,6 +12,51 @@ import { DEFAULT_PAGE_SIZE } from '../utils/constants';
 
 /** Trade list page — filterable, sortable table of trades. */
 export function TradeListPage() {
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  type TradeFilters = {
+    symbol: string;
+    side: string;
+    account: string;
+    tag: string;
+    date_from: string;
+    date_to: string;
+  };
+
+  const areFiltersEqual = useCallback(
+    (left: TradeFilters, right: TradeFilters) =>
+      left.symbol === right.symbol
+      && left.side === right.side
+      && left.account === right.account
+      && left.tag === right.tag
+      && left.date_from === right.date_from
+      && left.date_to === right.date_to,
+    []
+  );
+
+  const getFiltersFromSearch = useCallback((search: string) => {
+    const params = new URLSearchParams(search);
+    return {
+      symbol: params.get('symbol') ?? '',
+      side: params.get('side') ?? '',
+      account: params.get('account') ?? '',
+      tag: params.get('tag') ?? '',
+      date_from: params.get('date_from') ?? '',
+      date_to: params.get('date_to') ?? '',
+    };
+  }, []);
+
+  const buildSearchFromFilters = useCallback((nextFilters: TradeFilters) => {
+    const params = new URLSearchParams();
+    Object.entries(nextFilters).forEach(([key, value]) => {
+      if (value !== '') {
+        params.set(key, value);
+      }
+    });
+    return params.toString();
+  }, []);
+
   const [trades, setTrades] = useState<Trade[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [page, setPage] = useState(1);
@@ -19,15 +64,38 @@ export function TradeListPage() {
   const [totalItems, setTotalItems] = useState(0);
   const [sortBy, setSortBy] = useState('entry_time');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
-  const [filters, setFilters] = useState({
-    symbol: '',
-    side: '',
-    account: '',
-    tag: '',
-    date_from: '',
-    date_to: '',
-  });
+  const [filters, setFilters] = useState(() => getFiltersFromSearch(location.search));
   const { addToast } = useToast();
+
+  useEffect(() => {
+    const nextFilters = getFiltersFromSearch(location.search);
+    setFilters((prev) => {
+      if (areFiltersEqual(prev, nextFilters)) {
+        return prev;
+      }
+      setPage(1);
+      return nextFilters;
+    });
+  }, [location.search, getFiltersFromSearch, areFiltersEqual]);
+
+  useEffect(() => {
+    const currentSearch = location.search.startsWith('?')
+      ? location.search.slice(1)
+      : location.search;
+    const nextSearch = buildSearchFromFilters(filters);
+
+    if (currentSearch === nextSearch) {
+      return;
+    }
+
+    navigate(
+      {
+        pathname: location.pathname,
+        search: nextSearch ? `?${nextSearch}` : '',
+      },
+      { replace: true }
+    );
+  }, [filters, buildSearchFromFilters, navigate, location.pathname, location.search]);
 
   const fetchTrades = useCallback(async () => {
     setIsLoading(true);
@@ -71,14 +139,7 @@ export function TradeListPage() {
   }
 
   function handleClearFilters() {
-    setFilters({
-      symbol: '',
-      side: '',
-      account: '',
-      tag: '',
-      date_from: '',
-      date_to: '',
-    });
+    setFilters(getFiltersFromSearch(''));
     setPage(1);
   }
 

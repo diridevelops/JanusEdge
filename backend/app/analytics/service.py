@@ -1,12 +1,29 @@
 """Analytics service for computing trade metrics."""
 
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from bson import ObjectId
 
 from app.extensions import mongo
+
+
+def _parse_date_from(value: str) -> datetime:
+    """Parse date_from as inclusive lower bound."""
+    return datetime.fromisoformat(value)
+
+
+def _parse_date_to(value: str) -> datetime:
+    """Parse date_to as inclusive upper bound.
+
+    For date-only values (YYYY-MM-DD), include the entire
+    selected day by converting to the next day minus 1 microsecond.
+    """
+    dt = datetime.fromisoformat(value)
+    if len(value) == 10:
+        return dt + timedelta(days=1) - timedelta(microseconds=1)
+    return dt
 
 
 def _build_base_match(
@@ -54,11 +71,11 @@ def _build_base_match(
     if filters.get("date_from") or filters.get("date_to"):
         date_filter: Dict[str, Any] = {}
         if filters.get("date_from"):
-            date_filter["$gte"] = datetime.fromisoformat(
+            date_filter["$gte"] = _parse_date_from(
                 filters["date_from"]
             )
         if filters.get("date_to"):
-            date_filter["$lte"] = datetime.fromisoformat(
+            date_filter["$lte"] = _parse_date_to(
                 filters["date_to"]
             )
         match["exit_time"] = date_filter

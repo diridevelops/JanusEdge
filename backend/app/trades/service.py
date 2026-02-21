@@ -1,6 +1,6 @@
 """Trade service — business logic for trades."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from bson import ObjectId
 
@@ -16,6 +16,23 @@ from app.repositories.trade_repo import TradeRepository
 from app.imports.reconstructor import get_point_value
 from app.utils.datetime_utils import utc_now
 from app.utils.errors import NotFoundError
+
+
+def _parse_date_from(value: str) -> datetime:
+    """Parse date_from as inclusive lower bound."""
+    return datetime.fromisoformat(value)
+
+
+def _parse_date_to(value: str) -> datetime:
+    """Parse date_to as inclusive upper bound.
+
+    For date-only values (YYYY-MM-DD), include the entire
+    selected day by converting to the next day minus 1 microsecond.
+    """
+    dt = datetime.fromisoformat(value)
+    if len(value) == 10:
+        return dt + timedelta(days=1) - timedelta(microseconds=1)
+    return dt
 
 
 class TradeService:
@@ -80,11 +97,11 @@ class TradeService:
                         "_id"
                     ]
         if date_from:
-            dt_from = datetime.fromisoformat(date_from)
+            dt_from = _parse_date_from(date_from)
             filters.setdefault("entry_time", {})
             filters["entry_time"]["$gte"] = dt_from
         if date_to:
-            dt_to = datetime.fromisoformat(date_to)
+            dt_to = _parse_date_to(date_to)
             filters.setdefault("entry_time", {})
             filters["entry_time"]["$lte"] = dt_to
 

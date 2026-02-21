@@ -111,6 +111,53 @@ def test_list_trades_with_data(client):
     assert len(data["trades"]) == 1
 
 
+def test_list_trades_date_to_includes_selected_day(client):
+    token = _register_and_login(client)
+    _create_trade(
+        client,
+        token,
+        entry_time="2026-02-04T14:30:00",
+        exit_time="2026-02-04T14:45:00",
+    )
+
+    resp = client.get(
+        "/api/trades?date_from=2026-02-04&date_to=2026-02-04",
+        headers=_auth_header(token),
+    )
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["total"] == 1
+    assert len(data["trades"]) == 1
+
+
+def test_list_trades_date_to_excludes_following_day(client):
+    token = _register_and_login(client)
+    _create_trade(
+        client,
+        token,
+        entry_time="2026-02-04T10:00:00",
+        exit_time="2026-02-04T10:05:00",
+    )
+    _create_trade(
+        client,
+        token,
+        entry_time="2026-02-05T10:00:00",
+        exit_time="2026-02-05T10:05:00",
+    )
+
+    resp = client.get(
+        "/api/trades?date_from=2026-02-04&date_to=2026-02-04",
+        headers=_auth_header(token),
+    )
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data["total"] == 1
+    assert len(data["trades"]) == 1
+    assert data["trades"][0]["entry_time"].startswith("2026-02-04")
+
+
 def test_get_trade_detail(client):
     token = _register_and_login(client)
     create_resp = _create_trade(
