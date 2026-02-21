@@ -91,7 +91,7 @@ export function StatsGrid({ summary, isLoading }: StatsGridProps) {
         valueColor={
           summary.pl_ratio != null && summary.pl_ratio >= 1 ? 'text-profit' : 'text-loss'
         }
-        tooltip="Avg Winner ÷ |Avg Loser|"
+        tooltip="Avg Win / Share ÷ |Avg Loss / Share|"
       />
       <StatsCard
         label="Win / Share Avg"
@@ -100,16 +100,16 @@ export function StatsGrid({ summary, isLoading }: StatsGridProps) {
         tooltip="Average net P&L per contract for winning trades.\nΣ(winner P&L ÷ qty) ÷ # winners"
       />
       <StatsCard
-        label="Win / Share High"
-        value={formatCurrency(summary.win_per_share_high)}
-        valueColor="text-profit"
-        tooltip="Best net P&L per contract among winning trades.\nmax(winner P&L ÷ qty)"
-      />
-      <StatsCard
         label="Loss / Share Avg"
         value={formatCurrency(summary.loss_per_share_avg)}
         valueColor="text-loss"
         tooltip="Average net P&L per contract for losing trades.\nΣ(loser P&L ÷ qty) ÷ # losers"
+      />
+      <StatsCard
+        label="Win / Share High"
+        value={formatCurrency(summary.win_per_share_high)}
+        valueColor="text-profit"
+        tooltip="Best net P&L per contract among winning trades.\nmax(winner P&L ÷ qty)"
       />
       <StatsCard
         label="Loss / Share High"

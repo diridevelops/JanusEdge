@@ -325,13 +325,6 @@ class AnalyticsService:
             else 0.0
         )
 
-        # P/L Ratio: avg_winner / abs(avg_loser)
-        pl_ratio = (
-            (avg_winner / abs(avg_loser))
-            if avg_loser != 0
-            else None
-        )
-
         # Per-contract (per-share) metrics
         losers_count = data["losers"]
         win_per_share_avg = (
@@ -361,6 +354,13 @@ class AnalyticsService:
         # Sentinel check: 999999999 means no losers
         if loss_per_share_high == 999999999:
             loss_per_share_high = 0.0
+
+        # P/L Ratio: avg win/share ÷ |avg loss/share|
+        pl_ratio = (
+            (win_per_share_avg / abs(loss_per_share_avg))
+            if loss_per_share_avg != 0
+            else None
+        )
 
         return {
             "total_trades": total,

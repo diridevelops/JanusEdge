@@ -61,6 +61,7 @@ def _insert_trade(
     side="Long",
     tag_ids=None,
     status="closed",
+    total_quantity=1,
 ):
     """Insert a trade document directly into MongoDB."""
     if gross_pnl is None:
@@ -77,8 +78,8 @@ def _insert_trade(
         "symbol": symbol,
         "raw_symbol": symbol,
         "side": side,
-        "total_quantity": 1,
-        "max_quantity": 1,
+        "total_quantity": total_quantity,
+        "max_quantity": total_quantity,
         "avg_entry_price": 5000.0,
         "avg_exit_price": 5000.0
         + (net_pnl + fee) / 5.0,
@@ -236,6 +237,50 @@ class TestAnalyticsSummary:
         data = resp.json
         assert data["total_trades"] == 1
         assert data["total_net_pnl"] == 100.0
+
+    def test_summary_pl_ratio_uses_per_share_values(
+        self, app, client, auth_headers
+    ):
+        """P/L ratio uses avg win/share and avg loss/share."""
+        user_id = _get_user_id(app)
+        base = datetime(2025, 1, 18, 12, 0, 0)
+
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=200.0,
+            fee=0.0,
+            total_quantity=4,
+            exit_time=base,
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=50.0,
+            fee=0.0,
+            total_quantity=1,
+            exit_time=base + timedelta(hours=1),
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=-90.0,
+            fee=0.0,
+            total_quantity=3,
+            exit_time=base + timedelta(hours=2),
+        )
+
+        resp = client.get(
+            "/api/analytics/summary",
+            headers=auth_headers,
+        )
+
+        assert resp.status_code == 200
+        data = resp.json
+        assert data["win_per_share_avg"] == 50.0
+        assert data["loss_per_share_avg"] == -30.0
+        # 50 / 30 = 1.666... -> 1.67
+        assert data["pl_ratio"] == 1.67
 
     def test_summary_filter_by_symbol(
         self, app, client, auth_headers
