@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import type { Execution } from '../../types/execution.types';
 import type { ChartInterval, OHLCDataPoint } from '../../types/marketData.types';
 
-const CHART_INTERVALS: ChartInterval[] = ['1m', '5m', '15m', '1h', '1d'];
+const CHART_INTERVALS: ChartInterval[] = ['1m', '5m', '15m'];
 
 /** Map chart interval to duration in seconds. */
 const INTERVAL_SECONDS: Record<ChartInterval, number> = {

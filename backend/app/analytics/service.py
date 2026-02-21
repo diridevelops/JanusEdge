@@ -1,5 +1,6 @@
 """Analytics service for computing trade metrics."""
 
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -36,7 +37,12 @@ def _build_base_match(
         )
 
     if filters.get("symbol"):
-        match["symbol"] = filters["symbol"]
+        symbol = str(filters["symbol"]).strip()
+        if symbol:
+            match["symbol"] = {
+                "$regex": f"^{re.escape(symbol)}$",
+                "$options": "i",
+            }
 
     if filters.get("side"):
         match["side"] = filters["side"]

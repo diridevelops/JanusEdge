@@ -49,22 +49,36 @@ class TradeService:
         """
         filters = {}
         if account:
-            acct = self.account_repo.find_one({
-                "user_id": ObjectId(user_id),
-                "account_name": account,
-            })
-            if acct:
-                filters["trade_account_id"] = acct["_id"]
+            if ObjectId.is_valid(account):
+                filters["trade_account_id"] = ObjectId(
+                    account
+                )
+            else:
+                acct = self.account_repo.find_one(
+                    {
+                        "user_id": ObjectId(user_id),
+                        "account_name": account,
+                    }
+                )
+                if acct:
+                    filters["trade_account_id"] = acct[
+                        "_id"
+                    ]
         if symbol:
             filters["symbol"] = symbol.upper()
         if side:
             filters["side"] = side
         if tag:
-            tag_doc = self.tag_repo.find_by_name(
-                user_id, tag
-            )
-            if tag_doc:
-                filters["tag_ids"] = tag_doc["_id"]
+            if ObjectId.is_valid(tag):
+                filters["tag_ids"] = ObjectId(tag)
+            else:
+                tag_doc = self.tag_repo.find_by_name(
+                    user_id, tag
+                )
+                if tag_doc:
+                    filters["tag_ids"] = tag_doc[
+                        "_id"
+                    ]
         if date_from:
             dt_from = datetime.fromisoformat(date_from)
             filters.setdefault("entry_time", {})

@@ -1,12 +1,11 @@
-import { Plus, Search } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { listTrades, searchTrades } from '../api/trades.api';
+import { listTrades } from '../api/trades.api';
 import { FilterBar } from '../components/filters/FilterBar';
 import { TradeTable } from '../components/trade/TradeTable';
 import { Pagination } from '../components/ui/Pagination';
 import { Spinner } from '../components/ui/Spinner';
-import { useDebounce } from '../hooks/useDebounce';
 import { useToast } from '../hooks/useToast';
 import type { Trade } from '../types/trade.types';
 import { DEFAULT_PAGE_SIZE } from '../utils/constants';
@@ -20,7 +19,6 @@ export function TradeListPage() {
   const [totalItems, setTotalItems] = useState(0);
   const [sortBy, setSortBy] = useState('entry_time');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
-  const [searchQuery, setSearchQuery] = useState('');
   const [filters, setFilters] = useState({
     symbol: '',
     side: '',
@@ -29,37 +27,29 @@ export function TradeListPage() {
     date_from: '',
     date_to: '',
   });
-  const debouncedSearch = useDebounce(searchQuery, 300);
   const { addToast } = useToast();
 
   const fetchTrades = useCallback(async () => {
     setIsLoading(true);
     try {
-      if (debouncedSearch) {
-        const results = await searchTrades(debouncedSearch);
-        setTrades(results);
-        setTotalPages(1);
-        setTotalItems(results.length);
-      } else {
-        const result = await listTrades({
-          page,
-          per_page: DEFAULT_PAGE_SIZE,
-          sort_by: sortBy,
-          sort_dir: sortDir,
-          ...Object.fromEntries(
-            Object.entries(filters).filter(([, v]) => v !== '')
-          ),
-        });
-        setTrades(result.trades ?? result.items);
-        setTotalPages(result.pages);
-        setTotalItems(result.total);
-      }
+      const result = await listTrades({
+        page,
+        per_page: DEFAULT_PAGE_SIZE,
+        sort_by: sortBy,
+        sort_dir: sortDir,
+        ...Object.fromEntries(
+          Object.entries(filters).filter(([, v]) => v !== '')
+        ),
+      });
+      setTrades(result.trades ?? result.items);
+      setTotalPages(result.pages);
+      setTotalItems(result.total);
     } catch {
       addToast('error', 'Failed to load trades');
     } finally {
       setIsLoading(false);
     }
-  }, [page, sortBy, sortDir, filters, debouncedSearch, addToast]);
+  }, [page, sortBy, sortDir, filters, addToast]);
 
   useEffect(() => {
     fetchTrades();
@@ -89,7 +79,6 @@ export function TradeListPage() {
       date_from: '',
       date_to: '',
     });
-    setSearchQuery('');
     setPage(1);
   }
 
@@ -107,21 +96,6 @@ export function TradeListPage() {
           <Plus className="h-4 w-4" />
           New Trade
         </Link>
-      </div>
-
-      {/* Search bar */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-        <input
-          type="text"
-          placeholder="Search trades by symbol, tags, notes..."
-          value={searchQuery}
-          onChange={(e) => {
-            setSearchQuery(e.target.value);
-            setPage(1);
-          }}
-          className="input-field pl-10 text-sm"
-        />
       </div>
 
       {/* Filters */}
