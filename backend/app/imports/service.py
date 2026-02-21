@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import List
 
 from bson import ObjectId
+from pymongo.errors import DuplicateKeyError
 
 from app.imports.parsers.base import (
     ParsedExecution,
@@ -207,7 +208,12 @@ class ImportService:
             column_mapping=column_mapping,
             reconstruction_method=reconstruction_method,
         )
-        batch_id = self.batch_repo.insert_one(batch_doc)
+        try:
+            batch_id = self.batch_repo.insert_one(batch_doc)
+        except DuplicateKeyError as exc:
+            raise DuplicateImportError(
+                "This file has already been imported."
+            ) from exc
         batch_oid = ObjectId(batch_id)
 
         # Process each reconstructed trade
@@ -255,9 +261,14 @@ class ImportService:
                 )
                 exec_docs.append(doc)
 
-            inserted_exec_ids = (
-                self.exec_repo.insert_many(exec_docs)
-            )
+            try:
+                inserted_exec_ids = (
+                    self.exec_repo.insert_many(exec_docs)
+                )
+            except DuplicateKeyError as exc:
+                raise ValidationError(
+                    "Duplicate execution IDs detected in imported data."
+                ) from exc
             total_execs += len(inserted_exec_ids)
 
             # Determine fee source

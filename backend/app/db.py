@@ -35,11 +35,6 @@ def init_db(db: Database) -> None:
     )
     db.executions.create_index("trade_id")
     db.executions.create_index("import_batch_id")
-    db.executions.create_index(
-        [("user_id", 1), ("platform_execution_id", 1)],
-        unique=True,
-        sparse=True,
-    )
     db.executions.create_index("trade_account_id")
 
     # Trades
