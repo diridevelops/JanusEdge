@@ -1,12 +1,14 @@
 import {
-    CartesianGrid,
-    Line,
-    LineChart,
-    ReferenceLine,
-    ResponsiveContainer,
-    Tooltip,
-    XAxis,
-    YAxis,
+  Bar,
+  CartesianGrid,
+  Cell,
+  ComposedChart,
+  Line,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
 } from 'recharts';
 import type { EquityCurvePoint } from '../../types/analytics.types';
 import { formatCurrency } from '../../utils/formatters';
@@ -16,7 +18,7 @@ interface EquityCurveChartProps {
   isLoading: boolean;
 }
 
-/** Line chart showing cumulative P&L over time. */
+/** Composed chart: cumulative P&L line + daily PnL histogram bars. */
 export function EquityCurveChart({ data, isLoading }: EquityCurveChartProps) {
   if (isLoading) {
     return (
@@ -34,34 +36,58 @@ export function EquityCurveChart({ data, isLoading }: EquityCurveChartProps) {
     );
   }
 
+  // Add display date and bar fill color based on sign
   const chartData = data.map((d) => ({
     ...d,
-    date: new Date(d.time).toLocaleDateString(),
+    displayDate: new Date(d.date).toLocaleDateString(),
   }));
 
   return (
     <ResponsiveContainer width="100%" height={280}>
-      <LineChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+      <ComposedChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
-        <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+        <XAxis dataKey="displayDate" tick={{ fontSize: 11 }} />
         <YAxis
+          yAxisId="left"
           tick={{ fontSize: 11 }}
           tickFormatter={(v: number) => formatCurrency(v)}
         />
         <Tooltip
-          formatter={(value: number) => [formatCurrency(value), 'Cumulative P&L']}
+          formatter={(value: number, name: string) => {
+            if (name === 'cumulative_pnl') return [formatCurrency(value), 'Cumulative P&L'];
+            if (name === 'daily_pnl') return [formatCurrency(value), 'Daily P&L'];
+            return [value, name];
+          }}
           labelStyle={{ fontWeight: 600 }}
         />
-        <ReferenceLine y={0} stroke="#9ca3af" strokeDasharray="3 3" />
+        <ReferenceLine yAxisId="left" y={0} stroke="#9ca3af" strokeDasharray="3 3" />
+        <Bar
+          yAxisId="left"
+          dataKey="daily_pnl"
+          name="daily_pnl"
+          barSize={10}
+          opacity={0.7}
+          isAnimationActive={false}
+        >
+          {chartData.map((entry) => (
+            <Cell
+              key={entry.date}
+              fill={entry.daily_pnl >= 0 ? '#22c55e' : '#ef4444'}
+              fillOpacity={0.55}
+            />
+          ))}
+        </Bar>
         <Line
+          yAxisId="left"
           type="monotone"
           dataKey="cumulative_pnl"
+          name="cumulative_pnl"
           stroke="#4f46e5"
           strokeWidth={2}
           dot={false}
           activeDot={{ r: 4 }}
         />
-      </LineChart>
+      </ComposedChart>
     </ResponsiveContainer>
   );
 }

@@ -3,27 +3,23 @@ import { useCallback, useEffect, useState } from 'react';
 import {
     getByTag,
     getCalendar,
-    getDistribution,
     getDrawdown,
     getEquityCurve,
     getSummary,
-    getTimeOfDay,
 } from '../api/analytics.api';
 import { StatsGrid } from '../components/analytics/StatsGrid';
+import { APPTDailyChart } from '../components/charts/APPTDailyChart';
 import { CalendarHeatmap } from '../components/charts/CalendarHeatmap';
 import { DrawdownChart } from '../components/charts/DrawdownChart';
 import { EquityCurveChart } from '../components/charts/EquityCurveChart';
-import { PnLHistogram } from '../components/charts/PnLHistogram';
-import { TimeOfDayChart } from '../components/charts/TimeOfDayChart';
+import { WinRateDailyChart } from '../components/charts/WinRateDailyChart';
 import { FilterBar } from '../components/filters/FilterBar';
 import type {
     AnalyticsSummary,
     CalendarDay,
-    DistributionBucket,
     DrawdownPoint,
     EquityCurvePoint,
     TagAnalytics,
-    TimeOfDayEntry,
 } from '../types/analytics.types';
 import { formatCurrency, formatPercent } from '../utils/formatters';
 
@@ -43,8 +39,6 @@ export function AnalyticsPage() {
   const [equityCurve, setEquityCurve] = useState<EquityCurvePoint[]>([]);
   const [drawdown, setDrawdown] = useState<DrawdownPoint[]>([]);
   const [calendar, setCalendar] = useState<CalendarDay[]>([]);
-  const [distribution, setDistribution] = useState<DistributionBucket[]>([]);
-  const [timeOfDay, setTimeOfDay] = useState<TimeOfDayEntry[]>([]);
   const [tagAnalytics, setTagAnalytics] = useState<TagAnalytics[]>([]);
 
   type Filters = typeof filters;
@@ -60,16 +54,12 @@ export function AnalyticsPage() {
         equityRes,
         drawdownRes,
         calendarRes,
-        distRes,
-        todRes,
         tagRes,
       ] = await Promise.all([
         getSummary(apiFilters),
         getEquityCurve(apiFilters),
         getDrawdown(apiFilters),
         getCalendar(apiFilters),
-        getDistribution(apiFilters),
-        getTimeOfDay(apiFilters),
         getByTag(apiFilters),
       ]);
 
@@ -77,8 +67,6 @@ export function AnalyticsPage() {
       setEquityCurve(equityRes);
       setDrawdown(drawdownRes);
       setCalendar(calendarRes);
-      setDistribution(distRes);
-      setTimeOfDay(todRes);
       setTagAnalytics(tagRes);
     } catch {
       // Toast handled by Axios interceptor for 401; silent catch otherwise
@@ -132,20 +120,20 @@ export function AnalyticsPage() {
         </div>
       </div>
 
-      {/* P&L distribution + time of day row */}
+      {/* APPT daily + Win rate daily row */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         <div className="card">
           <h2 className="text-sm font-semibold text-gray-700 mb-3">
-            P&L Distribution
+            APPT (Daily)
           </h2>
-          <PnLHistogram data={distribution} isLoading={loading} />
+          <APPTDailyChart data={equityCurve} isLoading={loading} />
         </div>
 
         <div className="card">
           <h2 className="text-sm font-semibold text-gray-700 mb-3">
-            Performance by Time of Day
+            Win Rate (Daily)
           </h2>
-          <TimeOfDayChart data={timeOfDay} isLoading={loading} />
+          <WinRateDailyChart data={equityCurve} isLoading={loading} />
         </div>
       </div>
 
@@ -205,7 +193,7 @@ export function AnalyticsPage() {
                       {formatCurrency(tag.avg_pnl)}
                     </td>
                     <td className="py-2 pr-4 text-right text-gray-600">
-                      {formatPercent(tag.win_rate * 100)}
+                      {formatPercent(tag.win_rate)}
                     </td>
                     <td className="py-2 text-right text-gray-600">
                       {tag.profit_factor != null

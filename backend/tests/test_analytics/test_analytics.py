@@ -122,6 +122,10 @@ class TestAnalyticsSummary:
         assert data["total_trades"] == 0
         assert data["win_rate"] == 0.0
         assert data["total_net_pnl"] == 0.0
+        assert data["appt"] == 0.0
+        assert data["pl_ratio"] is None
+        assert data["win_per_share_avg"] == 0.0
+        assert data["loss_per_share_avg"] == 0.0
 
     def test_summary_basic(
         self, app, client, auth_headers
@@ -196,6 +200,20 @@ class TestAnalyticsSummary:
         #   = 45 + (-32) = 13.0
         assert data["expectancy"] == 13.0
 
+        # APPT = 145 / 5 = 29.0
+        assert data["appt"] == 29.0
+        # P/L Ratio = 75 / 80 = 0.9375 -> 0.94
+        assert data["pl_ratio"] == 0.94
+        # Per-share: all trades have total_quantity=1
+        # win_per_share_avg = (100+50+75)/3 = 75.0
+        assert data["win_per_share_avg"] == 75.0
+        # win_per_share_high = 100.0
+        assert data["win_per_share_high"] == 100.0
+        # loss_per_share_avg = -80/1 = -80.0
+        assert data["loss_per_share_avg"] == -80.0
+        # loss_per_share_high = -80.0
+        assert data["loss_per_share_high"] == -80.0
+
     def test_summary_excludes_deleted(
         self, app, client, auth_headers
     ):
@@ -252,27 +270,27 @@ class TestEquityCurve:
     def test_equity_curve(
         self, app, client, auth_headers
     ):
-        """Equity curve shows cumulative P&L."""
+        """Equity curve shows daily cumulative P&L."""
         user_id = _get_user_id(app)
-        base = datetime(2025, 1, 15, 10, 0, 0)
 
+        # Three trades on day 1, one trade on day 2
         _insert_trade(
             app,
             user_id,
             net_pnl=100.0,
-            exit_time=base + timedelta(hours=1),
+            exit_time=datetime(2025, 1, 15, 11, 0, 0),
         )
         _insert_trade(
             app,
             user_id,
             net_pnl=-30.0,
-            exit_time=base + timedelta(hours=2),
+            exit_time=datetime(2025, 1, 15, 12, 0, 0),
         )
         _insert_trade(
             app,
             user_id,
             net_pnl=50.0,
-            exit_time=base + timedelta(hours=3),
+            exit_time=datetime(2025, 1, 16, 10, 0, 0),
         )
 
         resp = client.get(
@@ -282,10 +300,23 @@ class TestEquityCurve:
         assert resp.status_code == 200
         data = resp.json
 
-        assert len(data) == 3
-        assert data[0]["cumulative_pnl"] == 100.0
-        assert data[1]["cumulative_pnl"] == 70.0
-        assert data[2]["cumulative_pnl"] == 120.0
+        # Two days of data
+        assert len(data) == 2
+        # Day 1: 100 + (-30) = 70 daily, 70 cumulative
+        assert data[0]["date"] == "2025-01-15"
+        assert data[0]["daily_pnl"] == 70.0
+        assert data[0]["cumulative_pnl"] == 70.0
+        assert data[0]["trade_count"] == 2
+        assert data[0]["winners"] == 1
+        assert data[0]["win_rate"] == 50.0
+        assert data[0]["appt"] == 35.0
+        # Day 2: 50 daily, 120 cumulative
+        assert data[1]["date"] == "2025-01-16"
+        assert data[1]["daily_pnl"] == 50.0
+        assert data[1]["cumulative_pnl"] == 120.0
+        assert data[1]["trade_count"] == 1
+        assert data[1]["winners"] == 1
+        assert data[1]["win_rate"] == 100.0
 
     def test_equity_curve_empty(
         self, client, auth_headers
@@ -305,8 +336,8 @@ class TestDrawdown:
     def test_drawdown(self, app, client, auth_headers):
         """Drawdown shows peak-to-trough decline."""
         user_id = _get_user_id(app)
-        base = datetime(2025, 1, 15, 10, 0, 0)
 
+        # Day 1: +100, Day 2: -30, Day 3: +50
         # Equity: 100, 70, 120
         # Peak:   100, 100, 120
         # DD:     0, -30, 0
@@ -314,19 +345,19 @@ class TestDrawdown:
             app,
             user_id,
             net_pnl=100.0,
-            exit_time=base + timedelta(hours=1),
+            exit_time=datetime(2025, 1, 15, 11, 0, 0),
         )
         _insert_trade(
             app,
             user_id,
             net_pnl=-30.0,
-            exit_time=base + timedelta(hours=2),
+            exit_time=datetime(2025, 1, 16, 12, 0, 0),
         )
         _insert_trade(
             app,
             user_id,
             net_pnl=50.0,
-            exit_time=base + timedelta(hours=3),
+            exit_time=datetime(2025, 1, 17, 13, 0, 0),
         )
 
         resp = client.get(

@@ -1,11 +1,11 @@
 import {
-    Area,
-    AreaChart,
-    CartesianGrid,
-    ResponsiveContainer,
-    Tooltip,
-    XAxis,
-    YAxis,
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
 } from 'recharts';
 import type { DrawdownPoint } from '../../types/analytics.types';
 import { formatCurrency, formatPercent } from '../../utils/formatters';
@@ -35,14 +35,14 @@ export function DrawdownChart({ data, isLoading }: DrawdownChartProps) {
 
   const chartData = data.map((d) => ({
     ...d,
-    date: new Date(d.time).toLocaleDateString(),
+    displayDate: new Date(d.date).toLocaleDateString(),
   }));
 
   return (
     <ResponsiveContainer width="100%" height={220}>
       <AreaChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
-        <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+        <XAxis dataKey="displayDate" tick={{ fontSize: 11 }} />
         <YAxis
           tick={{ fontSize: 11 }}
           tickFormatter={(v: number) => formatCurrency(v)}

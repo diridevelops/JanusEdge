@@ -16,19 +16,28 @@ export interface AnalyticsSummary {
   expectancy: number;
   avg_holding_time_seconds: number;
   avg_executions: number;
+  appt: number;
+  pl_ratio: number | null;
+  win_per_share_avg: number;
+  win_per_share_high: number;
+  loss_per_share_avg: number;
+  loss_per_share_high: number;
 }
 
-/** Single point on the equity curve. */
+/** Single point on the daily equity curve. */
 export interface EquityCurvePoint {
-  time: string;
-  net_pnl: number;
+  date: string;
+  daily_pnl: number;
   cumulative_pnl: number;
-  symbol: string;
+  trade_count: number;
+  winners: number;
+  appt: number;
+  win_rate: number;
 }
 
 /** Single point on the drawdown series. */
 export interface DrawdownPoint {
-  time: string;
+  date: string;
   cumulative_pnl: number;
   drawdown: number;
   drawdown_pct: number;

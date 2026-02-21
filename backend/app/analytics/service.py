@@ -94,6 +94,28 @@ class AnalyticsService:
 
         pipeline = [
             {"$match": match},
+            # Compute per-contract P&L for each trade
+            {
+                "$addFields": {
+                    "pnl_per_contract": {
+                        "$cond": {
+                            "if": {
+                                "$gt": [
+                                    "$total_quantity",
+                                    0,
+                                ]
+                            },
+                            "then": {
+                                "$divide": [
+                                    "$net_pnl",
+                                    "$total_quantity",
+                                ]
+                            },
+                            "else": 0,
+                        }
+                    }
+                }
+            },
             {
                 "$group": {
                     "_id": None,
@@ -163,6 +185,66 @@ class AnalyticsService:
                     "avg_executions": {
                         "$avg": "$execution_count"
                     },
+                    # Per-contract aggregations
+                    # for winners
+                    "win_ppc_sum": {
+                        "$sum": {
+                            "$cond": [
+                                {
+                                    "$gt": [
+                                        "$net_pnl",
+                                        0,
+                                    ]
+                                },
+                                "$pnl_per_contract",
+                                0,
+                            ]
+                        }
+                    },
+                    "win_ppc_max": {
+                        "$max": {
+                            "$cond": [
+                                {
+                                    "$gt": [
+                                        "$net_pnl",
+                                        0,
+                                    ]
+                                },
+                                "$pnl_per_contract",
+                                -999999999,
+                            ]
+                        }
+                    },
+                    # Per-contract aggregations
+                    # for losers
+                    "loss_ppc_sum": {
+                        "$sum": {
+                            "$cond": [
+                                {
+                                    "$lt": [
+                                        "$net_pnl",
+                                        0,
+                                    ]
+                                },
+                                "$pnl_per_contract",
+                                0,
+                            ]
+                        }
+                    },
+                    "loss_ppc_min": {
+                        "$min": {
+                            "$cond": [
+                                {
+                                    "$lt": [
+                                        "$net_pnl",
+                                        0,
+                                    ]
+                                },
+                                "$pnl_per_contract",
+                                999999999,
+                            ]
+                        }
+                    },
                 }
             },
         ]
@@ -213,10 +295,54 @@ class AnalyticsService:
             (1 - win_pct) * avg_loser
         )
 
+        # APPT: Average Profitability Per Trade
+        appt = (
+            (data["total_net_pnl"] / total)
+            if total > 0
+            else 0.0
+        )
+
+        # P/L Ratio: avg_winner / abs(avg_loser)
+        pl_ratio = (
+            (avg_winner / abs(avg_loser))
+            if avg_loser != 0
+            else None
+        )
+
+        # Per-contract (per-share) metrics
+        losers_count = data["losers"]
+        win_per_share_avg = (
+            (data["win_ppc_sum"] / winners_count)
+            if winners_count > 0
+            else 0.0
+        )
+        win_per_share_high = (
+            data["win_ppc_max"]
+            if winners_count > 0
+            else 0.0
+        )
+        # Sentinel check: -999999999 means no winners
+        if win_per_share_high == -999999999:
+            win_per_share_high = 0.0
+
+        loss_per_share_avg = (
+            (data["loss_ppc_sum"] / losers_count)
+            if losers_count > 0
+            else 0.0
+        )
+        loss_per_share_high = (
+            data["loss_ppc_min"]
+            if losers_count > 0
+            else 0.0
+        )
+        # Sentinel check: 999999999 means no losers
+        if loss_per_share_high == 999999999:
+            loss_per_share_high = 0.0
+
         return {
             "total_trades": total,
             "winners": winners_count,
-            "losers": data["losers"],
+            "losers": losers_count,
             "breakeven": data["breakeven"],
             "win_rate": round(win_rate, 2),
             "total_gross_pnl": round(
@@ -244,6 +370,24 @@ class AnalyticsService:
             "avg_executions": round(
                 data["avg_executions"], 2
             ),
+            "appt": round(appt, 2),
+            "pl_ratio": (
+                round(pl_ratio, 2)
+                if pl_ratio is not None
+                else None
+            ),
+            "win_per_share_avg": round(
+                win_per_share_avg, 2
+            ),
+            "win_per_share_high": round(
+                win_per_share_high, 2
+            ),
+            "loss_per_share_avg": round(
+                loss_per_share_avg, 2
+            ),
+            "loss_per_share_high": round(
+                loss_per_share_high, 2
+            ),
         }
 
     def get_equity_curve(
@@ -252,17 +396,18 @@ class AnalyticsService:
         filters: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Compute equity curve as cumulative net P&L.
+        Compute daily equity curve with cumulative P&L.
 
-        Returns trades sorted by exit_time with running
-        cumulative P&L.
+        Groups trades by exit date, computing daily PnL,
+        cumulative PnL, trade count, winners, APPT,
+        and win rate per day.
 
         Parameters:
             user_id: The user's ObjectId string.
             filters: Optional filter parameters.
 
         Returns:
-            List of {time, net_pnl, cumulative_pnl} dicts.
+            List of daily equity curve point dicts.
         """
         if filters is None:
             filters = {}
@@ -271,36 +416,70 @@ class AnalyticsService:
 
         pipeline = [
             {"$match": match},
-            {"$sort": {"exit_time": 1}},
             {
-                "$project": {
-                    "exit_time": 1,
-                    "net_pnl": 1,
-                    "symbol": 1,
+                "$group": {
+                    "_id": {
+                        "$dateToString": {
+                            "format": "%Y-%m-%d",
+                            "date": "$exit_time",
+                        }
+                    },
+                    "daily_pnl": {
+                        "$sum": "$net_pnl"
+                    },
+                    "trade_count": {"$sum": 1},
+                    "winners": {
+                        "$sum": {
+                            "$cond": [
+                                {
+                                    "$gt": [
+                                        "$net_pnl",
+                                        0,
+                                    ]
+                                },
+                                1,
+                                0,
+                            ]
+                        }
+                    },
                 }
             },
+            {"$sort": {"_id": 1}},
         ]
 
-        trades = list(
+        results = list(
             mongo.db.trades.aggregate(pipeline)
         )
 
         cumulative = 0.0
         curve = []
-        for trade in trades:
-            cumulative += trade["net_pnl"]
+        for r in results:
+            cumulative += r["daily_pnl"]
+            trade_count = r["trade_count"]
+            winners = r["winners"]
+            appt = (
+                r["daily_pnl"] / trade_count
+                if trade_count > 0
+                else 0.0
+            )
+            win_rate = (
+                winners / trade_count * 100
+                if trade_count > 0
+                else 0.0
+            )
             curve.append(
                 {
-                    "time": trade[
-                        "exit_time"
-                    ].isoformat(),
-                    "net_pnl": round(
-                        trade["net_pnl"], 2
+                    "date": r["_id"],
+                    "daily_pnl": round(
+                        r["daily_pnl"], 2
                     ),
                     "cumulative_pnl": round(
                         cumulative, 2
                     ),
-                    "symbol": trade.get("symbol", ""),
+                    "trade_count": trade_count,
+                    "winners": winners,
+                    "appt": round(appt, 2),
+                    "win_rate": round(win_rate, 2),
                 }
             )
 
@@ -341,7 +520,7 @@ class AnalyticsService:
             )
             drawdowns.append(
                 {
-                    "time": point["time"],
+                    "date": point["date"],
                     "cumulative_pnl": cumulative,
                     "drawdown": round(dd, 2),
                     "drawdown_pct": round(dd_pct, 2),
@@ -698,4 +877,10 @@ def _empty_summary() -> Dict[str, Any]:
         "expectancy": 0.0,
         "avg_holding_time_seconds": 0.0,
         "avg_executions": 0.0,
+        "appt": 0.0,
+        "pl_ratio": None,
+        "win_per_share_avg": 0.0,
+        "win_per_share_high": 0.0,
+        "loss_per_share_avg": 0.0,
+        "loss_per_share_high": 0.0,
     }

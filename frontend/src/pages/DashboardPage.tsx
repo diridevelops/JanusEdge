@@ -72,7 +72,7 @@ export function DashboardPage() {
       value: formatCurrency(summary!.total_net_pnl),
       color: summary!.total_net_pnl >= 0 ? 'pnl-positive' : 'pnl-negative',
     },
-    { label: 'Win Rate', value: formatPercent(summary!.win_rate * 100) },
+    { label: 'Win Rate', value: formatPercent(summary!.win_rate) },
     {
       label: 'Profit Factor',
       value: summary!.profit_factor != null ? summary!.profit_factor.toFixed(2) : '—',
