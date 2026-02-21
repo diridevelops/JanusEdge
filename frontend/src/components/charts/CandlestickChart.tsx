@@ -5,6 +5,15 @@ import type { ChartInterval, OHLCDataPoint } from '../../types/marketData.types'
 
 const CHART_INTERVALS: ChartInterval[] = ['1m', '5m', '15m', '1h', '1d'];
 
+/** Map chart interval to duration in seconds. */
+const INTERVAL_SECONDS: Record<ChartInterval, number> = {
+  '1m': 60,
+  '5m': 300,
+  '15m': 900,
+  '1h': 3600,
+  '1d': 86400,
+};
+
 interface CandlestickChartProps {
   /** OHLC data from backend market data API. */
   ohlcData: OHLCDataPoint[];
@@ -89,11 +98,16 @@ export function CandlestickChart({
   const buildMarkers = useCallback(() => {
     if (!executions.length) return [];
 
+    const intervalSec = INTERVAL_SECONDS[interval];
+
     return executions
       .map((exec) => {
         const utcEpoch = Math.floor(new Date(exec.timestamp).getTime() / 1000);
+        // Floor to the start of the bar interval so
+        // markers align with the correct candlestick
+        const floored = Math.floor(utcEpoch / intervalSec) * intervalSec;
         return {
-          time: shiftTime(utcEpoch) as unknown as import('lightweight-charts').Time,
+          time: shiftTime(floored) as unknown as import('lightweight-charts').Time,
           position: (exec.side === 'Buy' ? 'belowBar' : 'aboveBar') as 'belowBar' | 'aboveBar',
           color: exec.side === 'Buy' ? '#22c55e' : '#ef4444',
           shape: (exec.side === 'Buy' ? 'arrowUp' : 'arrowDown') as 'arrowUp' | 'arrowDown',
@@ -101,7 +115,7 @@ export function CandlestickChart({
         };
       })
       .sort((a, b) => (a.time as number) - (b.time as number));
-  }, [executions, shiftTime]);
+  }, [executions, shiftTime, interval]);
 
   // Create / destroy chart
   useEffect(() => {
