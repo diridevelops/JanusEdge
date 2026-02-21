@@ -3,8 +3,8 @@ import { useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 
 interface FileDropZoneProps {
-  /** Called when a valid CSV file is accepted. */
-  onFileAccepted: (file: File) => void;
+  /** Called when one or more valid CSV files are accepted. */
+  onFileAccepted: (files: File[]) => void;
   /** Whether submission is in progress. */
   isLoading: boolean;
   /** Error message to display. */
@@ -19,9 +19,8 @@ export function FileDropZone({
 }: FileDropZoneProps) {
   const onDrop = useCallback(
     (acceptedFiles: File[]) => {
-      const file = acceptedFiles[0];
-      if (file) {
-        onFileAccepted(file);
+      if (acceptedFiles.length > 0) {
+        onFileAccepted(acceptedFiles);
       }
     },
     [onFileAccepted]
@@ -31,11 +30,10 @@ export function FileDropZone({
     useDropzone({
       onDrop,
       accept: { 'text/csv': ['.csv'] },
-      maxFiles: 1,
       disabled: isLoading,
     });
 
-  const selectedFile = acceptedFiles[0] ?? null;
+  const selectedFiles = acceptedFiles;
 
   return (
     <div className="w-full">
@@ -53,26 +51,29 @@ export function FileDropZone({
               <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-brand-600" />
               <p className="text-sm text-gray-600">Uploading and parsing file...</p>
             </>
-          ) : selectedFile ? (
+          ) : selectedFiles.length > 0 ? (
             <>
               <FileText className="h-10 w-10 text-brand-600" />
-              <p className="text-sm font-medium text-gray-900">{selectedFile.name}</p>
-              <p className="text-xs text-gray-500">
-                {(selectedFile.size / 1024).toFixed(1)} KB
+              <p className="text-sm font-medium text-gray-900">
+                {selectedFiles.length} file{selectedFiles.length === 1 ? '' : 's'} selected
+              </p>
+              <p className="text-xs text-gray-500 text-center">
+                {selectedFiles.slice(0, 3).map((file) => file.name).join(', ')}
+                {selectedFiles.length > 3 ? '…' : ''}
               </p>
             </>
           ) : (
             <>
               <Upload className="h-10 w-10 text-gray-400" />
               {isDragActive ? (
-                <p className="text-sm text-brand-600 font-medium">Drop file here...</p>
+                <p className="text-sm text-brand-600 font-medium">Drop CSV files here...</p>
               ) : (
                 <>
                   <p className="text-sm text-gray-600">
                     <span className="font-medium text-brand-600">Click to upload</span> or drag
                     and drop
                   </p>
-                  <p className="text-xs text-gray-500">CSV files only (NinjaTrader, Quantower)</p>
+                  <p className="text-xs text-gray-500">One or more CSV files (NinjaTrader, Quantower)</p>
                 </>
               )}
             </>

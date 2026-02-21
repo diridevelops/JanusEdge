@@ -22,8 +22,8 @@ export function ImportPage() {
 
   const currentStepIndex = STEPS.indexOf(wizard.step);
 
-  function handleFileAccepted(file: File) {
-    wizard.handleUpload(file);
+  function handleFileAccepted(files: File[]) {
+    wizard.handleUpload(files);
   }
 
   async function handleConfirmPreview() {
@@ -40,7 +40,7 @@ export function ImportPage() {
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Import Trades</h1>
         <p className="mt-1 text-sm text-gray-500">
-          Upload a CSV export from NinjaTrader or Quantower to import your trades.
+          Upload one or more CSV exports from NinjaTrader or Quantower to import your trades.
         </p>
       </div>
 
@@ -101,7 +101,7 @@ export function ImportPage() {
         {wizard.step === 'upload' && (
           <div className="space-y-4">
             <h2 className="text-lg font-semibold text-gray-900">
-              Upload CSV File
+              Upload CSV Files
             </h2>
             <FileDropZone
               onFileAccepted={handleFileAccepted}

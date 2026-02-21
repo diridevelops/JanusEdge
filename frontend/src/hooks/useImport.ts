@@ -6,6 +6,42 @@ import type {
 } from '../types/import.types';
 import { uploadCSV, reconstructTrades, finalizeImport } from '../api/imports.api';
 
+interface ApiErrorPayload {
+  error?: string | { message?: string };
+}
+
+interface ApiErrorLike {
+  message?: string;
+  response?: {
+    status?: number;
+    data?: ApiErrorPayload;
+  };
+}
+
+function getApiErrorMessage(
+  err: unknown,
+  fallback: string,
+  duplicateFallback: string
+): string {
+  const apiError = err as ApiErrorLike;
+  const status = apiError?.response?.status;
+  const payloadError = apiError?.response?.data?.error;
+  const serverMessage =
+    typeof payloadError === 'string'
+      ? payloadError
+      : payloadError?.message;
+
+  if (status === 409) {
+    return serverMessage ?? duplicateFallback;
+  }
+
+  return (
+    serverMessage
+    ?? (err instanceof Error ? err.message : undefined)
+    ?? fallback
+  );
+}
+
 /** Import wizard step identifiers. */
 export type ImportStep = 'upload' | 'preview' | 'fees' | 'summary';
 
@@ -42,6 +78,17 @@ interface ImportState {
   fees: Record<number, number>;
   /** Number of finalized trades. */
   finalizedCount: number;
+  /** Uploaded files metadata for multi-file import. */
+  uploadedFiles: Array<{
+    platform: string;
+    file_name: string;
+    file_hash: string;
+    file_size: number;
+    column_mapping: Record<string, string> | null;
+    executions: ParsedExecution[];
+  }>;
+  /** Mapping between displayed trade index and source file trade index. */
+  tradeOrigins: Array<{ fileIndex: number; tradeIndex: number }>;
 }
 
 const INITIAL_STATE: ImportState = {
@@ -61,14 +108,20 @@ const INITIAL_STATE: ImportState = {
   trades: [],
   fees: {},
   finalizedCount: 0,
+  uploadedFiles: [],
+  tradeOrigins: [],
 };
 
 /** Custom hook for the multi-step import wizard state machine. */
 export function useImport() {
   const [state, setState] = useState<ImportState>(INITIAL_STATE);
 
-  /** Step 1: Upload and parse CSV file. */
-  const handleUpload = useCallback(async (file: File) => {
+  /** Step 1: Upload and parse one or more CSV files. */
+  const handleUpload = useCallback(async (files: File[]) => {
+    if (files.length === 0) {
+      return;
+    }
+
     setState((prev) => ({
       ...prev,
       isLoading: true,
@@ -76,29 +129,67 @@ export function useImport() {
     }));
 
     try {
-      const result = await uploadCSV(file);
+      const results = await Promise.all(
+        files.map((file) => uploadCSV(file))
+      );
+
+      const allExecutions = results.flatMap((r) => r.executions);
+      const allErrors = results.flatMap((r) => r.errors);
+      const allWarnings = results.flatMap((r) => r.warnings ?? []);
+      const totalRows = results.reduce(
+        (sum, r) => sum + (r.total_rows ?? r.row_count ?? 0),
+        0
+      );
+      const parsedRows = results.reduce(
+        (sum, r) => sum + (r.parsed_rows ?? r.executions.length),
+        0
+      );
+
+      const platforms = Array.from(
+        new Set(results.map((r) => r.platform))
+      );
+      const displayPlatform =
+        platforms.length === 1
+          ? (platforms[0] ?? '')
+          : 'Mixed';
+
+      const first = results[0];
+      const fileLabel =
+        results.length === 1
+          ? first?.file_name ?? ''
+          : `${results.length} CSV files`;
 
       setState((prev) => ({
         ...prev,
         isLoading: false,
         step: 'preview',
-        platform: result.platform,
-        fileName: result.file_name,
-        fileHash: result.file_hash,
-        fileSize: result.file_size,
-        columnMapping: result.column_mapping ?? null,
-        executions: result.executions,
-        parseErrors: result.errors,
-        warnings: result.warnings ?? [],
-        totalRows: result.total_rows,
-        parsedRows: result.parsed_rows,
+        platform: displayPlatform,
+        fileName: fileLabel,
+        fileHash: first?.file_hash ?? '',
+        fileSize: first?.file_size ?? 0,
+        columnMapping: first?.column_mapping ?? null,
+        executions: allExecutions,
+        parseErrors: allErrors,
+        warnings: allWarnings,
+        totalRows,
+        parsedRows,
+        uploadedFiles: results.map((result) => ({
+          platform: result.platform,
+          file_name: result.file_name,
+          file_hash: result.file_hash,
+          file_size: result.file_size,
+          column_mapping: result.column_mapping ?? null,
+          executions: result.executions,
+        })),
       }));
     } catch (err: unknown) {
-      const message =
-        err instanceof Error
-          ? err.message
-          : (err as { response?: { data?: { error?: string } } })?.response?.data?.error ??
-            'Upload failed. Please try again.';
+      const message = getApiErrorMessage(
+        err,
+        'Upload failed. Please try again.',
+        files.length > 1
+          ? 'One or more selected files were already imported. Remove duplicate files and try again.'
+          : 'This file was already imported. Please choose a different CSV file.'
+      );
       setState((prev) => ({
         ...prev,
         isLoading: false,
@@ -116,11 +207,42 @@ export function useImport() {
     }));
 
     try {
-      const result = await reconstructTrades(state.executions);
+      const sourceFiles =
+        state.uploadedFiles.length > 0
+          ? state.uploadedFiles
+          : [
+              {
+                platform: state.platform,
+                file_name: state.fileName,
+                file_hash: state.fileHash,
+                file_size: state.fileSize,
+                column_mapping: state.columnMapping,
+                executions: state.executions,
+              },
+            ];
+
+      const reconstructedByFile = await Promise.all(
+        sourceFiles.map((file) =>
+          reconstructTrades(file.executions)
+        )
+      );
+
+      const allTrades: ReconstructedTrade[] = [];
+      const tradeOrigins: Array<{
+        fileIndex: number;
+        tradeIndex: number;
+      }> = [];
+
+      reconstructedByFile.forEach((result, fileIndex) => {
+        result.trades.forEach((trade, tradeIndex) => {
+          allTrades.push(trade);
+          tradeOrigins.push({ fileIndex, tradeIndex });
+        });
+      });
 
       // Initialize fees from commission data if available
       const initialFees: Record<number, number> = {};
-      result.trades.forEach((trade, idx) => {
+      allTrades.forEach((trade, idx) => {
         initialFees[idx] = trade.fee ?? 0;
       });
 
@@ -128,22 +250,23 @@ export function useImport() {
         ...prev,
         isLoading: false,
         step: 'fees',
-        trades: result.trades,
+        trades: allTrades,
         fees: initialFees,
+        tradeOrigins,
       }));
     } catch (err: unknown) {
-      const message =
-        err instanceof Error
-          ? err.message
-          : (err as { response?: { data?: { error?: string } } })?.response?.data?.error ??
-            'Trade reconstruction failed.';
+      const message = getApiErrorMessage(
+        err,
+        'Trade reconstruction failed.',
+        'A duplicate file was detected. Please remove already imported files and try again.'
+      );
       setState((prev) => ({
         ...prev,
         isLoading: false,
         error: message,
       }));
     }
-  }, [state.executions]);
+  }, [state.uploadedFiles, state.platform, state.fileName, state.fileHash, state.fileSize, state.columnMapping, state.executions]);
 
   /** Step 3: Finalize import with fee assignments. */
   const handleFinalize = useCallback(async () => {
@@ -154,41 +277,78 @@ export function useImport() {
     }));
 
     try {
-      const tradesPayload = state.trades.map((_, idx) => ({
-        index: idx,
-        fee: state.fees[idx] ?? 0,
-      }));
+      const sourceFiles =
+        state.uploadedFiles.length > 0
+          ? state.uploadedFiles
+          : [
+              {
+                platform: state.platform,
+                file_name: state.fileName,
+                file_hash: state.fileHash,
+                file_size: state.fileSize,
+                column_mapping: state.columnMapping,
+                executions: state.executions,
+              },
+            ];
 
-      const result = await finalizeImport({
-        file_hash: state.fileHash,
-        platform: state.platform,
-        file_name: state.fileName,
-        file_size: state.fileSize,
-        reconstruction_method: 'FIFO',
-        trades: tradesPayload,
-        executions: state.executions,
-        column_mapping: state.columnMapping,
-      });
+      const originMap =
+        state.tradeOrigins.length > 0
+          ? state.tradeOrigins
+          : state.trades.map((_, idx) => ({
+              fileIndex: 0,
+              tradeIndex: idx,
+            }));
+
+      const finalizeResults = await Promise.all(
+        sourceFiles.map((file, fileIndex) => {
+          const tradesPayload = originMap
+            .map((origin, globalIndex) => ({
+              origin,
+              globalIndex,
+            }))
+            .filter(({ origin }) => origin.fileIndex === fileIndex)
+            .map(({ origin, globalIndex }) => ({
+              index: origin.tradeIndex,
+              fee: state.fees[globalIndex] ?? 0,
+            }));
+
+          return finalizeImport({
+            file_hash: file.file_hash,
+            platform: file.platform,
+            file_name: file.file_name,
+            file_size: file.file_size,
+            reconstruction_method: 'FIFO',
+            trades: tradesPayload,
+            executions: file.executions,
+            column_mapping: file.column_mapping,
+          });
+        })
+      );
+
+      const totalImported = finalizeResults.reduce(
+        (sum, result) => sum + result.trades_imported,
+        0
+      );
 
       setState((prev) => ({
         ...prev,
         isLoading: false,
         step: 'summary',
-        finalizedCount: result.trades_imported,
+        finalizedCount: totalImported,
       }));
     } catch (err: unknown) {
-      const message =
-        err instanceof Error
-          ? err.message
-          : (err as { response?: { data?: { error?: string } } })?.response?.data?.error ??
-            'Import finalization failed.';
+      const message = getApiErrorMessage(
+        err,
+        'Import finalization failed.',
+        'One or more files were already imported. Please remove duplicates and retry.'
+      );
       setState((prev) => ({
         ...prev,
         isLoading: false,
         error: message,
       }));
     }
-  }, [state.trades, state.fees, state.fileHash, state.platform, state.fileName, state.fileSize, state.executions, state.columnMapping]);
+  }, [state.tradeOrigins, state.uploadedFiles, state.trades, state.fees, state.fileHash, state.platform, state.fileName, state.fileSize, state.executions, state.columnMapping]);
 
   /** Update fee for a specific trade. */
   const setFee = useCallback((index: number, fee: number) => {
