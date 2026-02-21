@@ -70,9 +70,9 @@ class MarketDataService:
                 tzinfo=dt.timezone.utc
             )
 
-        # Add 30-minute padding around the trade
+        # Add 2-hours padding around the trade
         start_dt -= timedelta(hours=2)
-        end_dt += timedelta(minutes=30)
+        end_dt += timedelta(hours=2)
 
         start_date = start_dt.date()
         end_date = end_dt.date()
