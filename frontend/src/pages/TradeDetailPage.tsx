@@ -53,11 +53,41 @@ export function TradeDetailPage() {
     if (!trade) return;
     setIsChartLoading(true);
     try {
+      const entryDate = new Date(trade.entry_time);
+      const exitDate = new Date(trade.exit_time);
+
+      const first = entryDate <= exitDate ? entryDate : exitDate;
+      const last = entryDate <= exitDate ? exitDate : entryDate;
+
+      const dayStart = new Date(
+        Date.UTC(
+          first.getUTCFullYear(),
+          first.getUTCMonth(),
+          first.getUTCDate(),
+          0,
+          0,
+          0,
+          0
+        )
+      );
+
+      const dayEnd = new Date(
+        Date.UTC(
+          last.getUTCFullYear(),
+          last.getUTCMonth(),
+          last.getUTCDate() + 1,
+          0,
+          0,
+          0,
+          0
+        )
+      );
+
       const data = await getOHLC({
         symbol: trade.symbol,
         interval,
-        start: trade.entry_time,
-        end: trade.exit_time,
+        start: dayStart.toISOString(),
+        end: dayEnd.toISOString(),
       });
       setOhlcData(data);
     } catch {
