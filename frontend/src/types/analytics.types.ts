@@ -76,3 +76,19 @@ export interface TagAnalytics {
   win_rate: number;
   profit_factor: number | null;
 }
+
+/** APPT grouped by day of week. */
+export interface ApptByDayOfWeekEntry {
+  day_of_week: string;
+  appt: number;
+  trade_count: number;
+  net_pnl: number;
+}
+
+/** APPT grouped by 15-minute timeframe bucket. */
+export interface ApptByTimeframeEntry {
+  timespan_start: string;
+  appt: number;
+  trade_count: number;
+  net_pnl: number;
+}

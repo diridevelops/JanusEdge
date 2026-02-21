@@ -858,6 +858,200 @@ class AnalyticsService:
 
         return output
 
+    def get_appt_by_day_of_week(
+        self,
+        user_id: str,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Compute APPT grouped by day of week.
+
+        Groups trades by entry weekday (Monday-Sunday)
+        and computes APPT for each weekday bucket.
+
+        Parameters:
+            user_id: The user's ObjectId string.
+            filters: Optional filter parameters.
+
+        Returns:
+            List of {day_of_week, appt, trade_count, net_pnl}
+            dicts in Monday-Sunday order.
+        """
+        if filters is None:
+            filters = {}
+
+        match = _build_base_match(user_id, filters)
+        timezone = filters.get("timezone") or "UTC"
+
+        pipeline = [
+            {"$match": match},
+            {
+                "$group": {
+                    "_id": {
+                        "$isoDayOfWeek": {
+                            "date": "$entry_time",
+                            "timezone": timezone,
+                        }
+                    },
+                    "trade_count": {"$sum": 1},
+                    "net_pnl": {"$sum": "$net_pnl"},
+                }
+            },
+            {"$sort": {"_id": 1}},
+        ]
+
+        results = list(
+            mongo.db.trades.aggregate(pipeline)
+        )
+
+        day_names = {
+            1: "Monday",
+            2: "Tuesday",
+            3: "Wednesday",
+            4: "Thursday",
+            5: "Friday",
+            6: "Saturday",
+            7: "Sunday",
+        }
+
+        by_day = {
+            r["_id"]: {
+                "trade_count": r["trade_count"],
+                "net_pnl": r["net_pnl"],
+            }
+            for r in results
+        }
+
+        output = []
+        for day_num in range(1, 8):
+            trade_count = by_day.get(day_num, {}).get(
+                "trade_count", 0
+            )
+            net_pnl = by_day.get(day_num, {}).get(
+                "net_pnl", 0.0
+            )
+            appt = (
+                (net_pnl / trade_count)
+                if trade_count > 0
+                else 0.0
+            )
+            output.append(
+                {
+                    "day_of_week": day_names[day_num],
+                    "appt": round(appt),
+                    "trade_count": trade_count,
+                    "net_pnl": round(net_pnl, 2),
+                }
+            )
+
+        return output
+
+    def get_appt_by_timeframe(
+        self,
+        user_id: str,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Compute APPT grouped by 15-minute entry buckets.
+
+        Groups trades by 15-minute timeframe based on
+        entry_time (e.g. 09:00, 09:15, 09:30) and computes
+        APPT for each bucket.
+
+        Parameters:
+            user_id: The user's ObjectId string.
+            filters: Optional filter parameters.
+
+        Returns:
+            List of {timespan_start, appt, trade_count,
+            net_pnl} dicts sorted by timespan.
+        """
+        if filters is None:
+            filters = {}
+
+        match = _build_base_match(user_id, filters)
+        timezone = filters.get("timezone") or "UTC"
+
+        pipeline = [
+            {"$match": match},
+            {
+                "$project": {
+                    "bucket_minutes": {
+                        "$add": [
+                            {
+                                "$multiply": [
+                                    {
+                                        "$hour": {
+                                            "date": "$entry_time",
+                                            "timezone": timezone,
+                                        }
+                                    },
+                                    60,
+                                ]
+                            },
+                            {
+                                "$multiply": [
+                                    {
+                                        "$floor": {
+                                            "$divide": [
+                                                {
+                                                    "$minute": {
+                                                        "date": "$entry_time",
+                                                        "timezone": timezone,
+                                                    }
+                                                },
+                                                15,
+                                            ]
+                                        }
+                                    },
+                                    15,
+                                ]
+                            },
+                        ]
+                    },
+                    "net_pnl": 1,
+                }
+            },
+            {
+                "$group": {
+                    "_id": "$bucket_minutes",
+                    "trade_count": {"$sum": 1},
+                    "net_pnl": {"$sum": "$net_pnl"},
+                }
+            },
+            {"$sort": {"_id": 1}},
+        ]
+
+        results = list(
+            mongo.db.trades.aggregate(pipeline)
+        )
+
+        output = []
+        for r in results:
+            bucket_minutes = int(r["_id"])
+            hour = bucket_minutes // 60
+            minute = bucket_minutes % 60
+            timespan_start = (
+                f"{hour:02d}:{minute:02d}"
+            )
+            trade_count = r["trade_count"]
+            net_pnl = r["net_pnl"]
+            appt = (
+                (net_pnl / trade_count)
+                if trade_count > 0
+                else 0.0
+            )
+            output.append(
+                {
+                    "timespan_start": timespan_start,
+                    "appt": round(appt),
+                    "trade_count": trade_count,
+                    "net_pnl": round(net_pnl, 2),
+                }
+            )
+
+        return output
+
 
 def _empty_summary() -> Dict[str, Any]:
     """

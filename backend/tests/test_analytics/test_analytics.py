@@ -616,6 +616,116 @@ class TestByTag:
         assert resp.json == []
 
 
+class TestApptByDayOfWeek:
+    """Tests for GET /api/analytics/appt-by-day-of-week."""
+
+    def test_appt_by_day_of_week(
+        self, app, client, auth_headers
+    ):
+        """Returns Monday-Sunday buckets with APPT values."""
+        user_id = _get_user_id(app)
+
+        # Monday (2025-01-13) two trades: +100, -50 => APPT 25
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=100.0,
+            entry_time=datetime(2025, 1, 13, 9, 5, 0),
+            exit_time=datetime(2025, 1, 13, 9, 35, 0),
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=-50.0,
+            entry_time=datetime(2025, 1, 13, 10, 5, 0),
+            exit_time=datetime(2025, 1, 13, 10, 35, 0),
+        )
+
+        # Tuesday one trade: +40 => APPT 40
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=40.0,
+            entry_time=datetime(2025, 1, 14, 11, 0, 0),
+            exit_time=datetime(2025, 1, 14, 11, 30, 0),
+        )
+
+        resp = client.get(
+            "/api/analytics/appt-by-day-of-week",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json
+
+        assert len(data) == 7
+        assert data[0]["day_of_week"] == "Monday"
+        assert data[1]["day_of_week"] == "Tuesday"
+        assert data[6]["day_of_week"] == "Sunday"
+
+        monday = data[0]
+        assert monday["trade_count"] == 2
+        assert monday["net_pnl"] == 50.0
+        assert monday["appt"] == 25.0
+
+        tuesday = data[1]
+        assert tuesday["trade_count"] == 1
+        assert tuesday["net_pnl"] == 40.0
+        assert tuesday["appt"] == 40.0
+
+
+class TestApptByTimeframe:
+    """Tests for GET /api/analytics/appt-by-timeframe."""
+
+    def test_appt_by_timeframe(
+        self, app, client, auth_headers
+    ):
+        """Groups APPT by 15-minute entry buckets."""
+        user_id = _get_user_id(app)
+
+        # 09:00 bucket (09:00-09:14:59): +90, -30 => APPT 30
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=90.0,
+            entry_time=datetime(2025, 1, 15, 9, 2, 0),
+            exit_time=datetime(2025, 1, 15, 9, 32, 0),
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=-30.0,
+            entry_time=datetime(2025, 1, 15, 9, 10, 0),
+            exit_time=datetime(2025, 1, 15, 9, 40, 0),
+        )
+
+        # 09:15 bucket: +45 => APPT 45
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=45.0,
+            entry_time=datetime(2025, 1, 15, 9, 18, 0),
+            exit_time=datetime(2025, 1, 15, 9, 48, 0),
+        )
+
+        resp = client.get(
+            "/api/analytics/appt-by-timeframe",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json
+
+        assert len(data) == 2
+        assert data[0]["timespan_start"] == "09:00"
+        assert data[0]["trade_count"] == 2
+        assert data[0]["net_pnl"] == 60.0
+        assert data[0]["appt"] == 30.0
+
+        assert data[1]["timespan_start"] == "09:15"
+        assert data[1]["trade_count"] == 1
+        assert data[1]["net_pnl"] == 45.0
+        assert data[1]["appt"] == 45.0
+
+
 class TestAnalyticsAuth:
     """Test that analytics endpoints require auth."""
 

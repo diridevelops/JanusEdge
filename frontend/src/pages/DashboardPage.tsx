@@ -96,7 +96,7 @@ export function DashboardPage() {
       {/* Quick stats */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         {statCards.map((card) => (
-          <div key={card.label} className="card text-center">
+          <div key={card.label} className="card p-4 text-center">
             <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">
               {card.label}
             </p>
@@ -108,7 +108,7 @@ export function DashboardPage() {
       </div>
 
       {/* Equity curve */}
-      <div className="card">
+      <div className="card p-4">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-semibold text-gray-700">Equity Curve</h2>
           <Link to="/analytics" className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1">
@@ -119,7 +119,7 @@ export function DashboardPage() {
       </div>
 
       {/* Recent trades */}
-      <div className="card">
+      <div className="card p-4">
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-sm font-semibold text-gray-700">Recent Trades</h2>
           <Link to="/trades" className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1">

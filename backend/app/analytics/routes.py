@@ -29,6 +29,7 @@ def _parse_filters() -> dict:
         "tag": request.args.get("tag"),
         "date_from": request.args.get("date_from"),
         "date_to": request.args.get("date_to"),
+        "timezone": request.args.get("timezone"),
     }
 
 
@@ -165,6 +166,46 @@ def get_by_tag():
     user_id = get_jwt_identity()
     filters = _parse_filters()
     data = analytics_service.get_by_tag(
+        user_id, filters
+    )
+    return jsonify(data), 200
+
+
+@analytics_bp.route(
+    "/appt-by-day-of-week", methods=["GET"]
+)
+@jwt_required()
+def get_appt_by_day_of_week():
+    """
+    Get APPT grouped by day of week.
+
+    Returns:
+        JSON array of {day_of_week, appt,
+        trade_count, net_pnl} dicts.
+    """
+    user_id = get_jwt_identity()
+    filters = _parse_filters()
+    data = analytics_service.get_appt_by_day_of_week(
+        user_id, filters
+    )
+    return jsonify(data), 200
+
+
+@analytics_bp.route(
+    "/appt-by-timeframe", methods=["GET"]
+)
+@jwt_required()
+def get_appt_by_timeframe():
+    """
+    Get APPT grouped by 15-minute entry buckets.
+
+    Returns:
+        JSON array of {timespan_start, appt,
+        trade_count, net_pnl} dicts.
+    """
+    user_id = get_jwt_identity()
+    filters = _parse_filters()
+    data = analytics_service.get_appt_by_timeframe(
         user_id, filters
     )
     return jsonify(data), 200

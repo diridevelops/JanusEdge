@@ -7,6 +7,8 @@ import type {
   DistributionBucket,
   TimeOfDayEntry,
   TagAnalytics,
+  ApptByDayOfWeekEntry,
+  ApptByTimeframeEntry,
 } from '../types/analytics.types';
 import type { FilterParams } from '../types/common.types';
 
@@ -84,6 +86,30 @@ export async function getByTag(
   const res = await apiClient.get<TagAnalytics[]>(
     '/analytics/by-tag',
     { params: filters }
+  );
+  return res.data;
+}
+
+/** Get APPT grouped by day of week. */
+export async function getApptByDayOfWeek(
+  filters?: FilterParams,
+  timezone?: string
+): Promise<ApptByDayOfWeekEntry[]> {
+  const res = await apiClient.get<ApptByDayOfWeekEntry[]>(
+    '/analytics/appt-by-day-of-week',
+    { params: { ...filters, timezone } }
+  );
+  return res.data;
+}
+
+/** Get APPT grouped by 15-minute entry timeframe. */
+export async function getApptByTimeframe(
+  filters?: FilterParams,
+  timezone?: string
+): Promise<ApptByTimeframeEntry[]> {
+  const res = await apiClient.get<ApptByTimeframeEntry[]>(
+    '/analytics/appt-by-timeframe',
+    { params: { ...filters, timezone } }
   );
   return res.data;
 }
