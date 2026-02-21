@@ -3,6 +3,7 @@
 from typing import List, Optional
 
 from bson import ObjectId
+from pymongo.errors import DuplicateKeyError
 
 from app.repositories.base import BaseRepository
 from app.utils.datetime_utils import utc_now
@@ -66,11 +67,22 @@ class AccountRepository(BaseRepository):
             account_name=account_name,
             source_platform=source_platform,
         )
-        self.insert_one(doc)
-        return self.find_one({
+        try:
+            self.insert_one(doc)
+        except DuplicateKeyError:
+            # Another concurrent request created it first.
+            pass
+
+        account = self.find_one({
             "user_id": ObjectId(user_id),
             "account_name": account_name,
         })
+        if account:
+            return account
+
+        raise RuntimeError(
+            "Failed to create or load trade account."
+        )
 
     def update_account(
         self, account_id: str, updates: dict

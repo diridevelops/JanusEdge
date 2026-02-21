@@ -299,31 +299,35 @@ export function useImport() {
               tradeIndex: idx,
             }));
 
-      const finalizeResults = await Promise.all(
-        sourceFiles.map((file, fileIndex) => {
-          const tradesPayload = originMap
-            .map((origin, globalIndex) => ({
-              origin,
-              globalIndex,
-            }))
-            .filter(({ origin }) => origin.fileIndex === fileIndex)
-            .map(({ origin, globalIndex }) => ({
-              index: origin.tradeIndex,
-              fee: state.fees[globalIndex] ?? 0,
-            }));
+      const finalizeResults: Array<{
+        trades_imported: number;
+        import_batch_id: string;
+      }> = [];
 
-          return finalizeImport({
-            file_hash: file.file_hash,
-            platform: file.platform,
-            file_name: file.file_name,
-            file_size: file.file_size,
-            reconstruction_method: 'FIFO',
-            trades: tradesPayload,
-            executions: file.executions,
-            column_mapping: file.column_mapping,
-          });
-        })
-      );
+      for (const [fileIndex, file] of sourceFiles.entries()) {
+        const tradesPayload = originMap
+          .map((origin, globalIndex) => ({
+            origin,
+            globalIndex,
+          }))
+          .filter(({ origin }) => origin.fileIndex === fileIndex)
+          .map(({ origin, globalIndex }) => ({
+            index: origin.tradeIndex,
+            fee: state.fees[globalIndex] ?? 0,
+          }));
+
+        const result = await finalizeImport({
+          file_hash: file.file_hash,
+          platform: file.platform,
+          file_name: file.file_name,
+          file_size: file.file_size,
+          reconstruction_method: 'FIFO',
+          trades: tradesPayload,
+          executions: file.executions,
+          column_mapping: file.column_mapping,
+        });
+        finalizeResults.push(result);
+      }
 
       const totalImported = finalizeResults.reduce(
         (sum, result) => sum + result.trades_imported,
