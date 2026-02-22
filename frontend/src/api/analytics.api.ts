@@ -9,6 +9,7 @@ import type {
   TagAnalytics,
   ApptByDayOfWeekEntry,
   ApptByTimeframeEntry,
+  EvolutionPoint,
 } from '../types/analytics.types';
 import type { FilterParams } from '../types/common.types';
 
@@ -110,6 +111,25 @@ export async function getApptByTimeframe(
   const res = await apiClient.get<ApptByTimeframeEntry[]>(
     '/analytics/appt-by-timeframe',
     { params: { ...filters, timezone } }
+  );
+  return res.data;
+}
+
+/** Get running/rolling trade evolution metrics. */
+export async function getEvolution(
+  filters?: FilterParams,
+  window: number = 50,
+  minSideCount: number = 5
+): Promise<EvolutionPoint[]> {
+  const res = await apiClient.get<EvolutionPoint[]>(
+    '/analytics/evolution',
+    {
+      params: {
+        ...filters,
+        window,
+        min_side_count: minSideCount,
+      },
+    }
   );
   return res.data;
 }

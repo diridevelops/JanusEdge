@@ -827,3 +827,130 @@ class TestAnalyticsAuth:
         """Equity curve endpoint requires JWT."""
         resp = client.get("/api/analytics/equity-curve")
         assert resp.status_code == 401
+
+
+class TestEvolution:
+    """Tests for GET /api/analytics/evolution."""
+
+    def test_evolution_empty(
+        self, client, auth_headers
+    ):
+        """Returns empty list when no trades exist."""
+        resp = client.get(
+            "/api/analytics/evolution",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json == []
+
+    def test_evolution_running_and_rolling_metrics(
+        self, app, client, auth_headers
+    ):
+        """Computes running/rolling metrics by trade index."""
+        user_id = _get_user_id(app)
+        base = datetime(2025, 2, 1, 10, 0, 0)
+
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=100.0,
+            initial_risk=50.0,
+            exit_time=base,
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=-50.0,
+            initial_risk=50.0,
+            exit_time=base + timedelta(minutes=10),
+        )
+        # Undefined R (initial_risk=0) still contributes to money metrics
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=25.0,
+            initial_risk=0.0,
+            exit_time=base + timedelta(minutes=20),
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=40.0,
+            initial_risk=20.0,
+            exit_time=base + timedelta(minutes=30),
+        )
+
+        resp = client.get(
+            "/api/analytics/evolution?window=3&min_side_count=1",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json
+
+        assert len(data) == 4
+
+        first = data[0]
+        assert first["trade_index"] == 1
+        assert first["r_multiple"] == 2.0
+        assert first["included_r_count"] == 1
+        assert first["running_mean_r"] == 2.0
+        assert first["cum_r"] == 2.0
+        assert first["cum_net_pnl"] == 100.0
+
+        second = data[1]
+        assert second["r_multiple"] == -1.0
+        # running mean R = (2 + -1) / 2 = 0.5
+        assert second["running_mean_r"] == 0.5
+        assert second["cum_r"] == 1.0
+        # rolling ratio in first 2 trades: avg win 100 / |avg loss -50| = 2
+        assert second["rolling_pl_ratio_trade"] == 2.0
+
+        third = data[2]
+        assert third["r_multiple"] is None
+        # Undefined R excluded from R metrics
+        assert third["included_r_count"] == 2
+        assert third["running_mean_r"] == 0.5
+        # Money metrics still include all trades
+        assert third["cum_net_pnl"] == 75.0
+        assert third["appt_running"] == 25.0
+
+        fourth = data[3]
+        assert fourth["r_multiple"] == 2.0
+        # Running mean R = (2 + -1 + 2) / 3 = 1.0
+        assert fourth["running_mean_r"] == 1.0
+        # Rolling R over last 3 defined-R trades = (2 + -1 + 2) / 3 = 1
+        assert fourth["rolling_mean_r"] == 1.0
+
+    def test_evolution_pl_ratio_guardrail(
+        self, app, client, auth_headers
+    ):
+        """Hides rolling trade P/L ratio until both sides meet minimum count."""
+        user_id = _get_user_id(app)
+        base = datetime(2025, 2, 3, 10, 0, 0)
+
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=100.0,
+            initial_risk=50.0,
+            exit_time=base,
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=-40.0,
+            initial_risk=40.0,
+            exit_time=base + timedelta(minutes=5),
+        )
+
+        resp = client.get(
+            "/api/analytics/evolution?window=10&min_side_count=2",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json
+
+        assert len(data) == 2
+        # One win + one loss is below min_side_count=2
+        assert data[-1]["rolling_pl_ratio_trade"] is None
+        assert data[-1]["rolling_pl_ratio_stable"] is False

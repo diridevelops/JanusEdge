@@ -1,6 +1,7 @@
 """Analytics service for computing trade metrics."""
 
 import re
+from collections import deque
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
@@ -1197,6 +1198,337 @@ class AnalyticsService:
             )
 
         return output
+
+    def get_evolution(
+        self,
+        user_id: str,
+        filters: Optional[Dict[str, Any]] = None,
+        window: int = 50,
+        min_side_count: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """
+        Compute running/rolling metrics at each trade.
+
+        Metrics include running and rolling mean R
+        with 95% CI, cumulative R and net P&L,
+        running APPT, and rolling trade P/L ratio.
+
+        Parameters:
+            user_id: The user's ObjectId string.
+            filters: Optional filter parameters.
+            window: Rolling window length.
+            min_side_count: Minimum winner/loser count
+                required for stable rolling P/L ratio.
+
+        Returns:
+            Ordered list of per-trade metric points.
+        """
+        if filters is None:
+            filters = {}
+
+        safe_window = max(5, window)
+        safe_min_side = max(1, min_side_count)
+
+        match = _build_base_match(user_id, filters)
+        trades = list(
+            mongo.db.trades.find(
+                match,
+                {
+                    "net_pnl": 1,
+                    "initial_risk": 1,
+                    "entry_time": 1,
+                    "exit_time": 1,
+                },
+            ).sort(
+                [
+                    ("exit_time", 1),
+                    ("entry_time", 1),
+                    ("_id", 1),
+                ]
+            )
+        )
+
+        if not trades:
+            return []
+
+        points: List[Dict[str, Any]] = []
+
+        trade_count = 0
+        cumulative_net_pnl = 0.0
+
+        # Running R (Welford)
+        running_r_count = 0
+        running_r_mean = 0.0
+        running_r_m2 = 0.0
+        cumulative_r = 0.0
+
+        # Running R decomposition
+        running_r_wins = 0
+        running_r_losses = 0
+        running_sum_win_r = 0.0
+        running_sum_abs_loss_r = 0.0
+
+        # Rolling R stats
+        rolling_r_values: deque[float] = deque()
+        rolling_r_sum = 0.0
+        rolling_r_sum_sq = 0.0
+
+        # Rolling trade P/L ratio stats
+        rolling_net_values: deque[float] = deque()
+        rolling_win_count = 0
+        rolling_loss_count = 0
+        rolling_sum_win = 0.0
+        rolling_sum_loss = 0.0
+
+        for trade in trades:
+            trade_count += 1
+
+            net_pnl = float(trade.get("net_pnl", 0.0))
+            initial_risk = float(
+                trade.get("initial_risk", 0.0)
+            )
+            r_multiple = None
+            if initial_risk > 0:
+                r_multiple = net_pnl / initial_risk
+
+            cumulative_net_pnl += net_pnl
+            appt_running = cumulative_net_pnl / trade_count
+
+            # Running R accumulators (defined R only)
+            if r_multiple is not None:
+                running_r_count += 1
+                cumulative_r += r_multiple
+
+                delta = r_multiple - running_r_mean
+                running_r_mean += delta / running_r_count
+                delta2 = r_multiple - running_r_mean
+                running_r_m2 += delta * delta2
+
+                if r_multiple > 0:
+                    running_r_wins += 1
+                    running_sum_win_r += r_multiple
+                elif r_multiple < 0:
+                    running_r_losses += 1
+                    running_sum_abs_loss_r += abs(
+                        r_multiple
+                    )
+
+                rolling_r_values.append(r_multiple)
+                rolling_r_sum += r_multiple
+                rolling_r_sum_sq += (
+                    r_multiple * r_multiple
+                )
+                if len(rolling_r_values) > safe_window:
+                    removed_r = rolling_r_values.popleft()
+                    rolling_r_sum -= removed_r
+                    rolling_r_sum_sq -= (
+                        removed_r * removed_r
+                    )
+
+            # Rolling trade P/L ratio accumulators
+            rolling_net_values.append(net_pnl)
+            if net_pnl > 0:
+                rolling_win_count += 1
+                rolling_sum_win += net_pnl
+            elif net_pnl < 0:
+                rolling_loss_count += 1
+                rolling_sum_loss += net_pnl
+
+            if len(rolling_net_values) > safe_window:
+                removed_net = rolling_net_values.popleft()
+                if removed_net > 0:
+                    rolling_win_count -= 1
+                    rolling_sum_win -= removed_net
+                elif removed_net < 0:
+                    rolling_loss_count -= 1
+                    rolling_sum_loss -= removed_net
+
+            # Running mean R + CI
+            running_mean_r = None
+            running_ci_low = None
+            running_ci_high = None
+            if running_r_count > 0:
+                running_mean_r = running_r_mean
+                if running_r_count > 1:
+                    running_var = (
+                        running_r_m2 / (running_r_count - 1)
+                    )
+                    running_se = (
+                        (running_var**0.5)
+                        / (running_r_count**0.5)
+                    )
+                    running_ci_low = (
+                        running_mean_r - 1.96 * running_se
+                    )
+                    running_ci_high = (
+                        running_mean_r + 1.96 * running_se
+                    )
+
+            # Rolling mean R + CI
+            rolling_mean_r = None
+            rolling_ci_low = None
+            rolling_ci_high = None
+            rolling_r_count = len(rolling_r_values)
+            if rolling_r_count > 0:
+                rolling_mean_r = (
+                    rolling_r_sum / rolling_r_count
+                )
+                if rolling_r_count > 1:
+                    rolling_var = (
+                        rolling_r_sum_sq
+                        - (
+                            rolling_r_sum
+                            * rolling_r_sum
+                            / rolling_r_count
+                        )
+                    ) / (rolling_r_count - 1)
+                    rolling_var = max(rolling_var, 0.0)
+                    rolling_se = (
+                        (rolling_var**0.5)
+                        / (rolling_r_count**0.5)
+                    )
+                    rolling_ci_low = (
+                        rolling_mean_r - 1.96 * rolling_se
+                    )
+                    rolling_ci_high = (
+                        rolling_mean_r + 1.96 * rolling_se
+                    )
+
+            # Running R decomposition
+            running_r_win_rate = None
+            running_r_avg_win = None
+            running_r_avg_loss_abs = None
+            if running_r_count > 0:
+                running_r_win_rate = (
+                    running_r_wins / running_r_count
+                )
+            if running_r_wins > 0:
+                running_r_avg_win = (
+                    running_sum_win_r / running_r_wins
+                )
+            if running_r_losses > 0:
+                running_r_avg_loss_abs = (
+                    running_sum_abs_loss_r
+                    / running_r_losses
+                )
+
+            # Rolling P/L ratio (trade)
+            rolling_pl_ratio_trade = None
+            pl_ratio_stable = False
+            if (
+                rolling_win_count >= safe_min_side
+                and rolling_loss_count >= safe_min_side
+            ):
+                avg_win_trade = (
+                    rolling_sum_win / rolling_win_count
+                )
+                avg_loss_trade = (
+                    rolling_sum_loss / rolling_loss_count
+                )
+                if abs(avg_loss_trade) >= 1e-9:
+                    rolling_pl_ratio_trade = (
+                        avg_win_trade / abs(avg_loss_trade)
+                    )
+                    pl_ratio_stable = True
+
+            exit_time = trade.get("exit_time")
+            entry_time = trade.get("entry_time")
+            points.append(
+                {
+                    "trade_index": trade_count,
+                    "entry_time": (
+                        entry_time.isoformat()
+                        if isinstance(entry_time, datetime)
+                        else None
+                    ),
+                    "exit_time": (
+                        exit_time.isoformat()
+                        if isinstance(exit_time, datetime)
+                        else None
+                    ),
+                    "net_pnl": round(net_pnl, 2),
+                    "initial_risk": round(initial_risk, 2),
+                    "r_multiple": (
+                        round(r_multiple, 4)
+                        if r_multiple is not None
+                        else None
+                    ),
+                    "included_r_count": running_r_count,
+                    "running_mean_r": (
+                        round(running_mean_r, 4)
+                        if running_mean_r is not None
+                        else None
+                    ),
+                    "running_mean_r_ci_low": (
+                        round(running_ci_low, 4)
+                        if running_ci_low is not None
+                        else None
+                    ),
+                    "running_mean_r_ci_high": (
+                        round(running_ci_high, 4)
+                        if running_ci_high is not None
+                        else None
+                    ),
+                    "rolling_mean_r": (
+                        round(rolling_mean_r, 4)
+                        if rolling_mean_r is not None
+                        else None
+                    ),
+                    "rolling_mean_r_ci_low": (
+                        round(rolling_ci_low, 4)
+                        if rolling_ci_low is not None
+                        else None
+                    ),
+                    "rolling_mean_r_ci_high": (
+                        round(rolling_ci_high, 4)
+                        if rolling_ci_high is not None
+                        else None
+                    ),
+                    "rolling_r_count": rolling_r_count,
+                    "window": safe_window,
+                    "cum_r": round(cumulative_r, 4),
+                    "cum_net_pnl": round(
+                        cumulative_net_pnl, 2
+                    ),
+                    "appt_running": round(
+                        appt_running, 2
+                    ),
+                    "rolling_pl_ratio_trade": (
+                        round(rolling_pl_ratio_trade, 4)
+                        if rolling_pl_ratio_trade
+                        is not None
+                        else None
+                    ),
+                    "rolling_pl_ratio_stable": pl_ratio_stable,
+                    "rolling_window_wins": rolling_win_count,
+                    "rolling_window_losses": (
+                        rolling_loss_count
+                    ),
+                    "running_r_win_rate": (
+                        round(running_r_win_rate, 4)
+                        if running_r_win_rate
+                        is not None
+                        else None
+                    ),
+                    "running_r_avg_win": (
+                        round(running_r_avg_win, 4)
+                        if running_r_avg_win
+                        is not None
+                        else None
+                    ),
+                    "running_r_avg_loss_abs": (
+                        round(
+                            running_r_avg_loss_abs,
+                            4,
+                        )
+                        if running_r_avg_loss_abs
+                        is not None
+                        else None
+                    ),
+                }
+            )
+
+        return points
 
 
 def _empty_summary() -> Dict[str, Any]:

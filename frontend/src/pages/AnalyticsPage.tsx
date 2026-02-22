@@ -9,6 +9,7 @@ import {
   getEquityCurve,
   getSummary,
 } from '../api/analytics.api';
+import { EvolutionTab } from '../components/analytics/EvolutionTab';
 import { StatsGrid } from '../components/analytics/StatsGrid';
 import { APPTDailyChart } from '../components/charts/APPTDailyChart';
 import { CalendarHeatmap } from '../components/charts/CalendarHeatmap';
@@ -30,7 +31,7 @@ import type {
 } from '../types/analytics.types';
 import { formatCurrency, formatPercent } from '../utils/formatters';
 
-type AnalyticsTab = 'overview' | 'time-date' | 'calendar';
+type AnalyticsTab = 'overview' | 'time-date' | 'calendar' | 'evolution';
 
 /** Analytics dashboard with charts and summary metrics. */
 export function AnalyticsPage() {
@@ -158,6 +159,17 @@ export function AnalyticsPage() {
             }`}
           >
             Calendar
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('evolution')}
+            className={`px-4 py-2 text-sm font-medium rounded-t-md border border-b-0 ${
+              activeTab === 'evolution'
+                ? 'bg-white text-gray-900 border-gray-300'
+                : 'bg-gray-100 text-gray-600 border-transparent hover:text-gray-800'
+            }`}
+          >
+            Evolution
           </button>
         </nav>
       </div>
@@ -294,6 +306,10 @@ export function AnalyticsPage() {
           </h2>
           <CalendarHeatmap data={calendar} isLoading={loading} />
         </div>
+      )}
+
+      {activeTab === 'evolution' && (
+        <EvolutionTab filters={filters} />
       )}
     </div>
   );

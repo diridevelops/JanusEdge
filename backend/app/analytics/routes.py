@@ -209,3 +209,33 @@ def get_appt_by_timeframe():
         user_id, filters
     )
     return jsonify(data), 200
+
+
+@analytics_bp.route("/evolution", methods=["GET"])
+@jwt_required()
+def get_evolution():
+    """
+    Get running and rolling performance metrics
+    after each trade.
+
+    Query parameters:
+        window: Rolling window length (default 50).
+        min_side_count: Minimum wins/losses in window
+            for stable P/L ratio (default 5).
+
+    Returns:
+        JSON array of per-trade evolution points.
+    """
+    user_id = get_jwt_identity()
+    filters = _parse_filters()
+    window = int(request.args.get("window", 50))
+    min_side_count = int(
+        request.args.get("min_side_count", 5)
+    )
+    data = analytics_service.get_evolution(
+        user_id,
+        filters,
+        window=window,
+        min_side_count=min_side_count,
+    )
+    return jsonify(data), 200

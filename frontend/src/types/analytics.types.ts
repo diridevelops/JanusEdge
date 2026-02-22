@@ -93,3 +93,32 @@ export interface ApptByTimeframeEntry {
   trade_count: number;
   net_pnl: number;
 }
+
+/** Running/rolling metrics after each trade. */
+export interface EvolutionPoint {
+  trade_index: number;
+  entry_time: string | null;
+  exit_time: string | null;
+  net_pnl: number;
+  initial_risk: number;
+  r_multiple: number | null;
+  included_r_count: number;
+  running_mean_r: number | null;
+  running_mean_r_ci_low: number | null;
+  running_mean_r_ci_high: number | null;
+  rolling_mean_r: number | null;
+  rolling_mean_r_ci_low: number | null;
+  rolling_mean_r_ci_high: number | null;
+  rolling_r_count: number;
+  window: number;
+  cum_r: number;
+  cum_net_pnl: number;
+  appt_running: number;
+  rolling_pl_ratio_trade: number | null;
+  rolling_pl_ratio_stable: boolean;
+  rolling_window_wins: number;
+  rolling_window_losses: number;
+  running_r_win_rate: number | null;
+  running_r_avg_win: number | null;
+  running_r_avg_loss_abs: number | null;
+}
