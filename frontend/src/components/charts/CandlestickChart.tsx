@@ -152,6 +152,7 @@ export function CandlestickChart({
       borderDownColor: '#dc2626',
       wickUpColor: '#16a34a',
       wickDownColor: '#dc2626',
+      priceLineVisible: false,
     });
 
     chartRef.current = chart;

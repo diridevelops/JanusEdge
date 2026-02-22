@@ -1,4 +1,4 @@
-import { ArrowLeft, Trash2 } from 'lucide-react';
+import { ArrowLeft, RefreshCw, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { listExecutions } from '../api/executions.api';
@@ -49,9 +49,10 @@ export function TradeDetailPage() {
     }
   }, [id, addToast, navigate]);
 
-  const fetchChart = useCallback(async () => {
-    if (!trade) return;
+  const fetchChart = useCallback(async (forceRefresh: boolean = false) => {
+    if (!trade) return false;
     setIsChartLoading(true);
+    let succeeded = true;
     try {
       const entryDate = new Date(trade.entry_time);
       const exitDate = new Date(trade.exit_time);
@@ -88,15 +89,27 @@ export function TradeDetailPage() {
         interval,
         start: dayStart.toISOString(),
         end: dayEnd.toISOString(),
+        force_refresh: forceRefresh,
       });
       setOhlcData(data);
     } catch {
       // Chart data may not be available for all symbols
+      succeeded = false;
       setOhlcData([]);
     } finally {
       setIsChartLoading(false);
     }
+    return succeeded;
   }, [trade, interval]);
+
+  async function handleRefreshChartData() {
+    const ok = await fetchChart(true);
+    if (ok) {
+      addToast('success', 'Market data refreshed');
+    } else {
+      addToast('error', 'Failed to refresh market data');
+    }
+  }
 
   useEffect(() => {
     fetchTrade();
@@ -220,9 +233,21 @@ export function TradeDetailPage() {
 
       {/* Chart */}
       <div className="card p-4">
-        <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wider mb-3">
-          Price Chart
-        </h2>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wider">
+            Price Chart
+          </h2>
+          <button
+            type="button"
+            onClick={handleRefreshChartData}
+            disabled={isChartLoading}
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600 hover:text-gray-800 disabled:opacity-50"
+            title="Redownload market data for this trade day"
+          >
+            <RefreshCw className={`h-4 w-4 ${isChartLoading ? 'animate-spin' : ''}`} />
+            Refresh Data
+          </button>
+        </div>
         <CandlestickChart
           ohlcData={ohlcData}
           executions={executions}

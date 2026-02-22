@@ -11,9 +11,13 @@ from app.repositories.account_repo import (
 from app.repositories.execution_repo import (
     ExecutionRepository,
 )
+from app.repositories.market_data_repo import (
+    MarketDataRepository,
+)
 from app.repositories.tag_repo import TagRepository
 from app.repositories.trade_repo import TradeRepository
 from app.imports.reconstructor import get_point_value
+from app.market_data.symbol_mapper import map_to_yahoo
 from app.utils.datetime_utils import utc_now
 from app.utils.errors import NotFoundError
 
@@ -43,6 +47,7 @@ class TradeService:
         self.exec_repo = ExecutionRepository()
         self.account_repo = AccountRepository()
         self.tag_repo = TagRepository()
+        self.market_data_repo = MarketDataRepository()
 
     def list_trades(
         self,
@@ -120,11 +125,42 @@ class TradeService:
             user_id, filters
         )
 
+        market_cache: dict[tuple[str, datetime.date], bool] = {}
+
+        serialized_trades = []
+        for trade in trades:
+            serialized = self.trade_repo.serialize_doc(trade)
+
+            trade_day = trade.get("entry_time")
+            if isinstance(trade_day, datetime):
+                day_key = trade_day.date()
+            else:
+                day_key = datetime.fromisoformat(
+                    str(serialized.get("entry_time"))
+                ).date()
+
+            yahoo_symbol = map_to_yahoo(
+                trade.get("symbol", ""),
+                trade.get("raw_symbol"),
+            )
+
+            cache_key = (yahoo_symbol, day_key)
+            if cache_key not in market_cache:
+                market_cache[cache_key] = (
+                    self.market_data_repo.has_cached_day(
+                        symbol=yahoo_symbol,
+                        interval="5m",
+                        cache_date=day_key,
+                    )
+                )
+
+            serialized["market_data_cached"] = (
+                market_cache[cache_key]
+            )
+            serialized_trades.append(serialized)
+
         return {
-            "trades": [
-                self.trade_repo.serialize_doc(t)
-                for t in trades
-            ],
+            "trades": serialized_trades,
             "total": total,
             "page": page,
             "per_page": per_page,

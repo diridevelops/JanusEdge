@@ -1,3 +1,4 @@
+import { Check } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { listTags } from '../../api/tags.api';
@@ -32,6 +33,32 @@ const SORTABLE_COLUMNS = [
 export function TradeTable({ trades, sortBy, sortDir, onSortChange }: TradeTableProps) {
   const { user } = useAuth();
   const [tagMap, setTagMap] = useState<Map<string, Tag>>(new Map());
+
+  const dateFormatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: user?.display_timezone ?? user?.timezone ?? 'UTC',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  });
+
+  let stripeIndex = -1;
+  let previousDayKey = '';
+
+  const rows = trades.map((trade) => {
+    const dayKey = dateFormatter.format(new Date(trade.entry_time));
+    if (dayKey !== previousDayKey) {
+      stripeIndex += 1;
+      previousDayKey = dayKey;
+    }
+
+    return {
+      trade,
+      rowClass:
+        stripeIndex % 2 === 0
+          ? 'bg-white hover:bg-gray-100'
+          : 'bg-gray-50/70 hover:bg-gray-100/70',
+    };
+  });
 
   useEffect(() => {
     listTags()
@@ -79,11 +106,14 @@ export function TradeTable({ trades, sortBy, sortDir, onSortChange }: TradeTable
             <th className="px-4 py-2.5 text-left font-medium text-gray-500 uppercase tracking-wider text-xs whitespace-nowrap">
               Tags
             </th>
+            <th className="px-4 py-2.5 text-center font-medium text-gray-500 uppercase tracking-wider text-xs whitespace-nowrap">
+              MKT DATA
+            </th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-100 bg-white">
-          {trades.map((trade) => (
-            <tr key={trade.id} className="hover:bg-gray-50">
+        <tbody className="divide-y divide-gray-100">
+          {rows.map(({ trade, rowClass }) => (
+            <tr key={trade.id} className={rowClass}>
               <td className="px-4 py-2.5 whitespace-nowrap">
                 <Link
                   to={`/trades/${trade.id}`}
@@ -144,6 +174,13 @@ export function TradeTable({ trades, sortBy, sortDir, onSortChange }: TradeTable
                     );
                   })}
                 </div>
+              </td>
+              <td className="px-4 py-2.5 text-center">
+                {trade.market_data_cached ? (
+                  <Check className="h-4 w-4 text-green-600 inline" aria-label="Market data cached" />
+                ) : (
+                  <span className="text-gray-300">—</span>
+                )}
               </td>
             </tr>
           ))}

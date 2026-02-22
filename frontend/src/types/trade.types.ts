@@ -28,6 +28,7 @@ export interface Trade {
   attachments: string[];
   created_at: string;
   updated_at: string;
+  market_data_cached?: boolean;
 }
 
 /** Payload for creating a manual trade. */

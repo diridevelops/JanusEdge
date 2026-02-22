@@ -33,6 +33,9 @@ def get_ohlc():
     start = request.args.get("start")
     end = request.args.get("end")
     raw_symbol = request.args.get("raw_symbol")
+    force_refresh = request.args.get(
+        "force_refresh", "false"
+    ).lower() in ("1", "true", "yes")
 
     ohlc = market_data_service.get_ohlc(
         symbol=symbol,
@@ -40,5 +43,6 @@ def get_ohlc():
         start=start,
         end=end,
         raw_symbol=raw_symbol,
+        force_refresh=force_refresh,
     )
     return jsonify({"ohlc_data": ohlc}), 200

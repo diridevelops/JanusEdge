@@ -7,6 +7,7 @@ interface OHLCParams {
   start?: string;
   end?: string;
   raw_symbol?: string;
+  force_refresh?: boolean;
 }
 
 /** Fetch OHLC candle data. */

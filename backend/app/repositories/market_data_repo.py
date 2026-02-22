@@ -90,3 +90,20 @@ class MarketDataRepository(BaseRepository):
             },
             upsert=True,
         )
+
+    def has_cached_day(
+        self,
+        symbol: str,
+        interval: str,
+        cache_date,
+    ) -> bool:
+        """Return True if cached data exists for symbol/interval/day."""
+        dt = self._to_datetime(cache_date)
+        doc = self.find_one(
+            {
+                "symbol": symbol,
+                "interval": interval,
+                "date": dt,
+            }
+        )
+        return doc is not None

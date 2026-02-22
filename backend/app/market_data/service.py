@@ -26,6 +26,7 @@ class MarketDataService:
         start: str = None,
         end: str = None,
         raw_symbol: str = None,
+        force_refresh: bool = False,
     ) -> List[dict]:
         """
         Get OHLC candlestick data.
@@ -39,6 +40,8 @@ class MarketDataService:
             start: Start date ISO string.
             end: End date ISO string.
             raw_symbol: Original platform symbol.
+            force_refresh: If True, bypass cache and
+                refresh OHLC data from source.
 
         Returns:
             List of OHLC dicts with time, open,
@@ -73,32 +76,33 @@ class MarketDataService:
         start_date = start_dt.date()
         end_date = end_dt.date()
 
-        # Check cache
-        cached = self.cache_repo.find_cached(
-            yahoo_ticker, interval, start_date, end_date
-        )
-
-        if cached:
-            # Check coverage
-            cached_dates = set()
-            for doc in cached:
-                d = doc["date"]
-                if isinstance(d, dt.datetime):
-                    cached_dates.add(d.date())
-                else:
-                    cached_dates.add(d)
-            needed_dates = self._trading_dates(
-                start_date, end_date
+        if not force_refresh:
+            # Check cache
+            cached = self.cache_repo.find_cached(
+                yahoo_ticker, interval, start_date, end_date
             )
-            missing = needed_dates - cached_dates
 
-            if not missing:
-                # Full cache hit
-                ohlc = []
+            if cached:
+                # Check coverage
+                cached_dates = set()
                 for doc in cached:
-                    ohlc.extend(doc.get("ohlc", []))
-                ohlc.sort(key=lambda x: x["time"])
-                return ohlc
+                    d = doc["date"]
+                    if isinstance(d, dt.datetime):
+                        cached_dates.add(d.date())
+                    else:
+                        cached_dates.add(d)
+                needed_dates = self._trading_dates(
+                    start_date, end_date
+                )
+                missing = needed_dates - cached_dates
+
+                if not missing:
+                    # Full cache hit
+                    ohlc = []
+                    for doc in cached:
+                        ohlc.extend(doc.get("ohlc", []))
+                    ohlc.sort(key=lambda x: x["time"])
+                    return ohlc
 
         # Fetch from yfinance
         ohlc_data = self._fetch_yfinance(
