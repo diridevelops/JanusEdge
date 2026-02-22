@@ -119,7 +119,7 @@ export async function getApptByTimeframe(
 export async function getEvolution(
   filters?: FilterParams,
   window: number = 50,
-  minSideCount: number = 5
+  minSideCount: number = 2
 ): Promise<EvolutionPoint[]> {
   const res = await apiClient.get<EvolutionPoint[]>(
     '/analytics/evolution',

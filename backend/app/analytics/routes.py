@@ -221,7 +221,7 @@ def get_evolution():
     Query parameters:
         window: Rolling window length (default 50).
         min_side_count: Minimum wins/losses in window
-            for stable P/L ratio (default 5).
+            for stable P/L ratio (default 2).
 
     Returns:
         JSON array of per-trade evolution points.
@@ -230,7 +230,7 @@ def get_evolution():
     filters = _parse_filters()
     window = int(request.args.get("window", 50))
     min_side_count = int(
-        request.args.get("min_side_count", 5)
+        request.args.get("min_side_count", 2)
     )
     data = analytics_service.get_evolution(
         user_id,
