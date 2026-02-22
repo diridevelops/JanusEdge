@@ -122,9 +122,13 @@ def finalize():
 
     # Build fees dictionary from trades
     fees = {}
+    initial_risks = {}
     for trade in validated["trades"]:
         fees[str(trade["index"])] = trade.get(
             "fee", 0.0
+        )
+        initial_risks[str(trade["index"])] = trade.get(
+            "initial_risk"
         )
 
     # Get all_executions and file info from request
@@ -152,6 +156,7 @@ def finalize():
         trades_data=validated["trades"],
         all_executions=all_executions,
         fees=fees,
+        initial_risks=initial_risks,
         reconstruction_method=validated[
             "reconstruction_method"
         ],

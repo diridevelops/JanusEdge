@@ -113,14 +113,70 @@ class TradeService:
         direction = -1 if sort_dir == "desc" else 1
         skip = (page - 1) * per_page
 
-        trades = self.trade_repo.find_by_user(
-            user_id=user_id,
-            filters=filters,
-            sort_by=sort_by,
-            sort_dir=direction,
-            skip=skip,
-            limit=per_page,
-        )
+        if sort_by == "r_multiple":
+            query = {
+                "user_id": ObjectId(user_id),
+                "status": {"$ne": "deleted"},
+            }
+            query.update(filters)
+            trades = list(
+                self.trade_repo.collection.aggregate(
+                    [
+                        {"$match": query},
+                        {
+                            "$addFields": {
+                                "r_multiple_defined": {
+                                    "$cond": [
+                                        {
+                                            "$gt": [
+                                                "$initial_risk",
+                                                0,
+                                            ]
+                                        },
+                                        1,
+                                        0,
+                                    ]
+                                },
+                                "r_multiple_sort": {
+                                    "$cond": [
+                                        {
+                                            "$gt": [
+                                                "$initial_risk",
+                                                0,
+                                            ]
+                                        },
+                                        {
+                                            "$divide": [
+                                                "$net_pnl",
+                                                "$initial_risk",
+                                            ]
+                                        },
+                                        0,
+                                    ]
+                                },
+                            }
+                        },
+                        {
+                            "$sort": {
+                                "r_multiple_defined": -1,
+                                "r_multiple_sort": direction,
+                                "entry_time": -1,
+                            }
+                        },
+                        {"$skip": skip},
+                        {"$limit": per_page},
+                    ]
+                )
+            )
+        else:
+            trades = self.trade_repo.find_by_user(
+                user_id=user_id,
+                filters=filters,
+                sort_by=sort_by,
+                sort_dir=direction,
+                skip=skip,
+                limit=per_page,
+            )
         total = self.trade_repo.count_by_user(
             user_id, filters
         )
@@ -129,6 +185,8 @@ class TradeService:
 
         serialized_trades = []
         for trade in trades:
+            trade.pop("r_multiple_sort", None)
+            trade.pop("r_multiple_defined", None)
             serialized = self.trade_repo.serialize_doc(trade)
 
             trade_day = trade.get("entry_time")
@@ -230,6 +288,13 @@ class TradeService:
             gross_pnl = (entry_price - exit_price) * qty * point_value
 
         net_pnl = gross_pnl - fee
+        requested_initial_risk = float(
+            data.get("initial_risk", 0.0)
+        )
+        if net_pnl < 0 and requested_initial_risk <= 0:
+            initial_risk = abs(net_pnl)
+        else:
+            initial_risk = requested_initial_risk
 
         entry_time = data["entry_time"]
         exit_time = data["exit_time"]
@@ -257,6 +322,7 @@ class TradeService:
             fee=fee,
             fee_source="manual_edit",
             net_pnl=round(net_pnl, 2),
+            initial_risk=round(initial_risk, 2),
             entry_time=entry_time,
             exit_time=exit_time,
             holding_time_seconds=holding_secs,
@@ -310,6 +376,12 @@ class TradeService:
             updates["net_pnl"] = (
                 trade["gross_pnl"] - new_fee
             )
+            updates["manually_adjusted"] = True
+
+        if "initial_risk" in data:
+            updates["initial_risk"] = data[
+                "initial_risk"
+            ]
             updates["manually_adjusted"] = True
 
         if "strategy" in data:

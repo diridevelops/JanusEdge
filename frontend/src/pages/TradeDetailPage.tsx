@@ -193,7 +193,7 @@ export function TradeDetailPage() {
 
       {/* Trade summary card */}
       <div className="card p-4">
-        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-4 text-sm">
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-9 gap-4 text-sm">
           <div>
             <p className="text-xs text-gray-500 uppercase">Quantity</p>
             <p className="font-semibold text-gray-900">{trade.total_quantity}</p>
@@ -220,6 +220,22 @@ export function TradeDetailPage() {
             <p className="text-xs text-gray-500 uppercase">Net P&L</p>
             <p className={`font-bold ${trade.net_pnl >= 0 ? 'text-profit' : 'text-loss'}`}>
               {formatCurrency(trade.net_pnl)}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-500 uppercase">Initial Risk</p>
+            <p className="font-semibold text-gray-900">
+              {trade.initial_risk > 0
+                ? formatCurrency(trade.initial_risk)
+                : '—'}
+            </p>
+          </div>
+          <div>
+            <p className="text-xs text-gray-500 uppercase">R-multiple</p>
+            <p className={`font-semibold ${trade.net_pnl >= 0 ? 'text-profit' : 'text-loss'}`}>
+              {trade.initial_risk > 0
+                ? `${(trade.net_pnl / trade.initial_risk).toFixed(2)}R`
+                : '—'}
             </p>
           </div>
           <div>

@@ -10,7 +10,7 @@ import { useImport } from '../hooks/useImport';
 const STEP_LABELS: Record<ImportStep, string> = {
   upload: 'Upload CSV',
   preview: 'Preview Executions',
-  fees: 'Assign Fees',
+  fees: 'Assign Fees & Risk',
   summary: 'Summary',
 };
 
@@ -174,11 +174,11 @@ export function ImportPage() {
         {wizard.step === 'fees' && (
           <div className="space-y-4">
             <h2 className="text-lg font-semibold text-gray-900">
-              Assign Fees to Trades
+              Assign Fees & Initial Risk
             </h2>
             <p className="text-sm text-gray-500">
               {wizard.trades.length} {wizard.trades.length === 1 ? 'trade' : 'trades'}{' '}
-              reconstructed. Enter commission/fees for each trade or use bulk entry.
+              reconstructed. Enter fees and initial risk for each trade or use bulk entry.
             </p>
 
             <FeeEntryTable
@@ -186,6 +186,9 @@ export function ImportPage() {
               fees={wizard.fees}
               onFeeChange={wizard.setFee}
               onBulkFee={wizard.setBulkFee}
+              initialRisks={wizard.initialRisks}
+              onInitialRiskChange={wizard.setInitialRisk}
+              onBulkInitialRisk={wizard.setBulkInitialRisk}
             />
 
             {wizard.error && (

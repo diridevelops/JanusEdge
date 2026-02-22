@@ -53,7 +53,7 @@ export function StatsGrid({ summary, isLoading }: StatsGridProps) {
   if (isLoading || !summary) {
     return (
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        {Array.from({ length: 8 }).map((_, i) => (
+        {Array.from({ length: 9 }).map((_, i) => (
           <div key={i} className="bg-white border border-gray-200 rounded-lg p-4 animate-pulse">
             <div className="h-3 w-16 bg-gray-200 rounded mb-2" />
             <div className="h-6 w-20 bg-gray-200 rounded" />
@@ -91,7 +91,17 @@ export function StatsGrid({ summary, isLoading }: StatsGridProps) {
         valueColor={
           summary.pl_ratio != null && summary.pl_ratio >= 1 ? 'text-profit' : 'text-loss'
         }
-        tooltip="Avg Win / Share ÷ |Avg Loss / Share|"
+        tooltip="Average win / average loss per trade"
+      />
+      <StatsCard
+        label="Expectancy (R)"
+        value={summary.expectancy_r != null ? `${summary.expectancy_r.toFixed(2)}R` : 'N/A'}
+        valueColor={
+          summary.expectancy_r != null && summary.expectancy_r >= 0
+            ? 'text-profit'
+            : 'text-loss'
+        }
+        tooltip="Average R-multiple per trade\nComputed only on trades with defined initial risk\nFormula: Win Rate × Avg Win R − (1 − Win Rate) × Avg Loss R"
       />
       <StatsCard
         label="Win / Share Avg"

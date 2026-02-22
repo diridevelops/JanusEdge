@@ -136,6 +136,23 @@ class AnalyticsService:
                             },
                             "else": 0,
                         }
+                    },
+                    "r_multiple": {
+                        "$cond": {
+                            "if": {
+                                "$gt": [
+                                    "$initial_risk",
+                                    0,
+                                ]
+                            },
+                            "then": {
+                                "$divide": [
+                                    "$net_pnl",
+                                    "$initial_risk",
+                                ]
+                            },
+                            "else": None,
+                        }
                     }
                 }
             },
@@ -268,6 +285,76 @@ class AnalyticsService:
                             ]
                         }
                     },
+                    "r_defined_trades": {
+                        "$sum": {
+                            "$cond": [
+                                {
+                                    "$ne": [
+                                        "$r_multiple",
+                                        None,
+                                    ]
+                                },
+                                1,
+                                0,
+                            ]
+                        }
+                    },
+                    "r_winners": {
+                        "$sum": {
+                            "$cond": [
+                                {
+                                    "$gt": [
+                                        "$r_multiple",
+                                        0,
+                                    ]
+                                },
+                                1,
+                                0,
+                            ]
+                        }
+                    },
+                    "r_losers": {
+                        "$sum": {
+                            "$cond": [
+                                {
+                                    "$lt": [
+                                        "$r_multiple",
+                                        0,
+                                    ]
+                                },
+                                1,
+                                0,
+                            ]
+                        }
+                    },
+                    "sum_win_r": {
+                        "$sum": {
+                            "$cond": [
+                                {
+                                    "$gt": [
+                                        "$r_multiple",
+                                        0,
+                                    ]
+                                },
+                                "$r_multiple",
+                                0,
+                            ]
+                        }
+                    },
+                    "sum_loss_r": {
+                        "$sum": {
+                            "$cond": [
+                                {
+                                    "$lt": [
+                                        "$r_multiple",
+                                        0,
+                                    ]
+                                },
+                                "$r_multiple",
+                                0,
+                            ]
+                        }
+                    },
                 }
             },
         ]
@@ -355,12 +442,49 @@ class AnalyticsService:
         if loss_per_share_high == 999999999:
             loss_per_share_high = 0.0
 
-        # P/L Ratio: avg win/share ÷ |avg loss/share|
+        # P/L Ratio: avg win ÷ |avg loss|
         pl_ratio = (
-            (win_per_share_avg / abs(loss_per_share_avg))
-            if loss_per_share_avg != 0
+            (avg_winner / abs(avg_loser))
+            if avg_loser != 0
             else None
         )
+
+        expectancy_r = None
+        r_trades = list(
+            mongo.db.trades.find(
+                {
+                    **match,
+                    "initial_risk": {"$gt": 0},
+                },
+                {
+                    "net_pnl": 1,
+                    "initial_risk": 1,
+                },
+            )
+        )
+        if r_trades:
+            r_values = [
+                t["net_pnl"] / t["initial_risk"]
+                for t in r_trades
+            ]
+            win_r_values = [r for r in r_values if r > 0]
+            loss_r_values = [r for r in r_values if r < 0]
+            r_win_rate = len(win_r_values) / len(
+                r_values
+            )
+            avg_win_r = (
+                sum(win_r_values) / len(win_r_values)
+                if win_r_values
+                else 0.0
+            )
+            avg_loss_r = (
+                abs(sum(loss_r_values) / len(loss_r_values))
+                if loss_r_values
+                else 0.0
+            )
+            expectancy_r = (
+                r_win_rate * avg_win_r
+            ) - ((1 - r_win_rate) * avg_loss_r)
 
         return {
             "total_trades": total,
@@ -397,6 +521,11 @@ class AnalyticsService:
             "pl_ratio": (
                 round(pl_ratio, 2)
                 if pl_ratio is not None
+                else None
+            ),
+            "expectancy_r": (
+                round(expectancy_r, 2)
+                if expectancy_r is not None
                 else None
             ),
             "win_per_share_avg": round(
@@ -1096,6 +1225,7 @@ def _empty_summary() -> Dict[str, Any]:
         "avg_executions": 0.0,
         "appt": 0.0,
         "pl_ratio": None,
+        "expectancy_r": None,
         "win_per_share_avg": 0.0,
         "win_per_share_high": 0.0,
         "loss_per_share_avg": 0.0,

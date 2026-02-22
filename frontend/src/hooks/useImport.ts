@@ -76,6 +76,8 @@ interface ImportState {
   trades: ReconstructedTrade[];
   /** Fee assignments: trade index → fee amount. */
   fees: Record<number, number>;
+  /** Initial risk assignments: trade index → risk amount. */
+  initialRisks: Record<number, number>;
   /** Number of finalized trades. */
   finalizedCount: number;
   /** Uploaded files metadata for multi-file import. */
@@ -107,6 +109,7 @@ const INITIAL_STATE: ImportState = {
   parsedRows: 0,
   trades: [],
   fees: {},
+  initialRisks: {},
   finalizedCount: 0,
   uploadedFiles: [],
   tradeOrigins: [],
@@ -242,8 +245,15 @@ export function useImport() {
 
       // Initialize fees from commission data if available
       const initialFees: Record<number, number> = {};
+      const initialRisks: Record<number, number> = {};
       allTrades.forEach((trade, idx) => {
-        initialFees[idx] = trade.fee ?? 0;
+        const initialFee = trade.fee ?? 0;
+        initialFees[idx] = initialFee;
+        const initialNetPnl = trade.gross_pnl - initialFee;
+        initialRisks[idx] =
+          initialNetPnl < 0
+            ? Math.abs(initialNetPnl)
+            : 0;
       });
 
       setState((prev) => ({
@@ -252,6 +262,7 @@ export function useImport() {
         step: 'fees',
         trades: allTrades,
         fees: initialFees,
+        initialRisks,
         tradeOrigins,
       }));
     } catch (err: unknown) {
@@ -314,6 +325,8 @@ export function useImport() {
           .map(({ origin, globalIndex }) => ({
             index: origin.tradeIndex,
             fee: state.fees[globalIndex] ?? 0,
+            initial_risk:
+              state.initialRisks[globalIndex] ?? 0,
           }));
 
         const result = await finalizeImport({
@@ -352,7 +365,7 @@ export function useImport() {
         error: message,
       }));
     }
-  }, [state.tradeOrigins, state.uploadedFiles, state.trades, state.fees, state.fileHash, state.platform, state.fileName, state.fileSize, state.executions, state.columnMapping]);
+  }, [state.tradeOrigins, state.uploadedFiles, state.trades, state.fees, state.initialRisks, state.fileHash, state.platform, state.fileName, state.fileSize, state.executions, state.columnMapping]);
 
   /** Update fee for a specific trade. */
   const setFee = useCallback((index: number, fee: number) => {
@@ -370,6 +383,28 @@ export function useImport() {
         newFees[idx] = fee;
       });
       return { ...prev, fees: newFees };
+    });
+  }, []);
+
+  /** Update initial risk for a specific trade. */
+  const setInitialRisk = useCallback((index: number, risk: number) => {
+    setState((prev) => ({
+      ...prev,
+      initialRisks: {
+        ...prev.initialRisks,
+        [index]: Math.max(0, risk),
+      },
+    }));
+  }, []);
+
+  /** Apply bulk initial risk to all trades. */
+  const setBulkInitialRisk = useCallback((risk: number) => {
+    setState((prev) => {
+      const newRisks: Record<number, number> = {};
+      prev.trades.forEach((_, idx) => {
+        newRisks[idx] = Math.max(0, risk);
+      });
+      return { ...prev, initialRisks: newRisks };
     });
   }, []);
 
@@ -394,6 +429,8 @@ export function useImport() {
     handleFinalize,
     setFee,
     setBulkFee,
+    setInitialRisk,
+    setBulkInitialRisk,
     goToStep,
     reset,
   };

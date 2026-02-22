@@ -21,6 +21,10 @@ class ManualTradeSchema(Schema):
     entry_time = fields.DateTime(required=True)
     exit_time = fields.DateTime(required=True)
     fee = fields.Float(load_default=0.0)
+    initial_risk = fields.Float(
+        load_default=0.0,
+        validate=validate.Range(min=0),
+    )
     account = fields.Str(load_default="Manual")
     tags = fields.List(
         fields.Str(), load_default=[]
@@ -32,6 +36,9 @@ class UpdateTradeSchema(Schema):
     """Schema for updating a trade."""
 
     fee = fields.Float()
+    initial_risk = fields.Float(
+        validate=validate.Range(min=0)
+    )
     fee_source = fields.Str()
     strategy = fields.Str(allow_none=True)
     pre_trade_notes = fields.Str(allow_none=True)

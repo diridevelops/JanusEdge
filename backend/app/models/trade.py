@@ -18,6 +18,7 @@ def create_trade_doc(
     fee: float,
     fee_source: str,
     net_pnl: float,
+    initial_risk: float,
     entry_time,
     exit_time,
     holding_time_seconds: int,
@@ -43,6 +44,7 @@ def create_trade_doc(
         fee: Total fee for this trade.
         fee_source: 'csv', 'import_entry', 'manual_edit'.
         net_pnl: Profit/loss after fees.
+        initial_risk: User-defined initial risk in currency.
         entry_time: UTC datetime of first entry.
         exit_time: UTC datetime of last exit.
         holding_time_seconds: Duration in seconds.
@@ -70,6 +72,7 @@ def create_trade_doc(
         "fee_source": fee_source,
         "fee_last_edited": None,
         "net_pnl": net_pnl,
+        "initial_risk": initial_risk,
         "entry_time": entry_time,
         "exit_time": exit_time,
         "holding_time_seconds": holding_time_seconds,

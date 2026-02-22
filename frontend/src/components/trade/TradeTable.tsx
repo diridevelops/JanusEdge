@@ -26,7 +26,6 @@ const SORTABLE_COLUMNS = [
   { key: 'avg_entry_price', label: 'Entry' },
   { key: 'avg_exit_price', label: 'Exit' },
   { key: 'net_pnl', label: 'Net P&L' },
-  { key: 'holding_time_seconds', label: 'Duration' },
 ] as const;
 
 /** Sortable, filterable trade list table. */
@@ -103,6 +102,20 @@ export function TradeTable({ trades, sortBy, sortDir, onSortChange }: TradeTable
                 {renderSortIndicator(col.key)}
               </th>
             ))}
+            <th
+              onClick={() => onSortChange('r_multiple')}
+              className="px-4 py-2.5 text-right font-medium text-gray-500 uppercase tracking-wider text-xs cursor-pointer hover:text-gray-700 select-none whitespace-nowrap"
+            >
+              R-mul
+              {renderSortIndicator('r_multiple')}
+            </th>
+            <th
+              onClick={() => onSortChange('holding_time_seconds')}
+              className="px-4 py-2.5 text-left font-medium text-gray-500 uppercase tracking-wider text-xs cursor-pointer hover:text-gray-700 select-none whitespace-nowrap"
+            >
+              Duration
+              {renderSortIndicator('holding_time_seconds')}
+            </th>
             <th className="px-4 py-2.5 text-left font-medium text-gray-500 uppercase tracking-wider text-xs whitespace-nowrap">
               Tags
             </th>
@@ -151,6 +164,11 @@ export function TradeTable({ trades, sortBy, sortDir, onSortChange }: TradeTable
                 }`}
               >
                 {formatCurrency(trade.net_pnl)}
+              </td>
+              <td className="px-4 py-2.5 text-right font-medium text-gray-900">
+                {trade.initial_risk > 0
+                  ? `${(trade.net_pnl / trade.initial_risk).toFixed(2)}R`
+                  : '—'}
               </td>
               <td className="px-4 py-2.5 text-gray-500 whitespace-nowrap">
                 {formatDuration(trade.holding_time_seconds)}

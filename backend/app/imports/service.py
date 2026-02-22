@@ -155,6 +155,7 @@ class ImportService:
         trades_data: list,
         all_executions: list,
         fees: dict,
+        initial_risks: dict,
         reconstruction_method: str = "FIFO",
         user_timezone: str = None,
         column_mapping: dict = None,
@@ -284,6 +285,13 @@ class ImportService:
                 fee_source = "import_entry"
 
             net_pnl = trade.gross_pnl - fee
+            requested_initial_risk = initial_risks.get(
+                str(i)
+            )
+            initial_risk = max(
+                0.0,
+                float(requested_initial_risk or 0.0),
+            )
 
             # Insert trade
             entry_time = datetime.fromisoformat(
@@ -308,6 +316,7 @@ class ImportService:
                 fee=fee,
                 fee_source=fee_source,
                 net_pnl=net_pnl,
+                initial_risk=round(initial_risk, 2),
                 entry_time=entry_time,
                 exit_time=exit_time,
                 holding_time_seconds=(

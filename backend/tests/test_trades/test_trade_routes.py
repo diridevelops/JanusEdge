@@ -84,6 +84,23 @@ def test_create_manual_trade(client):
     assert trade["gross_pnl"] == 50.0
     assert trade["fee"] == 0.78
     assert trade["net_pnl"] == 49.22
+    assert trade["initial_risk"] == 0.0
+
+
+def test_create_manual_trade_loser_sets_initial_risk(client):
+    token = _register_and_login(client)
+    resp = _create_trade(
+        client,
+        token,
+        entry_price=5010.0,
+        exit_price=5000.0,
+        fee=1.0,
+    )
+
+    assert resp.status_code == 201
+    trade = resp.get_json()["trade"]
+    assert trade["net_pnl"] < 0
+    assert trade["initial_risk"] == abs(trade["net_pnl"])
 
 
 def test_list_trades_empty(client):
@@ -192,6 +209,21 @@ def test_update_trade_fee(client):
     trade = resp.get_json()["trade"]
     assert trade["fee"] == 1.50
     assert trade["net_pnl"] == 48.50
+
+
+def test_update_trade_initial_risk(client):
+    token = _register_and_login(client)
+    create_resp = _create_trade(client, token)
+    trade_id = create_resp.get_json()["trade"]["id"]
+
+    resp = client.put(
+        f"/api/trades/{trade_id}",
+        json={"initial_risk": 120.0},
+        headers=_auth_header(token),
+    )
+    assert resp.status_code == 200
+    trade = resp.get_json()["trade"]
+    assert trade["initial_risk"] == 120.0
 
 
 def test_update_trade_notes(client):

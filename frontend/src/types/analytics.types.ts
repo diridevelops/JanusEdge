@@ -14,6 +14,7 @@ export interface AnalyticsSummary {
   largest_loss: number;
   profit_factor: number | null;
   expectancy: number;
+  expectancy_r: number | null;
   avg_holding_time_seconds: number;
   avg_executions: number;
   appt: number;

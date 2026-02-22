@@ -11,16 +11,30 @@ interface FeeEntryTableProps {
   onFeeChange: (index: number, fee: number) => void;
   /** Callback to apply bulk fee to all trades. */
   onBulkFee: (fee: number) => void;
+  /** Current initial risk map: trade index → risk amount. */
+  initialRisks: Record<number, number>;
+  /** Callback when initial risk is changed. */
+  onInitialRiskChange: (
+    index: number,
+    risk: number
+  ) => void;
+  /** Callback to apply bulk risk to all trades. */
+  onBulkInitialRisk: (risk: number) => void;
 }
 
-/** Per-trade fee entry table with bulk fee option. */
+/** Per-trade fee and risk entry table with bulk options. */
 export function FeeEntryTable({
   trades,
   fees,
   onFeeChange,
   onBulkFee,
+  initialRisks,
+  onInitialRiskChange,
+  onBulkInitialRisk,
 }: FeeEntryTableProps) {
   const [bulkFee, setBulkFee] = useState('');
+  const [bulkInitialRisk, setBulkInitialRisk] =
+    useState('');
 
   function handleApplyBulk() {
     const feeVal = parseFloat(bulkFee);
@@ -29,14 +43,24 @@ export function FeeEntryTable({
     }
   }
 
+  function handleApplyBulkRisk() {
+    const riskVal = parseFloat(bulkInitialRisk);
+    if (!isNaN(riskVal)) {
+      onBulkInitialRisk(Math.max(0, riskVal));
+    }
+  }
+
   const totalGrossPnl = trades.reduce((sum, t) => sum + t.gross_pnl, 0);
   const totalFees = Object.values(fees).reduce((sum, f) => sum + f, 0);
+  const totalInitialRisk = Object.values(
+    initialRisks
+  ).reduce((sum, risk) => sum + risk, 0);
   const totalNetPnl = totalGrossPnl - totalFees;
 
   return (
     <div className="space-y-4">
-      {/* Bulk fee entry */}
-      <div className="flex items-end gap-3 p-4 bg-gray-50 rounded-lg">
+      {/* Bulk fee/risk entry */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-gray-50 rounded-lg">
         <div>
           <label
             htmlFor="bulkFee"
@@ -55,16 +79,48 @@ export function FeeEntryTable({
             className="input-field w-32"
           />
         </div>
-        <button
-          onClick={handleApplyBulk}
-          disabled={!bulkFee}
-          className="btn-secondary h-[38px]"
-        >
-          Apply to All
-        </button>
+        <div className="flex items-end gap-3">
+          <button
+            onClick={handleApplyBulk}
+            disabled={!bulkFee}
+            className="btn-secondary h-[38px]"
+          >
+            Apply to All
+          </button>
+        </div>
+
+        <div>
+          <label
+            htmlFor="bulkInitialRisk"
+            className="block text-sm font-medium text-gray-700 mb-1"
+          >
+            Apply initial risk to all trades
+          </label>
+          <input
+            id="bulkInitialRisk"
+            type="number"
+            min="0"
+            step="0.01"
+            placeholder="0.00"
+            value={bulkInitialRisk}
+            onChange={(e) =>
+              setBulkInitialRisk(e.target.value)
+            }
+            className="input-field w-32"
+          />
+        </div>
+        <div className="flex items-end gap-3">
+          <button
+            onClick={handleApplyBulkRisk}
+            disabled={!bulkInitialRisk}
+            className="btn-secondary h-[38px]"
+          >
+            Apply to All
+          </button>
+        </div>
       </div>
 
-      {/* Trade fee table */}
+      {/* Trade fee/risk table */}
       <div className="overflow-x-auto border border-gray-200 rounded-lg">
         <table className="min-w-full divide-y divide-gray-200 text-sm">
           <thead className="bg-gray-50">
@@ -94,6 +150,9 @@ export function FeeEntryTable({
                 Fee
               </th>
               <th className="px-4 py-2.5 text-right font-medium text-gray-500 uppercase tracking-wider text-xs">
+                Initial Risk
+              </th>
+              <th className="px-4 py-2.5 text-right font-medium text-gray-500 uppercase tracking-wider text-xs">
                 Net P&L
               </th>
             </tr>
@@ -101,6 +160,11 @@ export function FeeEntryTable({
           <tbody className="divide-y divide-gray-100 bg-white">
             {trades.map((trade, idx) => {
               const fee = fees[idx] ?? 0;
+              const initialRisk =
+                initialRisks[idx] ??
+                (trade.gross_pnl - fee < 0
+                  ? Math.abs(trade.gross_pnl - fee)
+                  : 0);
               const netPnl = trade.gross_pnl - fee;
               return (
                 <tr key={idx} className="hover:bg-gray-50">
@@ -150,6 +214,28 @@ export function FeeEntryTable({
                       aria-label={`Fee for trade ${idx + 1}`}
                     />
                   </td>
+                  <td className="px-4 py-2 text-right">
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={initialRisk || ''}
+                      placeholder="0.00"
+                      onChange={(e) => {
+                        const val = parseFloat(
+                          e.target.value
+                        );
+                        onInitialRiskChange(
+                          idx,
+                          isNaN(val)
+                            ? 0
+                            : Math.max(0, val)
+                        );
+                      }}
+                      className="w-24 text-right text-sm border border-gray-300 rounded px-2 py-1 focus:ring-1 focus:ring-brand-500 focus:border-brand-500"
+                      aria-label={`Initial risk for trade ${idx + 1}`}
+                    />
+                  </td>
                   <td
                     className={`px-4 py-2 text-right font-medium ${
                       netPnl >= 0 ? 'text-profit' : 'text-loss'
@@ -175,6 +261,9 @@ export function FeeEntryTable({
               </td>
               <td className="px-4 py-2.5 text-right text-gray-700">
                 {formatCurrency(totalFees)}
+              </td>
+              <td className="px-4 py-2.5 text-right text-gray-700">
+                {formatCurrency(totalInitialRisk)}
               </td>
               <td
                 className={`px-4 py-2.5 text-right ${

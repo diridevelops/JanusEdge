@@ -62,6 +62,7 @@ def _insert_trade(
     tag_ids=None,
     status="closed",
     total_quantity=1,
+    initial_risk=0.0,
 ):
     """Insert a trade document directly into MongoDB."""
     if gross_pnl is None:
@@ -87,6 +88,7 @@ def _insert_trade(
         "fee": fee,
         "fee_source": "csv",
         "net_pnl": net_pnl,
+        "initial_risk": initial_risk,
         "entry_time": entry_time,
         "exit_time": exit_time,
         "holding_time_seconds": int(
@@ -125,6 +127,7 @@ class TestAnalyticsSummary:
         assert data["total_net_pnl"] == 0.0
         assert data["appt"] == 0.0
         assert data["pl_ratio"] is None
+        assert data["expectancy_r"] is None
         assert data["win_per_share_avg"] == 0.0
         assert data["loss_per_share_avg"] == 0.0
 
@@ -238,10 +241,10 @@ class TestAnalyticsSummary:
         assert data["total_trades"] == 1
         assert data["total_net_pnl"] == 100.0
 
-    def test_summary_pl_ratio_uses_per_share_values(
+    def test_summary_pl_ratio_uses_per_trade_values(
         self, app, client, auth_headers
     ):
-        """P/L ratio uses avg win/share and avg loss/share."""
+        """P/L ratio uses avg win and avg loss per trade."""
         user_id = _get_user_id(app)
         base = datetime(2025, 1, 18, 12, 0, 0)
 
@@ -277,10 +280,51 @@ class TestAnalyticsSummary:
 
         assert resp.status_code == 200
         data = resp.json
-        assert data["win_per_share_avg"] == 50.0
-        assert data["loss_per_share_avg"] == -30.0
-        # 50 / 30 = 1.666... -> 1.67
-        assert data["pl_ratio"] == 1.67
+        # Avg winner = (200 + 50) / 2 = 125
+        # Avg loser = -90
+        # P/L ratio = 125 / 90 = 1.388... -> 1.39
+        assert data["pl_ratio"] == 1.39
+
+    def test_summary_expectancy_r_uses_defined_r_only(
+        self, app, client, auth_headers
+    ):
+        """Expectancy (R) includes only trades with initial risk > 0."""
+        user_id = _get_user_id(app)
+        base = datetime(2025, 1, 20, 12, 0, 0)
+
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=200.0,
+            initial_risk=100.0,
+            exit_time=base,
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=-50.0,
+            initial_risk=100.0,
+            exit_time=base + timedelta(hours=1),
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=120.0,
+            initial_risk=0.0,
+            exit_time=base + timedelta(hours=2),
+        )
+
+        resp = client.get(
+            "/api/analytics/summary",
+            headers=auth_headers,
+        )
+
+        assert resp.status_code == 200
+        data = resp.json
+        # Defined-R trades: +2.0R and -0.5R
+        # win_rate=0.5, avg_win_r=2.0, avg_loss_r=0.5
+        # expectancy_r=0.5*2.0 - 0.5*0.5 = 0.75
+        assert data["expectancy_r"] == 0.75
 
     def test_summary_filter_by_symbol(
         self, app, client, auth_headers

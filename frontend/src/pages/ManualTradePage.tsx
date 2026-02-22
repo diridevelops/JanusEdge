@@ -19,6 +19,7 @@ export function ManualTradePage() {
     entry_time: '',
     exit_time: '',
     fee: '',
+    initial_risk: '',
     account_name: '',
     notes: '',
   });
@@ -35,13 +36,16 @@ export function ManualTradePage() {
       const trade = await createManualTrade({
         symbol: form.symbol,
         side: form.side,
-        quantity: parseFloat(form.quantity),
+        total_quantity: parseFloat(form.quantity),
         entry_price: parseFloat(form.entry_price),
         exit_price: parseFloat(form.exit_price),
         entry_time: new Date(form.entry_time).toISOString(),
         exit_time: new Date(form.exit_time).toISOString(),
         fee: form.fee ? parseFloat(form.fee) : undefined,
-        account_name: form.account_name || undefined,
+        initial_risk: form.initial_risk
+          ? parseFloat(form.initial_risk)
+          : undefined,
+        account: form.account_name || undefined,
         notes: form.notes || undefined,
       });
       addToast('success', 'Trade created successfully');
@@ -178,8 +182,8 @@ export function ManualTradePage() {
           </div>
         </div>
 
-        {/* Fee & Account */}
-        <div className="grid grid-cols-2 gap-4">
+        {/* Fee, Initial Risk & Account */}
+        <div className="grid grid-cols-3 gap-4">
           <div>
             <label htmlFor="fee" className="block text-sm font-medium text-gray-700">
               Fee / Commission
@@ -192,6 +196,21 @@ export function ManualTradePage() {
               placeholder="0.00"
               value={form.fee}
               onChange={(e) => updateField('fee', e.target.value)}
+              className="input-field mt-1"
+            />
+          </div>
+          <div>
+            <label htmlFor="initial_risk" className="block text-sm font-medium text-gray-700">
+              Initial Risk
+            </label>
+            <input
+              id="initial_risk"
+              type="number"
+              step="0.01"
+              min="0"
+              placeholder="0.00"
+              value={form.initial_risk}
+              onChange={(e) => updateField('initial_risk', e.target.value)}
               className="input-field mt-1"
             />
           </div>

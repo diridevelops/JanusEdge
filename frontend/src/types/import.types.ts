@@ -43,6 +43,7 @@ export interface ReconstructedTrade {
   avg_exit_price: number;
   gross_pnl: number;
   fee: number;
+  initial_risk?: number;
   net_pnl: number;
   entry_time: string;
   exit_time: string;
@@ -65,6 +66,7 @@ export interface FinalizeRequest {
   trades: {
     index: number;
     fee: number;
+    initial_risk?: number;
   }[];
   executions: ParsedExecution[];
   column_mapping: Record<string, string> | null;

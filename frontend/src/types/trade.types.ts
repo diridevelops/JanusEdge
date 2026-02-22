@@ -15,6 +15,7 @@ export interface Trade {
   fee: number;
   fee_source: string;
   net_pnl: number;
+  initial_risk: number;
   entry_time: string;
   exit_time: string;
   holding_time_seconds: number;
@@ -35,13 +36,14 @@ export interface Trade {
 export interface ManualTradeRequest {
   symbol: string;
   side: 'Long' | 'Short';
-  quantity: number;
+  total_quantity: number;
   entry_price: number;
   exit_price: number;
   entry_time: string;
   exit_time: string;
   fee?: number;
-  account_name?: string;
+  initial_risk?: number;
+  account?: string;
   tags?: string[];
   notes?: string;
 }
@@ -49,6 +51,7 @@ export interface ManualTradeRequest {
 /** Payload for updating a trade. */
 export interface UpdateTradeRequest {
   fee?: number;
+  initial_risk?: number;
   fee_source?: string;
   strategy?: string | null;
   pre_trade_notes?: string | null;

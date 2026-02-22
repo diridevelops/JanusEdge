@@ -1,5 +1,6 @@
 """Import validation schemas."""
 
+from marshmallow import validate
 from marshmallow import EXCLUDE, Schema, fields
 
 
@@ -8,6 +9,11 @@ class FinalizeTradeSchema(Schema):
 
     index = fields.Int(required=True)
     fee = fields.Float(load_default=0.0)
+    initial_risk = fields.Float(
+        allow_none=True,
+        load_default=None,
+        validate=validate.Range(min=0),
+    )
 
 
 class FinalizeSchema(Schema):
