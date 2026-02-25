@@ -53,9 +53,9 @@ export function DashboardPage() {
   if (!hasTrades) {
     return (
       <div className="flex flex-col items-center justify-center h-96 space-y-4">
-        <Upload className="w-16 h-16 text-gray-300" />
-        <h1 className="text-2xl font-bold text-gray-900">Welcome to TradeLogs</h1>
-        <p className="text-gray-500 text-center max-w-md">
+        <Upload className="w-16 h-16 text-gray-300 dark:text-gray-600" />
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Welcome to TradeLogs</h1>
+        <p className="text-gray-500 text-center max-w-md dark:text-gray-400">
           Import your first trades to see analytics, charts, and performance metrics.
         </p>
         <Link to="/import" className="btn-primary inline-flex items-center gap-2">
@@ -87,7 +87,7 @@ export function DashboardPage() {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Dashboard</h1>
         <Link to="/import" className="btn-primary text-sm inline-flex items-center gap-1">
           Import <Upload className="w-4 h-4" />
         </Link>
@@ -97,10 +97,10 @@ export function DashboardPage() {
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         {statCards.map((card) => (
           <div key={card.label} className="card p-4 text-center">
-            <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">
+            <p className="text-xs font-medium text-gray-500 uppercase tracking-wider dark:text-gray-400">
               {card.label}
             </p>
-            <p className={`mt-1 text-xl font-bold ${card.color ?? 'text-gray-900'}`}>
+            <p className={`mt-1 text-xl font-bold ${card.color ?? 'text-gray-900 dark:text-gray-100'}`}>
               {card.value}
             </p>
           </div>
@@ -110,8 +110,8 @@ export function DashboardPage() {
       {/* Equity curve */}
       <div className="card p-4">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold text-gray-700">Equity Curve</h2>
-          <Link to="/analytics" className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1">
+          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Equity Curve</h2>
+          <Link to="/analytics" className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1 dark:text-blue-400">
             View Analytics <ArrowRight className="w-3 h-3" />
           </Link>
         </div>
@@ -121,8 +121,8 @@ export function DashboardPage() {
       {/* Recent trades */}
       <div className="card p-4">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold text-gray-700">Recent Trades</h2>
-          <Link to="/trades" className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1">
+          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Recent Trades</h2>
+          <Link to="/trades" className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1 dark:text-blue-400">
             View All <ArrowRight className="w-3 h-3" />
           </Link>
         </div>
@@ -133,7 +133,7 @@ export function DashboardPage() {
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
               <thead>
-                <tr className="border-b border-gray-200 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <tr className="border-b border-gray-200 text-left text-xs font-medium text-gray-500 uppercase tracking-wider dark:border-gray-700 dark:text-gray-400">
                   <th className="py-2 pr-4">Symbol</th>
                   <th className="py-2 pr-4">Side</th>
                   <th className="py-2 pr-4">Qty</th>
@@ -141,13 +141,13 @@ export function DashboardPage() {
                   <th className="py-2 text-right">Closed</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
+              <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
                 {recentTrades.map((trade) => (
-                  <tr key={trade.id} className="hover:bg-gray-50">
+                  <tr key={trade.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                     <td className="py-2 pr-4">
                       <Link
                         to={`/trades/${trade.id}`}
-                        className="font-medium text-blue-600 hover:underline"
+                        className="font-medium text-blue-600 hover:underline dark:text-blue-400"
                       >
                         {trade.symbol}
                       </Link>
@@ -162,7 +162,7 @@ export function DashboardPage() {
                         {trade.side}
                       </span>
                     </td>
-                    <td className="py-2 pr-4 text-gray-600">{trade.total_quantity}</td>
+                    <td className="py-2 pr-4 text-gray-600 dark:text-gray-400">{trade.total_quantity}</td>
                     <td
                       className={`py-2 pr-4 text-right font-medium ${
                         trade.net_pnl >= 0 ? 'pnl-positive' : 'pnl-negative'
@@ -170,7 +170,7 @@ export function DashboardPage() {
                     >
                       {formatCurrency(trade.net_pnl)}
                     </td>
-                    <td className="py-2 text-right text-gray-500 text-xs">
+                    <td className="py-2 text-right text-gray-500 text-xs dark:text-gray-400">
                       {trade.exit_time ? formatDateTime(trade.exit_time, user?.display_timezone) : '—'}
                     </td>
                   </tr>

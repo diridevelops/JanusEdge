@@ -61,17 +61,17 @@ export function ManualTradePage() {
     <div className="max-w-2xl mx-auto space-y-6">
       {/* Header */}
       <div className="flex items-center gap-3">
-        <Link to="/trades" className="text-gray-400 hover:text-gray-600" aria-label="Back">
+        <Link to="/trades" className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300" aria-label="Back">
           <ArrowLeft className="h-5 w-5" />
         </Link>
-        <h1 className="text-2xl font-bold text-gray-900">New Manual Trade</h1>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">New Manual Trade</h1>
       </div>
 
       <form onSubmit={handleSubmit} className="card p-6 space-y-5">
         {/* Symbol & Side */}
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label htmlFor="symbol" className="block text-sm font-medium text-gray-700">
+            <label htmlFor="symbol" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
               Symbol *
             </label>
             <input
@@ -85,7 +85,7 @@ export function ManualTradePage() {
             />
           </div>
           <div>
-            <label htmlFor="side" className="block text-sm font-medium text-gray-700">
+            <label htmlFor="side" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
               Side *
             </label>
             <select
@@ -102,7 +102,7 @@ export function ManualTradePage() {
 
         {/* Quantity */}
         <div>
-          <label htmlFor="quantity" className="block text-sm font-medium text-gray-700">
+          <label htmlFor="quantity" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
             Quantity *
           </label>
           <input
@@ -121,7 +121,7 @@ export function ManualTradePage() {
         {/* Entry/Exit prices */}
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label htmlFor="entry_price" className="block text-sm font-medium text-gray-700">
+            <label htmlFor="entry_price" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
               Entry Price *
             </label>
             <input
@@ -136,7 +136,7 @@ export function ManualTradePage() {
             />
           </div>
           <div>
-            <label htmlFor="exit_price" className="block text-sm font-medium text-gray-700">
+            <label htmlFor="exit_price" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
               Exit Price *
             </label>
             <input
@@ -155,7 +155,7 @@ export function ManualTradePage() {
         {/* Entry/Exit times */}
         <div className="grid grid-cols-2 gap-4">
           <div>
-            <label htmlFor="entry_time" className="block text-sm font-medium text-gray-700">
+            <label htmlFor="entry_time" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
               Entry Time *
             </label>
             <input
@@ -168,7 +168,7 @@ export function ManualTradePage() {
             />
           </div>
           <div>
-            <label htmlFor="exit_time" className="block text-sm font-medium text-gray-700">
+            <label htmlFor="exit_time" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
               Exit Time *
             </label>
             <input
@@ -185,7 +185,7 @@ export function ManualTradePage() {
         {/* Fee, Initial Risk & Account */}
         <div className="grid grid-cols-3 gap-4">
           <div>
-            <label htmlFor="fee" className="block text-sm font-medium text-gray-700">
+            <label htmlFor="fee" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
               Fee / Commission
             </label>
             <input
@@ -200,7 +200,7 @@ export function ManualTradePage() {
             />
           </div>
           <div>
-            <label htmlFor="initial_risk" className="block text-sm font-medium text-gray-700">
+            <label htmlFor="initial_risk" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
               Initial Risk
             </label>
             <input
@@ -215,7 +215,7 @@ export function ManualTradePage() {
             />
           </div>
           <div>
-            <label htmlFor="account_name" className="block text-sm font-medium text-gray-700">
+            <label htmlFor="account_name" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
               Account
             </label>
             <input
@@ -231,7 +231,7 @@ export function ManualTradePage() {
 
         {/* Notes */}
         <div>
-          <label htmlFor="notes" className="block text-sm font-medium text-gray-700">
+          <label htmlFor="notes" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
             Notes
           </label>
           <textarea

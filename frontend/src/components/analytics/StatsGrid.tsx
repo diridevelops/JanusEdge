@@ -15,13 +15,13 @@ function StatsCard({ label, value, valueColor, tooltip }: StatsCardProps) {
   const [showTooltip, setShowTooltip] = useState(false);
 
   return (
-    <div className="bg-white border border-gray-200 rounded-lg p-4 relative">
+    <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 relative">
       <div className="flex items-center gap-1.5">
-        <p className="text-xs text-gray-500 uppercase tracking-wider">{label}</p>
+        <p className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider">{label}</p>
         {tooltip && (
           <button
             type="button"
-            className="text-gray-400 hover:text-gray-600 transition-colors"
+            className="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 transition-colors"
             onMouseEnter={() => setShowTooltip(true)}
             onMouseLeave={() => setShowTooltip(false)}
             onFocus={() => setShowTooltip(true)}
@@ -32,7 +32,7 @@ function StatsCard({ label, value, valueColor, tooltip }: StatsCardProps) {
           </button>
         )}
       </div>
-      <p className={`mt-1 text-lg font-bold ${valueColor ?? 'text-gray-900'}`}>{value}</p>
+      <p className={`mt-1 text-lg font-bold ${valueColor ?? 'text-gray-900 dark:text-gray-100'}`}>{value}</p>
       {tooltip && showTooltip && (
         <div className="absolute z-20 bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 px-3 py-2 text-xs text-gray-100 bg-gray-800 rounded-lg shadow-lg whitespace-pre-line">
           {tooltip.replace(/\\n/g, '\n')}
@@ -54,9 +54,9 @@ export function StatsGrid({ summary, isLoading }: StatsGridProps) {
     return (
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {Array.from({ length: 9 }).map((_, i) => (
-          <div key={i} className="bg-white border border-gray-200 rounded-lg p-4 animate-pulse">
-            <div className="h-3 w-16 bg-gray-200 rounded mb-2" />
-            <div className="h-6 w-20 bg-gray-200 rounded" />
+          <div key={i} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 animate-pulse">
+            <div className="h-3 w-16 bg-gray-200 dark:bg-gray-700 rounded mb-2" />
+            <div className="h-6 w-20 bg-gray-200 dark:bg-gray-700 rounded" />
           </div>
         ))}
       </div>

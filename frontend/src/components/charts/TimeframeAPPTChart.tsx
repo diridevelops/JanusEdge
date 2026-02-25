@@ -9,6 +9,7 @@ import {
     XAxis,
     YAxis,
 } from 'recharts';
+import { useChartColors } from '../../hooks/useChartColors';
 import type { ApptByTimeframeEntry } from '../../types/analytics.types';
 import { formatCurrency } from '../../utils/formatters';
 
@@ -36,17 +37,19 @@ interface TimeframeAPPTChartProps {
 
 /** Horizontal histogram of APPT grouped by 15-minute entry timeframe. */
 export function TimeframeAPPTChart({ data, isLoading }: TimeframeAPPTChartProps) {
+  const c = useChartColors();
+
   if (isLoading) {
     return (
-      <div className="h-72 flex items-center justify-center bg-gray-50 rounded-lg animate-pulse">
-        <div className="h-4 w-32 bg-gray-200 rounded" />
+      <div className="h-72 flex items-center justify-center bg-gray-50 dark:bg-gray-800 rounded-lg animate-pulse">
+        <div className="h-4 w-32 bg-gray-200 dark:bg-gray-700 rounded" />
       </div>
     );
   }
 
   if (data.length === 0) {
     return (
-      <div className="h-72 flex items-center justify-center text-gray-400 text-sm">
+      <div className="h-72 flex items-center justify-center text-gray-400 dark:text-gray-500 text-sm">
         No timeframe APPT data
       </div>
     );
@@ -59,10 +62,10 @@ export function TimeframeAPPTChart({ data, isLoading }: TimeframeAPPTChartProps)
   return (
     <ResponsiveContainer width="100%" height={320}>
       <BarChart data={data} layout="vertical" margin={{ top: 5, right: 20, left: 20, bottom: 5 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
+        <CartesianGrid strokeDasharray="3 3" stroke={c.grid} />
         <XAxis
           type="number"
-          tick={{ fontSize: 11 }}
+          tick={{ fontSize: 11, fill: c.tick }}
           tickFormatter={(v: number) => formatCurrency(v)}
           domain={[xMin, xMax]}
           ticks={ticks}
@@ -70,13 +73,14 @@ export function TimeframeAPPTChart({ data, isLoading }: TimeframeAPPTChartProps)
         <YAxis
           type="category"
           dataKey="timespan_start"
-          tick={{ fontSize: 11 }}
+          tick={{ fontSize: 11, fill: c.tick }}
           width={56}
         />
         <Tooltip
           formatter={(value: number) => [formatCurrency(value), 'APPT']}
           labelFormatter={(label: string) => `${label}`}
           labelStyle={{ fontWeight: 600 }}
+          contentStyle={{ backgroundColor: c.tooltipBg, borderColor: c.tooltipBorder, color: c.tooltipText }}
         />
         <ReferenceLine x={0} stroke="#9ca3af" strokeDasharray="3 3" />
         <Bar dataKey="appt" name="appt" barSize={12} isAnimationActive={false}>

@@ -60,11 +60,11 @@ export function FeeEntryTable({
   return (
     <div className="space-y-4">
       {/* Bulk fee/risk entry */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-gray-50 rounded-lg">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 bg-gray-50 dark:bg-gray-800 rounded-lg">
         <div>
           <label
             htmlFor="bulkFee"
-            className="block text-sm font-medium text-gray-700 mb-1"
+            className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
           >
             Apply fee to all trades
           </label>
@@ -92,7 +92,7 @@ export function FeeEntryTable({
         <div>
           <label
             htmlFor="bulkInitialRisk"
-            className="block text-sm font-medium text-gray-700 mb-1"
+            className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
           >
             Apply initial risk to all trades
           </label>
@@ -121,43 +121,43 @@ export function FeeEntryTable({
       </div>
 
       {/* Trade fee/risk table */}
-      <div className="overflow-x-auto border border-gray-200 rounded-lg">
-        <table className="min-w-full divide-y divide-gray-200 text-sm">
-          <thead className="bg-gray-50">
+      <div className="overflow-x-auto border border-gray-200 dark:border-gray-700 rounded-lg">
+        <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700 text-sm">
+          <thead className="bg-gray-50 dark:bg-gray-800">
             <tr>
-              <th className="px-4 py-2.5 text-left font-medium text-gray-500 uppercase tracking-wider text-xs">
+              <th className="px-4 py-2.5 text-left font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs">
                 #
               </th>
-              <th className="px-4 py-2.5 text-left font-medium text-gray-500 uppercase tracking-wider text-xs">
+              <th className="px-4 py-2.5 text-left font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs">
                 Symbol
               </th>
-              <th className="px-4 py-2.5 text-left font-medium text-gray-500 uppercase tracking-wider text-xs">
+              <th className="px-4 py-2.5 text-left font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs">
                 Side
               </th>
-              <th className="px-4 py-2.5 text-right font-medium text-gray-500 uppercase tracking-wider text-xs">
+              <th className="px-4 py-2.5 text-right font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs">
                 Qty
               </th>
-              <th className="px-4 py-2.5 text-right font-medium text-gray-500 uppercase tracking-wider text-xs">
+              <th className="px-4 py-2.5 text-right font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs">
                 Entry
               </th>
-              <th className="px-4 py-2.5 text-right font-medium text-gray-500 uppercase tracking-wider text-xs">
+              <th className="px-4 py-2.5 text-right font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs">
                 Exit
               </th>
-              <th className="px-4 py-2.5 text-right font-medium text-gray-500 uppercase tracking-wider text-xs">
+              <th className="px-4 py-2.5 text-right font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs">
                 Gross P&L
               </th>
-              <th className="px-4 py-2.5 text-right font-medium text-gray-500 uppercase tracking-wider text-xs">
+              <th className="px-4 py-2.5 text-right font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs">
                 Fee
               </th>
-              <th className="px-4 py-2.5 text-right font-medium text-gray-500 uppercase tracking-wider text-xs">
+              <th className="px-4 py-2.5 text-right font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs">
                 Initial Risk
               </th>
-              <th className="px-4 py-2.5 text-right font-medium text-gray-500 uppercase tracking-wider text-xs">
+              <th className="px-4 py-2.5 text-right font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs">
                 Net P&L
               </th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100 bg-white">
+          <tbody className="divide-y divide-gray-100 dark:divide-gray-700 bg-white dark:bg-gray-800">
             {trades.map((trade, idx) => {
               const fee = fees[idx] ?? 0;
               const initialRisk =
@@ -167,29 +167,29 @@ export function FeeEntryTable({
                   : 0);
               const netPnl = trade.gross_pnl - fee;
               return (
-                <tr key={idx} className="hover:bg-gray-50">
-                  <td className="px-4 py-2 text-gray-400">{idx + 1}</td>
-                  <td className="px-4 py-2 font-medium text-gray-900">
+                <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-gray-700">
+                  <td className="px-4 py-2 text-gray-400 dark:text-gray-500">{idx + 1}</td>
+                  <td className="px-4 py-2 font-medium text-gray-900 dark:text-gray-100">
                     {trade.symbol}
                   </td>
                   <td className="px-4 py-2">
                     <span
                       className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${
                         trade.side === 'Long'
-                          ? 'bg-green-50 text-green-700'
-                          : 'bg-red-50 text-red-700'
+                          ? 'bg-green-50 dark:bg-green-900/30 text-green-700 dark:text-green-400'
+                          : 'bg-red-50 dark:bg-red-900/30 text-red-700 dark:text-red-400'
                       }`}
                     >
                       {trade.side}
                     </span>
                   </td>
-                  <td className="px-4 py-2 text-right text-gray-900">
+                  <td className="px-4 py-2 text-right text-gray-900 dark:text-gray-100">
                     {trade.total_quantity}
                   </td>
-                  <td className="px-4 py-2 text-right text-gray-900">
+                  <td className="px-4 py-2 text-right text-gray-900 dark:text-gray-100">
                     {formatCurrency(trade.avg_entry_price)}
                   </td>
-                  <td className="px-4 py-2 text-right text-gray-900">
+                  <td className="px-4 py-2 text-right text-gray-900 dark:text-gray-100">
                     {formatCurrency(trade.avg_exit_price)}
                   </td>
                   <td
@@ -210,7 +210,7 @@ export function FeeEntryTable({
                         const val = parseFloat(e.target.value);
                         onFeeChange(idx, isNaN(val) ? 0 : val);
                       }}
-                      className="w-24 text-right text-sm border border-gray-300 rounded px-2 py-1 focus:ring-1 focus:ring-brand-500 focus:border-brand-500"
+                      className="w-24 text-right text-sm border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded px-2 py-1 focus:ring-1 focus:ring-brand-500 focus:border-brand-500"
                       aria-label={`Fee for trade ${idx + 1}`}
                     />
                   </td>
@@ -232,7 +232,7 @@ export function FeeEntryTable({
                             : Math.max(0, val)
                         );
                       }}
-                      className="w-24 text-right text-sm border border-gray-300 rounded px-2 py-1 focus:ring-1 focus:ring-brand-500 focus:border-brand-500"
+                      className="w-24 text-right text-sm border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded px-2 py-1 focus:ring-1 focus:ring-brand-500 focus:border-brand-500"
                       aria-label={`Initial risk for trade ${idx + 1}`}
                     />
                   </td>
@@ -247,9 +247,9 @@ export function FeeEntryTable({
               );
             })}
           </tbody>
-          <tfoot className="bg-gray-50 font-medium">
+          <tfoot className="bg-gray-50 dark:bg-gray-800 font-medium">
             <tr>
-              <td colSpan={6} className="px-4 py-2.5 text-right text-gray-700">
+              <td colSpan={6} className="px-4 py-2.5 text-right text-gray-700 dark:text-gray-300">
                 Totals:
               </td>
               <td
@@ -259,10 +259,10 @@ export function FeeEntryTable({
               >
                 {formatCurrency(totalGrossPnl)}
               </td>
-              <td className="px-4 py-2.5 text-right text-gray-700">
+              <td className="px-4 py-2.5 text-right text-gray-700 dark:text-gray-300">
                 {formatCurrency(totalFees)}
               </td>
-              <td className="px-4 py-2.5 text-right text-gray-700">
+              <td className="px-4 py-2.5 text-right text-gray-700 dark:text-gray-300">
                 {formatCurrency(totalInitialRisk)}
               </td>
               <td

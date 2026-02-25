@@ -54,8 +54,8 @@ export function TradeTable({ trades, sortBy, sortDir, onSortChange }: TradeTable
       trade,
       rowClass:
         stripeIndex % 2 === 0
-          ? 'bg-white hover:bg-gray-100'
-          : 'bg-gray-50/70 hover:bg-gray-100/70',
+          ? 'bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700'
+          : 'bg-gray-50/70 dark:bg-gray-850/50 hover:bg-gray-100/70 dark:hover:bg-gray-700/70',
     };
   });
 
@@ -80,7 +80,7 @@ export function TradeTable({ trades, sortBy, sortDir, onSortChange }: TradeTable
 
   if (trades.length === 0) {
     return (
-      <div className="text-center py-12 text-gray-500">
+      <div className="text-center py-12 text-gray-500 dark:text-gray-400">
         <p className="text-lg font-medium">No trades found</p>
         <p className="mt-1 text-sm">Try adjusting your filters or import some trades.</p>
       </div>
@@ -88,15 +88,15 @@ export function TradeTable({ trades, sortBy, sortDir, onSortChange }: TradeTable
   }
 
   return (
-    <div className="overflow-x-auto border border-gray-200 rounded-lg">
-      <table className="min-w-full divide-y divide-gray-200 text-sm">
-        <thead className="bg-gray-50">
+    <div className="overflow-x-auto border border-gray-200 dark:border-gray-700 rounded-lg">
+      <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700 text-sm">
+        <thead className="bg-gray-50 dark:bg-gray-800">
           <tr>
             {SORTABLE_COLUMNS.map((col) => (
               <th
                 key={col.key}
                 onClick={() => onSortChange(col.key)}
-                className="px-4 py-2.5 text-left font-medium text-gray-500 uppercase tracking-wider text-xs cursor-pointer hover:text-gray-700 select-none whitespace-nowrap"
+                className="px-4 py-2.5 text-left font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs cursor-pointer hover:text-gray-700 dark:hover:text-gray-300 select-none whitespace-nowrap"
               >
                 {col.label}
                 {renderSortIndicator(col.key)}
@@ -104,27 +104,27 @@ export function TradeTable({ trades, sortBy, sortDir, onSortChange }: TradeTable
             ))}
             <th
               onClick={() => onSortChange('r_multiple')}
-              className="px-4 py-2.5 text-right font-medium text-gray-500 uppercase tracking-wider text-xs cursor-pointer hover:text-gray-700 select-none whitespace-nowrap"
+              className="px-4 py-2.5 text-right font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs cursor-pointer hover:text-gray-700 dark:hover:text-gray-300 select-none whitespace-nowrap"
             >
               R-mul
               {renderSortIndicator('r_multiple')}
             </th>
             <th
               onClick={() => onSortChange('holding_time_seconds')}
-              className="px-4 py-2.5 text-left font-medium text-gray-500 uppercase tracking-wider text-xs cursor-pointer hover:text-gray-700 select-none whitespace-nowrap"
+              className="px-4 py-2.5 text-left font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs cursor-pointer hover:text-gray-700 dark:hover:text-gray-300 select-none whitespace-nowrap"
             >
               Duration
               {renderSortIndicator('holding_time_seconds')}
             </th>
-            <th className="px-4 py-2.5 text-left font-medium text-gray-500 uppercase tracking-wider text-xs whitespace-nowrap">
+            <th className="px-4 py-2.5 text-left font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs whitespace-nowrap">
               Tags
             </th>
-            <th className="px-4 py-2.5 text-center font-medium text-gray-500 uppercase tracking-wider text-xs whitespace-nowrap">
+            <th className="px-4 py-2.5 text-center font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs whitespace-nowrap">
               MKT DATA
             </th>
           </tr>
         </thead>
-        <tbody className="divide-y divide-gray-100">
+        <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
           {rows.map(({ trade, rowClass }) => (
             <tr key={trade.id} className={rowClass}>
               <td className="px-4 py-2.5 whitespace-nowrap">
@@ -135,27 +135,27 @@ export function TradeTable({ trades, sortBy, sortDir, onSortChange }: TradeTable
                   {formatDateTime(trade.entry_time, user?.display_timezone)}
                 </Link>
               </td>
-              <td className="px-4 py-2.5 font-medium text-gray-900">
+              <td className="px-4 py-2.5 font-medium text-gray-900 dark:text-gray-100">
                 {trade.symbol}
               </td>
               <td className="px-4 py-2.5">
                 <span
                   className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${
                     trade.side === 'Long'
-                      ? 'bg-green-50 text-green-700'
-                      : 'bg-red-50 text-red-700'
+                      ? 'bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                      : 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400'
                   }`}
                 >
                   {trade.side}
                 </span>
               </td>
-              <td className="px-4 py-2.5 text-right text-gray-900">
+              <td className="px-4 py-2.5 text-right text-gray-900 dark:text-gray-100">
                 {trade.total_quantity}
               </td>
-              <td className="px-4 py-2.5 text-right text-gray-900">
+              <td className="px-4 py-2.5 text-right text-gray-900 dark:text-gray-100">
                 {formatCurrency(trade.avg_entry_price)}
               </td>
-              <td className="px-4 py-2.5 text-right text-gray-900">
+              <td className="px-4 py-2.5 text-right text-gray-900 dark:text-gray-100">
                 {formatCurrency(trade.avg_exit_price)}
               </td>
               <td
@@ -165,12 +165,12 @@ export function TradeTable({ trades, sortBy, sortDir, onSortChange }: TradeTable
               >
                 {formatCurrency(trade.net_pnl)}
               </td>
-              <td className="px-4 py-2.5 text-right font-medium text-gray-900">
+              <td className="px-4 py-2.5 text-right font-medium text-gray-900 dark:text-gray-100">
                 {trade.initial_risk > 0
                   ? `${(trade.net_pnl / trade.initial_risk).toFixed(2)}R`
                   : '—'}
               </td>
-              <td className="px-4 py-2.5 text-gray-500 whitespace-nowrap">
+              <td className="px-4 py-2.5 text-gray-500 dark:text-gray-400 whitespace-nowrap">
                 {formatDuration(trade.holding_time_seconds)}
               </td>
               <td className="px-4 py-2.5">

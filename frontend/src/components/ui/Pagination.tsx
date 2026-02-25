@@ -20,7 +20,7 @@ export function Pagination({ page, pages, onPageChange }: PaginationProps) {
       >
         <ChevronLeft className="h-4 w-4" />
       </button>
-      <span className="text-sm text-gray-600">
+      <span className="text-sm text-gray-600 dark:text-gray-400">
         Page {page} of {pages}
       </span>
       <button

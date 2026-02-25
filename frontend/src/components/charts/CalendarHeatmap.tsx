@@ -1,18 +1,19 @@
 import {
-  addDays,
-  addMonths,
-  endOfMonth,
-  endOfWeek,
-  format,
-  isSameMonth,
-  parseISO,
-  startOfMonth,
-  startOfWeek,
-  subMonths,
+    addDays,
+    addMonths,
+    endOfMonth,
+    endOfWeek,
+    format,
+    isSameMonth,
+    parseISO,
+    startOfMonth,
+    startOfWeek,
+    subMonths,
 } from 'date-fns';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useTheme } from '../../hooks/useTheme';
 import type { CalendarDay } from '../../types/analytics.types';
 
 interface CalendarHeatmapProps {
@@ -23,6 +24,7 @@ interface CalendarHeatmapProps {
 /** Calendar heatmap showing daily P&L. */
 export function CalendarHeatmap({ data, isLoading }: CalendarHeatmapProps) {
   const navigate = useNavigate();
+  const { isDark } = useTheme();
 
   const dataByDate = useMemo(() => {
     const map = new Map<string, CalendarDay>();
@@ -56,15 +58,15 @@ export function CalendarHeatmap({ data, isLoading }: CalendarHeatmapProps) {
 
   if (isLoading) {
     return (
-      <div className="h-48 flex items-center justify-center bg-gray-50 rounded-lg animate-pulse">
-        <div className="h-4 w-32 bg-gray-200 rounded" />
+      <div className="h-48 flex items-center justify-center bg-gray-50 dark:bg-gray-800 rounded-lg animate-pulse">
+        <div className="h-4 w-32 bg-gray-200 dark:bg-gray-700 rounded" />
       </div>
     );
   }
 
   if (data.length === 0) {
     return (
-      <div className="h-48 flex items-center justify-center text-gray-400 text-sm">
+      <div className="h-48 flex items-center justify-center text-gray-400 dark:text-gray-500 text-sm">
         No calendar data
       </div>
     );
@@ -85,18 +87,18 @@ export function CalendarHeatmap({ data, isLoading }: CalendarHeatmapProps) {
   }
 
   function getColorClass(netPnl: number): string {
-    if (netPnl === 0) return 'bg-gray-50 text-gray-700';
+    if (netPnl === 0) return isDark ? 'bg-gray-700 text-gray-300' : 'bg-gray-50 text-gray-700';
 
     const ratio = Math.abs(netPnl) / maxAbsPnl;
     if (netPnl > 0) {
       if (ratio > 0.75) return 'bg-green-500 text-white';
-      if (ratio > 0.45) return 'bg-green-300 text-gray-900';
-      return 'bg-green-100 text-gray-900';
+      if (ratio > 0.45) return isDark ? 'bg-green-700 text-green-100' : 'bg-green-300 text-gray-900';
+      return isDark ? 'bg-green-900 text-green-200' : 'bg-green-100 text-gray-900';
     }
 
     if (ratio > 0.75) return 'bg-red-500 text-white';
-    if (ratio > 0.45) return 'bg-red-300 text-gray-900';
-    return 'bg-red-100 text-gray-900';
+    if (ratio > 0.45) return isDark ? 'bg-red-700 text-red-100' : 'bg-red-300 text-gray-900';
+    return isDark ? 'bg-red-900 text-red-200' : 'bg-red-100 text-gray-900';
   }
 
   function handleDayClick(day: Date) {
@@ -112,20 +114,20 @@ export function CalendarHeatmap({ data, isLoading }: CalendarHeatmapProps) {
         <button
           type="button"
           onClick={() => setVisibleMonth((prev) => subMonths(prev, 1))}
-          className="inline-flex items-center justify-center rounded border border-gray-200 p-1.5 text-gray-600 hover:bg-gray-50"
+          className="inline-flex items-center justify-center rounded border border-gray-200 dark:border-gray-700 p-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700"
           aria-label="Previous month"
         >
           <ChevronLeft className="h-4 w-4" />
         </button>
 
-        <h3 className="text-sm font-semibold text-gray-800">
+        <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">
           {format(visibleMonth, 'MMMM yyyy')}
         </h3>
 
         <button
           type="button"
           onClick={() => setVisibleMonth((prev) => addMonths(prev, 1))}
-          className="inline-flex items-center justify-center rounded border border-gray-200 p-1.5 text-gray-600 hover:bg-gray-50"
+          className="inline-flex items-center justify-center rounded border border-gray-200 dark:border-gray-700 p-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700"
           aria-label="Next month"
         >
           <ChevronRight className="h-4 w-4" />
@@ -134,7 +136,7 @@ export function CalendarHeatmap({ data, isLoading }: CalendarHeatmapProps) {
 
       <div className="grid grid-cols-7 gap-2">
         {weekDays.map((weekDay) => (
-          <div key={weekDay} className="text-xs font-medium text-gray-500 text-center">
+          <div key={weekDay} className="text-xs font-medium text-gray-500 dark:text-gray-400 text-center">
             {weekDay}
           </div>
         ))}
@@ -155,7 +157,7 @@ export function CalendarHeatmap({ data, isLoading }: CalendarHeatmapProps) {
               type="button"
               onClick={() => handleDayClick(day)}
               className={`min-h-24 rounded border p-2 text-left transition hover:ring-1 hover:ring-blue-300 ${getColorClass(pnl)} ${
-                inVisibleMonth ? 'border-gray-200' : 'border-transparent opacity-45'
+                inVisibleMonth ? 'border-gray-200 dark:border-gray-600' : 'border-transparent opacity-45'
               }`}
               title={`${dayKey} • ${tradeCount} trades • ${roundedPnl >= 0 ? '+' : ''}${roundedPnl}`}
             >

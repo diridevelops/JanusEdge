@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import {
-  getApptByDayOfWeek,
-  getApptByTimeframe,
-  getByTag,
-  getCalendar,
-  getDrawdown,
-  getEquityCurve,
-  getSummary,
+    getApptByDayOfWeek,
+    getApptByTimeframe,
+    getByTag,
+    getCalendar,
+    getDrawdown,
+    getEquityCurve,
+    getSummary,
 } from '../api/analytics.api';
 import { EvolutionTab } from '../components/analytics/EvolutionTab';
 import { StatsGrid } from '../components/analytics/StatsGrid';
@@ -21,13 +21,13 @@ import { WinRateDailyChart } from '../components/charts/WinRateDailyChart';
 import { FilterBar } from '../components/filters/FilterBar';
 import { useAuth } from '../hooks/useAuth';
 import type {
-  AnalyticsSummary,
-  ApptByDayOfWeekEntry,
-  ApptByTimeframeEntry,
-  CalendarDay,
-  DrawdownPoint,
-  EquityCurvePoint,
-  TagAnalytics,
+    AnalyticsSummary,
+    ApptByDayOfWeekEntry,
+    ApptByTimeframeEntry,
+    CalendarDay,
+    DrawdownPoint,
+    EquityCurvePoint,
+    TagAnalytics,
 } from '../types/analytics.types';
 import { formatCurrency, formatPercent } from '../utils/formatters';
 
@@ -112,8 +112,8 @@ export function AnalyticsPage() {
     <div className="space-y-6">
       {/* Page header */}
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Analytics</h1>
-        <p className="mt-1 text-sm text-gray-500">
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Analytics</h1>
+        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
           Detailed performance metrics and visual analysis of your trading.
         </p>
       </div>
@@ -125,15 +125,15 @@ export function AnalyticsPage() {
       <StatsGrid summary={summary} isLoading={loading} />
 
       {/* Tabs */}
-      <div className="border-b border-gray-200">
+      <div className="border-b border-gray-200 dark:border-gray-700">
         <nav className="flex gap-2" aria-label="Analytics tabs">
           <button
             type="button"
             onClick={() => setActiveTab('overview')}
             className={`px-4 py-2 text-sm font-medium rounded-t-md border border-b-0 ${
               activeTab === 'overview'
-                ? 'bg-white text-gray-900 border-gray-300'
-                : 'bg-gray-100 text-gray-600 border-transparent hover:text-gray-800'
+                ? 'bg-white text-gray-900 border-gray-300 dark:bg-gray-800 dark:text-gray-100 dark:border-gray-600'
+                : 'bg-gray-100 text-gray-600 border-transparent hover:text-gray-800 dark:bg-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
             }`}
           >
             Overview
@@ -143,8 +143,8 @@ export function AnalyticsPage() {
             onClick={() => setActiveTab('time-date')}
             className={`px-4 py-2 text-sm font-medium rounded-t-md border border-b-0 ${
               activeTab === 'time-date'
-                ? 'bg-white text-gray-900 border-gray-300'
-                : 'bg-gray-100 text-gray-600 border-transparent hover:text-gray-800'
+                ? 'bg-white text-gray-900 border-gray-300 dark:bg-gray-800 dark:text-gray-100 dark:border-gray-600'
+                : 'bg-gray-100 text-gray-600 border-transparent hover:text-gray-800 dark:bg-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
             }`}
           >
             Time & Date
@@ -154,8 +154,8 @@ export function AnalyticsPage() {
             onClick={() => setActiveTab('calendar')}
             className={`px-4 py-2 text-sm font-medium rounded-t-md border border-b-0 ${
               activeTab === 'calendar'
-                ? 'bg-white text-gray-900 border-gray-300'
-                : 'bg-gray-100 text-gray-600 border-transparent hover:text-gray-800'
+                ? 'bg-white text-gray-900 border-gray-300 dark:bg-gray-800 dark:text-gray-100 dark:border-gray-600'
+                : 'bg-gray-100 text-gray-600 border-transparent hover:text-gray-800 dark:bg-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
             }`}
           >
             Calendar
@@ -165,8 +165,8 @@ export function AnalyticsPage() {
             onClick={() => setActiveTab('evolution')}
             className={`px-4 py-2 text-sm font-medium rounded-t-md border border-b-0 ${
               activeTab === 'evolution'
-                ? 'bg-white text-gray-900 border-gray-300'
-                : 'bg-gray-100 text-gray-600 border-transparent hover:text-gray-800'
+                ? 'bg-white text-gray-900 border-gray-300 dark:bg-gray-800 dark:text-gray-100 dark:border-gray-600'
+                : 'bg-gray-100 text-gray-600 border-transparent hover:text-gray-800 dark:bg-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
             }`}
           >
             Evolution
@@ -179,14 +179,14 @@ export function AnalyticsPage() {
           {/* Equity curve + drawdown row */}
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
             <div className="card p-4">
-              <h2 className="text-sm font-semibold text-gray-700 mb-3">
+              <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
                 Equity Curve
               </h2>
               <EquityCurveChart data={equityCurve} isLoading={loading} />
             </div>
 
             <div className="card p-4">
-              <h2 className="text-sm font-semibold text-gray-700 mb-3">
+              <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
                 Drawdown
               </h2>
               <DrawdownChart data={drawdown} isLoading={loading} />
@@ -196,14 +196,14 @@ export function AnalyticsPage() {
           {/* APPT daily + Win rate daily row */}
           <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
             <div className="card p-4">
-              <h2 className="text-sm font-semibold text-gray-700 mb-3">
+              <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
                 APPT (Daily)
               </h2>
               <APPTDailyChart data={equityCurve} isLoading={loading} />
             </div>
 
             <div className="card p-4">
-              <h2 className="text-sm font-semibold text-gray-700 mb-3">
+              <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
                 Win Rate (Daily)
               </h2>
               <WinRateDailyChart data={equityCurve} isLoading={loading} />
@@ -212,20 +212,20 @@ export function AnalyticsPage() {
 
           {/* Tag performance table */}
           <div className="card p-4">
-            <h2 className="text-sm font-semibold text-gray-700 mb-3">
+            <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
               Performance by Tag
             </h2>
             {loading ? (
               <div className="h-24 flex items-center justify-center">
-                <div className="h-4 w-32 bg-gray-200 rounded animate-pulse" />
+                <div className="h-4 w-32 bg-gray-200 dark:bg-gray-700 rounded animate-pulse" />
               </div>
             ) : tagAnalytics.length === 0 ? (
-              <p className="text-sm text-gray-400">No tagged trades found.</p>
+              <p className="text-sm text-gray-400 dark:text-gray-500">No tagged trades found.</p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="min-w-full text-sm">
                   <thead>
-                    <tr className="border-b border-gray-200 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    <tr className="border-b border-gray-200 dark:border-gray-700 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                       <th className="py-2 pr-4">Tag</th>
                       <th className="py-2 pr-4 text-right">Trades</th>
                       <th className="py-2 pr-4 text-right">Net P&L</th>
@@ -234,13 +234,13 @@ export function AnalyticsPage() {
                       <th className="py-2 text-right">Profit Factor</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-100">
+                  <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
                     {tagAnalytics.map((tag) => (
                       <tr key={tag.tag_id}>
-                        <td className="py-2 pr-4 font-medium text-gray-800">
+                        <td className="py-2 pr-4 font-medium text-gray-800 dark:text-gray-200">
                           {tag.tag_name}
                         </td>
-                        <td className="py-2 pr-4 text-right text-gray-600">
+                        <td className="py-2 pr-4 text-right text-gray-600 dark:text-gray-400">
                           {tag.trade_count}
                         </td>
                         <td
@@ -257,10 +257,10 @@ export function AnalyticsPage() {
                         >
                           {formatCurrency(tag.avg_pnl)}
                         </td>
-                        <td className="py-2 pr-4 text-right text-gray-600">
+                        <td className="py-2 pr-4 text-right text-gray-600 dark:text-gray-400">
                           {formatPercent(tag.win_rate)}
                         </td>
-                        <td className="py-2 text-right text-gray-600">
+                        <td className="py-2 text-right text-gray-600 dark:text-gray-400">
                           {tag.profit_factor != null
                             ? tag.profit_factor.toFixed(2)
                             : '—'}
@@ -278,7 +278,7 @@ export function AnalyticsPage() {
       {activeTab === 'time-date' && (
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
           <div className="card p-4">
-            <h2 className="text-sm font-semibold text-gray-700 mb-3">
+            <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
               Group by Day of Week (APPT)
             </h2>
             <DayOfWeekAPPTChart
@@ -288,7 +288,7 @@ export function AnalyticsPage() {
           </div>
 
           <div className="card p-4">
-            <h2 className="text-sm font-semibold text-gray-700 mb-3">
+            <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
               Group by Timeframe (APPT)
             </h2>
             <TimeframeAPPTChart
@@ -301,7 +301,7 @@ export function AnalyticsPage() {
 
       {activeTab === 'calendar' && (
         <div className="card p-4">
-          <h2 className="text-sm font-semibold text-gray-700 mb-3">
+          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
             Calendar Heatmap
           </h2>
           <CalendarHeatmap data={calendar} isLoading={loading} />

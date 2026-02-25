@@ -9,6 +9,7 @@ import {
     XAxis,
     YAxis,
 } from 'recharts';
+import { useChartColors } from '../../hooks/useChartColors';
 import type { TimeOfDayEntry } from '../../types/analytics.types';
 
 interface TimeOfDayChartProps {
@@ -18,17 +19,19 @@ interface TimeOfDayChartProps {
 
 /** Stacked bar chart showing P&L by hour of day. */
 export function TimeOfDayChart({ data, isLoading }: TimeOfDayChartProps) {
+  const c = useChartColors();
+
   if (isLoading) {
     return (
-      <div className="h-[220px] flex items-center justify-center bg-gray-50 rounded-lg animate-pulse">
-        <div className="h-4 w-32 bg-gray-200 rounded" />
+      <div className="h-[220px] flex items-center justify-center bg-gray-50 dark:bg-gray-800 rounded-lg animate-pulse">
+        <div className="h-4 w-32 bg-gray-200 dark:bg-gray-700 rounded" />
       </div>
     );
   }
 
   if (data.length === 0) {
     return (
-      <div className="h-[220px] flex items-center justify-center text-gray-400 text-sm">
+      <div className="h-[220px] flex items-center justify-center text-gray-400 dark:text-gray-500 text-sm">
         No time-of-day data
       </div>
     );
@@ -56,15 +59,15 @@ export function TimeOfDayChart({ data, isLoading }: TimeOfDayChartProps) {
   return (
     <ResponsiveContainer width="100%" height={220}>
       <BarChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+        <CartesianGrid strokeDasharray="3 3" stroke={c.grid} />
         <XAxis
           dataKey="label"
-          tick={{ fontSize: 11 }}
+          tick={{ fontSize: 11, fill: c.tick }}
           tickLine={false}
-          axisLine={{ stroke: '#e5e7eb' }}
+          axisLine={{ stroke: c.axisLine }}
         />
         <YAxis
-          tick={{ fontSize: 11 }}
+          tick={{ fontSize: 11, fill: c.tick }}
           tickLine={false}
           axisLine={false}
           tickFormatter={(v: number) => `$${v}`}
@@ -76,7 +79,7 @@ export function TimeOfDayChart({ data, isLoading }: TimeOfDayChartProps) {
             if (!entry) return label;
             return `${label} — ${entry.trade_count} trades, ${(entry.win_rate * 100).toFixed(0)}% WR`;
           }}
-          contentStyle={{ fontSize: 12 }}
+          contentStyle={{ fontSize: 12, backgroundColor: c.tooltipBg, borderColor: c.tooltipBorder, color: c.tooltipText }}
         />
         <ReferenceLine y={0} stroke="#9ca3af" strokeDasharray="3 3" />
         <Bar dataKey="net_pnl" name="Net P&L" radius={[3, 3, 0, 0]}>

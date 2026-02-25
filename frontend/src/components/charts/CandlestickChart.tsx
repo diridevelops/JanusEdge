@@ -1,5 +1,6 @@
 import { createChart, type IChartApi, type IPriceLine, type ISeriesApi } from 'lightweight-charts';
 import { useCallback, useEffect, useRef } from 'react';
+import { useTheme } from '../../hooks/useTheme';
 import type { Execution } from '../../types/execution.types';
 import type { ChartInterval, OHLCDataPoint } from '../../types/marketData.types';
 
@@ -85,6 +86,7 @@ export function CandlestickChart({
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
+  const { isDark } = useTheme();
 
   /** Shift a UTC epoch timestamp to display timezone. */
   const shiftTime = useCallback(
@@ -123,21 +125,21 @@ export function CandlestickChart({
 
     const chart = createChart(containerRef.current, {
       layout: {
-        background: { color: '#ffffff' },
-        textColor: '#374151',
+        background: { color: isDark ? '#1f2937' : '#ffffff' },
+        textColor: isDark ? '#d1d5db' : '#374151',
       },
       grid: {
-        vertLines: { color: '#f3f4f6' },
-        horzLines: { color: '#f3f4f6' },
+        vertLines: { color: isDark ? '#374151' : '#f3f4f6' },
+        horzLines: { color: isDark ? '#374151' : '#f3f4f6' },
       },
       crosshair: {
         mode: 0,
       },
       rightPriceScale: {
-        borderColor: '#e5e7eb',
+        borderColor: isDark ? '#4b5563' : '#e5e7eb',
       },
       timeScale: {
-        borderColor: '#e5e7eb',
+        borderColor: isDark ? '#4b5563' : '#e5e7eb',
         timeVisible: true,
         secondsVisible: false,
       },
@@ -173,7 +175,28 @@ export function CandlestickChart({
       chartRef.current = null;
       seriesRef.current = null;
     };
-  }, []);
+  }, [isDark]);
+
+  // Sync theme changes to chart options
+  useEffect(() => {
+    if (!chartRef.current) return;
+    chartRef.current.applyOptions({
+      layout: {
+        background: { color: isDark ? '#1f2937' : '#ffffff' },
+        textColor: isDark ? '#d1d5db' : '#374151',
+      },
+      grid: {
+        vertLines: { color: isDark ? '#374151' : '#f3f4f6' },
+        horzLines: { color: isDark ? '#374151' : '#f3f4f6' },
+      },
+      rightPriceScale: {
+        borderColor: isDark ? '#4b5563' : '#e5e7eb',
+      },
+      timeScale: {
+        borderColor: isDark ? '#4b5563' : '#e5e7eb',
+      },
+    });
+  }, [isDark]);
 
   // Update data when ohlcData changes
   useEffect(() => {
@@ -241,7 +264,7 @@ export function CandlestickChart({
             className={`px-3 py-1 text-xs font-medium rounded transition-colors ${
               interval === iv
                 ? 'bg-brand-600 text-white'
-                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-400 dark:hover:bg-gray-600'
             }`}
           >
             {iv}
@@ -250,14 +273,14 @@ export function CandlestickChart({
       </div>
 
       {/* Chart container */}
-      <div className="relative border border-gray-200 rounded-lg overflow-hidden">
+      <div className="relative border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
         {isLoading && (
-          <div className="absolute inset-0 flex items-center justify-center bg-white/70 z-10">
+          <div className="absolute inset-0 flex items-center justify-center bg-white/70 dark:bg-gray-900/70 z-10">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-brand-600" />
           </div>
         )}
         {!ohlcData.length && !isLoading && (
-          <div className="absolute inset-0 flex items-center justify-center text-gray-400 text-sm">
+          <div className="absolute inset-0 flex items-center justify-center text-gray-400 dark:text-gray-500 text-sm">
             No chart data available
           </div>
         )}

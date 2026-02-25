@@ -57,7 +57,7 @@ export function TradeNotes({
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wider">
+        <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
           Trade Notes
         </h3>
         {!isEditing ? (
@@ -71,7 +71,7 @@ export function TradeNotes({
           <div className="flex gap-2">
             <button
               onClick={handleCancel}
-              className="text-sm text-gray-500 hover:text-gray-700 inline-flex items-center gap-1"
+              className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 inline-flex items-center gap-1"
             >
               <X className="h-3 w-3" />
               Cancel
@@ -89,7 +89,7 @@ export function TradeNotes({
       </div>
 
       <div>
-        <label className="block text-xs font-medium text-gray-500 mb-1">
+        <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
           Pre-Trade Plan
         </label>
         {isEditing ? (
@@ -101,14 +101,14 @@ export function TradeNotes({
             className="input-field text-sm"
           />
         ) : (
-          <p className="text-sm text-gray-700 bg-gray-50 rounded p-3 min-h-[60px] whitespace-pre-wrap">
-            {preTrade || <span className="text-gray-400 italic">No pre-trade notes</span>}
+          <p className="text-sm text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-700 rounded p-3 min-h-[60px] whitespace-pre-wrap">
+            {preTrade || <span className="text-gray-400 dark:text-gray-500 italic">No pre-trade notes</span>}
           </p>
         )}
       </div>
 
       <div>
-        <label className="block text-xs font-medium text-gray-500 mb-1">
+        <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
           Post-Trade Review
         </label>
         {isEditing ? (
@@ -120,8 +120,8 @@ export function TradeNotes({
             className="input-field text-sm"
           />
         ) : (
-          <p className="text-sm text-gray-700 bg-gray-50 rounded p-3 min-h-[60px] whitespace-pre-wrap">
-            {postTrade || <span className="text-gray-400 italic">No post-trade notes</span>}
+          <p className="text-sm text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-700 rounded p-3 min-h-[60px] whitespace-pre-wrap">
+            {postTrade || <span className="text-gray-400 dark:text-gray-500 italic">No post-trade notes</span>}
           </p>
         )}
       </div>

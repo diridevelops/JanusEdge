@@ -37,10 +37,10 @@ export function FilterBar({ filters, onFilterChange, onClearFilters }: FilterBar
   const hasActiveFilters = Object.values(filters).some((v) => v !== '');
 
   return (
-    <div className="flex flex-wrap items-end gap-3 bg-gray-50 p-4 rounded-lg">
+    <div className="flex flex-wrap items-end gap-3 bg-gray-50 p-4 rounded-lg dark:bg-gray-800/50">
       {/* Symbol */}
       <div>
-        <label htmlFor="filter-symbol" className="block text-xs font-medium text-gray-500 mb-1">
+        <label htmlFor="filter-symbol" className="block text-xs font-medium text-gray-500 mb-1 dark:text-gray-400">
           Symbol
         </label>
         <input
@@ -55,7 +55,7 @@ export function FilterBar({ filters, onFilterChange, onClearFilters }: FilterBar
 
       {/* Side */}
       <div>
-        <label htmlFor="filter-side" className="block text-xs font-medium text-gray-500 mb-1">
+        <label htmlFor="filter-side" className="block text-xs font-medium text-gray-500 mb-1 dark:text-gray-400">
           Side
         </label>
         <select
@@ -72,7 +72,7 @@ export function FilterBar({ filters, onFilterChange, onClearFilters }: FilterBar
 
       {/* Account */}
       <div>
-        <label htmlFor="filter-account" className="block text-xs font-medium text-gray-500 mb-1">
+        <label htmlFor="filter-account" className="block text-xs font-medium text-gray-500 mb-1 dark:text-gray-400">
           Account
         </label>
         <select
@@ -92,7 +92,7 @@ export function FilterBar({ filters, onFilterChange, onClearFilters }: FilterBar
 
       {/* Tag */}
       <div>
-        <label htmlFor="filter-tag" className="block text-xs font-medium text-gray-500 mb-1">
+        <label htmlFor="filter-tag" className="block text-xs font-medium text-gray-500 mb-1 dark:text-gray-400">
           Tag
         </label>
         <select
@@ -112,7 +112,7 @@ export function FilterBar({ filters, onFilterChange, onClearFilters }: FilterBar
 
       {/* Date from */}
       <div>
-        <label htmlFor="filter-date-from" className="block text-xs font-medium text-gray-500 mb-1">
+        <label htmlFor="filter-date-from" className="block text-xs font-medium text-gray-500 mb-1 dark:text-gray-400">
           From
         </label>
         <input
@@ -126,7 +126,7 @@ export function FilterBar({ filters, onFilterChange, onClearFilters }: FilterBar
 
       {/* Date to */}
       <div>
-        <label htmlFor="filter-date-to" className="block text-xs font-medium text-gray-500 mb-1">
+        <label htmlFor="filter-date-to" className="block text-xs font-medium text-gray-500 mb-1 dark:text-gray-400">
           To
         </label>
         <input
@@ -142,7 +142,7 @@ export function FilterBar({ filters, onFilterChange, onClearFilters }: FilterBar
       {hasActiveFilters && (
         <button
           onClick={onClearFilters}
-          className="text-sm text-gray-500 hover:text-gray-700 underline pb-0.5"
+          className="text-sm text-gray-500 hover:text-gray-700 underline pb-0.5 dark:text-gray-400 dark:hover:text-gray-200"
         >
           Clear Filters
         </button>

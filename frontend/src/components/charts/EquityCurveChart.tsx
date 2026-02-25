@@ -1,15 +1,16 @@
 import {
-  Bar,
-  CartesianGrid,
-  Cell,
-  ComposedChart,
-  Line,
-  ReferenceLine,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
+    Bar,
+    CartesianGrid,
+    Cell,
+    ComposedChart,
+    Line,
+    ReferenceLine,
+    ResponsiveContainer,
+    Tooltip,
+    XAxis,
+    YAxis,
 } from 'recharts';
+import { useChartColors } from '../../hooks/useChartColors';
 import type { EquityCurvePoint } from '../../types/analytics.types';
 import { formatCurrency } from '../../utils/formatters';
 
@@ -20,17 +21,19 @@ interface EquityCurveChartProps {
 
 /** Composed chart: cumulative P&L line + daily PnL histogram bars. */
 export function EquityCurveChart({ data, isLoading }: EquityCurveChartProps) {
+  const c = useChartColors();
+
   if (isLoading) {
     return (
-      <div className="h-64 flex items-center justify-center bg-gray-50 rounded-lg animate-pulse">
-        <div className="h-4 w-32 bg-gray-200 rounded" />
+      <div className="h-64 flex items-center justify-center bg-gray-50 dark:bg-gray-800 rounded-lg animate-pulse">
+        <div className="h-4 w-32 bg-gray-200 dark:bg-gray-700 rounded" />
       </div>
     );
   }
 
   if (data.length === 0) {
     return (
-      <div className="h-64 flex items-center justify-center text-gray-400 text-sm">
+      <div className="h-64 flex items-center justify-center text-gray-400 dark:text-gray-500 text-sm">
         No equity curve data
       </div>
     );
@@ -45,11 +48,11 @@ export function EquityCurveChart({ data, isLoading }: EquityCurveChartProps) {
   return (
     <ResponsiveContainer width="100%" height={280}>
       <ComposedChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
-        <XAxis dataKey="displayDate" tick={{ fontSize: 11 }} />
+        <CartesianGrid strokeDasharray="3 3" stroke={c.grid} />
+        <XAxis dataKey="displayDate" tick={{ fontSize: 11, fill: c.tick }} />
         <YAxis
           yAxisId="left"
-          tick={{ fontSize: 11 }}
+          tick={{ fontSize: 11, fill: c.tick }}
           tickFormatter={(v: number) => formatCurrency(v)}
         />
         <Tooltip
@@ -59,6 +62,7 @@ export function EquityCurveChart({ data, isLoading }: EquityCurveChartProps) {
             return [value, name];
           }}
           labelStyle={{ fontWeight: 600 }}
+          contentStyle={{ backgroundColor: c.tooltipBg, borderColor: c.tooltipBorder, color: c.tooltipText }}
         />
         <ReferenceLine yAxisId="left" y={0} stroke="#9ca3af" strokeDasharray="3 3" />
         <Bar

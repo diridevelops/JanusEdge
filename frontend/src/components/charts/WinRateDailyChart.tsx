@@ -9,6 +9,7 @@ import {
     XAxis,
     YAxis,
 } from 'recharts';
+import { useChartColors } from '../../hooks/useChartColors';
 import type { EquityCurvePoint } from '../../types/analytics.types';
 import { formatPercent } from '../../utils/formatters';
 
@@ -19,17 +20,19 @@ interface WinRateDailyChartProps {
 
 /** Daily Win Rate histogram. */
 export function WinRateDailyChart({ data, isLoading }: WinRateDailyChartProps) {
+  const c = useChartColors();
+
   if (isLoading) {
     return (
-      <div className="h-64 flex items-center justify-center bg-gray-50 rounded-lg animate-pulse">
-        <div className="h-4 w-32 bg-gray-200 rounded" />
+      <div className="h-64 flex items-center justify-center bg-gray-50 dark:bg-gray-800 rounded-lg animate-pulse">
+        <div className="h-4 w-32 bg-gray-200 dark:bg-gray-700 rounded" />
       </div>
     );
   }
 
   if (data.length === 0) {
     return (
-      <div className="h-64 flex items-center justify-center text-gray-400 text-sm">
+      <div className="h-64 flex items-center justify-center text-gray-400 dark:text-gray-500 text-sm">
         No win rate data
       </div>
     );
@@ -43,16 +46,17 @@ export function WinRateDailyChart({ data, isLoading }: WinRateDailyChartProps) {
   return (
     <ResponsiveContainer width="100%" height={220}>
       <BarChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
-        <XAxis dataKey="displayDate" tick={{ fontSize: 11 }} />
+        <CartesianGrid strokeDasharray="3 3" stroke={c.grid} />
+        <XAxis dataKey="displayDate" tick={{ fontSize: 11, fill: c.tick }} />
         <YAxis
-          tick={{ fontSize: 11 }}
+          tick={{ fontSize: 11, fill: c.tick }}
           domain={[0, 100]}
           tickFormatter={(v: number) => formatPercent(v, 0)}
         />
         <Tooltip
           formatter={(value: number) => [formatPercent(value), 'Win Rate']}
           labelStyle={{ fontWeight: 600 }}
+          contentStyle={{ backgroundColor: c.tooltipBg, borderColor: c.tooltipBorder, color: c.tooltipText }}
         />
         <ReferenceLine y={50} stroke="#9ca3af" strokeDasharray="3 3" />
         <Bar

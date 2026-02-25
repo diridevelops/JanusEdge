@@ -5,6 +5,7 @@ import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { ToastContainer } from './components/ui/Toast';
 import { AuthProvider } from './contexts/AuthContext';
 import { FilterProvider } from './contexts/FilterContext';
+import { ThemeProvider } from './contexts/ThemeContext';
 import { ToastProvider } from './contexts/ToastContext';
 import { AnalyticsPage } from './pages/AnalyticsPage';
 import { DashboardPage } from './pages/DashboardPage';
@@ -23,40 +24,42 @@ import { TradeListPage } from './pages/TradeListPage';
 export default function App() {
   return (
     <BrowserRouter>
-      <AuthProvider>
-        <FilterProvider>
-          <ToastProvider>
-            <ErrorBoundary>
-              <Routes>
-                {/* Public routes */}
-                <Route path="/login" element={<LoginPage />} />
-                <Route path="/register" element={<RegisterPage />} />
+      <ThemeProvider>
+        <AuthProvider>
+          <FilterProvider>
+            <ToastProvider>
+              <ErrorBoundary>
+                <Routes>
+                  {/* Public routes */}
+                  <Route path="/login" element={<LoginPage />} />
+                  <Route path="/register" element={<RegisterPage />} />
 
-                {/* Protected routes with layout */}
-                <Route
-                  element={
-                    <ProtectedRoute>
-                      <AppLayout />
-                    </ProtectedRoute>
-                  }
-                >
-                  <Route path="/" element={<DashboardPage />} />
-                  <Route path="/trades" element={<TradeListPage />} />
-                  <Route path="/trades/new" element={<ManualTradePage />} />
-                  <Route path="/trades/:id" element={<TradeDetailPage />} />
-                  <Route path="/import" element={<ImportPage />} />
-                  <Route path="/analytics" element={<AnalyticsPage />} />
-                  <Route path="/settings" element={<SettingsPage />} />
-                </Route>
+                  {/* Protected routes with layout */}
+                  <Route
+                    element={
+                      <ProtectedRoute>
+                        <AppLayout />
+                      </ProtectedRoute>
+                    }
+                  >
+                    <Route path="/" element={<DashboardPage />} />
+                    <Route path="/trades" element={<TradeListPage />} />
+                    <Route path="/trades/new" element={<ManualTradePage />} />
+                    <Route path="/trades/:id" element={<TradeDetailPage />} />
+                    <Route path="/import" element={<ImportPage />} />
+                    <Route path="/analytics" element={<AnalyticsPage />} />
+                    <Route path="/settings" element={<SettingsPage />} />
+                  </Route>
 
-                {/* Catch-all */}
-                <Route path="*" element={<NotFoundPage />} />
-              </Routes>
-            </ErrorBoundary>
-            <ToastContainer />
-          </ToastProvider>
-        </FilterProvider>
-      </AuthProvider>
+                  {/* Catch-all */}
+                  <Route path="*" element={<NotFoundPage />} />
+                </Routes>
+              </ErrorBoundary>
+              <ToastContainer />
+            </ToastProvider>
+          </FilterProvider>
+        </AuthProvider>
+      </ThemeProvider>
     </BrowserRouter>
   );
 }

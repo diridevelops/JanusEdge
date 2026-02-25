@@ -42,18 +42,18 @@ export function RegisterPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-50">
+    <div className="flex min-h-screen items-center justify-center bg-gray-50 dark:bg-gray-900">
       <div className="w-full max-w-md">
         <div className="flex flex-col items-center mb-8">
           <BarChart3 className="h-12 w-12 text-brand-600" />
-          <h1 className="mt-3 text-3xl font-bold text-gray-900">TradeLogs</h1>
-          <p className="mt-1 text-gray-500">Create your account</p>
+          <h1 className="mt-3 text-3xl font-bold text-gray-900 dark:text-gray-100">TradeLogs</h1>
+          <p className="mt-1 text-gray-500 dark:text-gray-400">Create your account</p>
         </div>
         <form onSubmit={handleSubmit} className="card p-8 space-y-5">
           <div>
             <label
               htmlFor="username"
-              className="block text-sm font-medium text-gray-700"
+              className="block text-sm font-medium text-gray-700 dark:text-gray-300"
             >
               Username
             </label>
@@ -70,7 +70,7 @@ export function RegisterPage() {
           <div>
             <label
               htmlFor="password"
-              className="block text-sm font-medium text-gray-700"
+              className="block text-sm font-medium text-gray-700 dark:text-gray-300"
             >
               Password
             </label>
@@ -87,7 +87,7 @@ export function RegisterPage() {
           <div>
             <label
               htmlFor="confirmPassword"
-              className="block text-sm font-medium text-gray-700"
+              className="block text-sm font-medium text-gray-700 dark:text-gray-300"
             >
               Confirm Password
             </label>
@@ -104,7 +104,7 @@ export function RegisterPage() {
           <div>
             <label
               htmlFor="timezone"
-              className="block text-sm font-medium text-gray-700"
+              className="block text-sm font-medium text-gray-700 dark:text-gray-300"
             >
               Trading Timezone
             </label>
@@ -128,7 +128,7 @@ export function RegisterPage() {
           >
             {isSubmitting ? 'Creating account...' : 'Create Account'}
           </button>
-          <p className="text-center text-sm text-gray-500">
+          <p className="text-center text-sm text-gray-500 dark:text-gray-400">
             Already have an account?{' '}
             <Link to="/login" className="text-brand-600 hover:text-brand-500">
               Sign in

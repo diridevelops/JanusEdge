@@ -12,6 +12,7 @@ import {
     YAxis,
 } from 'recharts';
 import { getEvolution } from '../../api/analytics.api';
+import { useChartColors } from '../../hooks/useChartColors';
 import type { EvolutionPoint } from '../../types/analytics.types';
 import type { FilterParams } from '../../types/common.types';
 import { formatCurrency } from '../../utils/formatters';
@@ -72,6 +73,7 @@ function InfoTooltip({ text }: InfoTooltipProps) {
 
 /** Evolution tab with running metrics per trade index. */
 export function EvolutionTab({ filters }: EvolutionTabProps) {
+  const c = useChartColors();
   const [window, setWindow] = useState(50);
   const [halfLife, setHalfLife] = useState(35);
   const [points, setPoints] = useState<EvolutionPoint[]>([]);
@@ -367,15 +369,15 @@ export function EvolutionTab({ filters }: EvolutionTabProps) {
 
   if (isLoading) {
     return (
-      <div className="h-64 flex items-center justify-center bg-gray-50 rounded-lg animate-pulse">
-        <div className="h-4 w-32 bg-gray-200 rounded" />
+      <div className="h-64 flex items-center justify-center bg-gray-50 dark:bg-gray-800 rounded-lg animate-pulse">
+        <div className="h-4 w-32 bg-gray-200 dark:bg-gray-700 rounded" />
       </div>
     );
   }
 
   if (chartData.length === 0) {
     return (
-      <div className="h-64 flex items-center justify-center text-gray-400 text-sm">
+      <div className="h-64 flex items-center justify-center text-gray-400 dark:text-gray-500 text-sm">
         No evolution data
       </div>
     );
@@ -384,7 +386,7 @@ export function EvolutionTab({ filters }: EvolutionTabProps) {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
-        <label htmlFor="evolution-window" className="text-sm text-gray-600">
+        <label htmlFor="evolution-window" className="text-sm text-gray-600 dark:text-gray-400">
           Rolling window
         </label>
         <select
@@ -398,7 +400,7 @@ export function EvolutionTab({ filters }: EvolutionTabProps) {
           <option value={100}>100</option>
         </select>
 
-        <label htmlFor="evolution-halflife" className="text-sm text-gray-600 ml-3">
+        <label htmlFor="evolution-halflife" className="text-sm text-gray-600 dark:text-gray-400 ml-3">
           EWMA half-life
         </label>
         <select
@@ -416,7 +418,7 @@ export function EvolutionTab({ filters }: EvolutionTabProps) {
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         <div className="card p-4">
           <div className="flex items-center gap-2 mb-2">
-            <h3 className="text-sm font-semibold text-gray-700">Running Mean R (95% CI) vs Running APPT</h3>
+            <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Running Mean R (95% CI) vs Running APPT</h3>
             <InfoTooltip
               text={
                 'What this shows: Running mean R (left axis) with 95% CI = average risk-normalized edge per trade; Running APPT (right axis) = average profit per trade in money. Undefined R trades are excluded from R statistics.\n\nHow to read:\n• Mean R above 0 with CI mostly above 0: evidence of positive edge.\n• APPT > 0 but Mean R ≤ 0: profits driven by position sizing/exposure rather than edge.\n• EWMA above Mean: recent improvement; EWMA below Mean: recent deterioration.\n• EWMA crossing 0 before Mean: early regime shift signal.\n• CI narrows as trades grow: increasing statistical stability.'
@@ -425,13 +427,13 @@ export function EvolutionTab({ filters }: EvolutionTabProps) {
           </div>
           <ResponsiveContainer width="100%" height={250}>
             <ComposedChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 34 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
-              <XAxis dataKey="x" tick={{ fontSize: 11 }} />
-              <YAxis yAxisId="left" tick={{ fontSize: 11 }} domain={runningLeftDomain} tickFormatter={formatR} allowDataOverflow />
+              <CartesianGrid strokeDasharray="3 3" stroke={c.grid} />
+              <XAxis dataKey="x" tick={{ fontSize: 11, fill: c.tick }} />
+              <YAxis yAxisId="left" tick={{ fontSize: 11, fill: c.tick }} domain={runningLeftDomain} tickFormatter={formatR} allowDataOverflow />
               <YAxis
                 yAxisId="right"
                 orientation="right"
-                tick={{ fontSize: 11 }}
+                tick={{ fontSize: 11, fill: c.tick }}
                 tickFormatter={(v: number) => formatCurrency(v)}
                 domain={runningRightAlignedDomain}
                 allowDataOverflow
@@ -556,10 +558,10 @@ export function EvolutionTab({ filters }: EvolutionTabProps) {
                   key={`running-${marker.x}`}
                   x={marker.x}
                   yAxisId="left"
-                  stroke="#e5e7eb"
+                  stroke={c.grid}
                   strokeDasharray="2 4"
                   ifOverflow="extendDomain"
-                  label={{ value: marker.label, position: 'insideBottom', fill: '#6b7280', fontSize: 10 }}
+                  label={{ value: marker.label, position: 'insideBottom', fill: c.tick, fontSize: 10 }}
                 />
               ))}
             </ComposedChart>
@@ -568,7 +570,7 @@ export function EvolutionTab({ filters }: EvolutionTabProps) {
 
         <div className="card p-4">
           <div className="flex items-center gap-2 mb-2">
-            <h3 className="text-sm font-semibold text-gray-700">Rolling Expectancy R (95% CI) vs Rolling APPT</h3>
+            <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Rolling Expectancy R (95% CI) vs Rolling APPT</h3>
             <InfoTooltip
               text={
                 'What this shows: Rolling (windowed) expectancy in R (left axis) with 95% CI and Rolling APPT (right axis), over the last W trades (selected window). Captures recent regime performance.\n\nHow to read:\n• R rolling mean > 0: current edge is positive; < 0 indicates deterioration.\n• APPT diverges from R: money results driven by sizing/fees/execution, not edge.\n• Wide CI or frequent zero-crossings: limited data or unstable recent performance; consider larger W or more trades.'
@@ -577,13 +579,13 @@ export function EvolutionTab({ filters }: EvolutionTabProps) {
           </div>
           <ResponsiveContainer width="100%" height={250}>
             <ComposedChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 34 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
-              <XAxis dataKey="x" tick={{ fontSize: 11 }} />
-              <YAxis yAxisId="left" tick={{ fontSize: 11 }} domain={rollingLeftDomain} tickFormatter={formatR} allowDataOverflow />
+              <CartesianGrid strokeDasharray="3 3" stroke={c.grid} />
+              <XAxis dataKey="x" tick={{ fontSize: 11, fill: c.tick }} />
+              <YAxis yAxisId="left" tick={{ fontSize: 11, fill: c.tick }} domain={rollingLeftDomain} tickFormatter={formatR} allowDataOverflow />
               <YAxis
                 yAxisId="right"
                 orientation="right"
-                tick={{ fontSize: 11 }}
+                tick={{ fontSize: 11, fill: c.tick }}
                 tickFormatter={(v: number) => formatCurrency(v)}
                 domain={rollingRightAlignedDomain}
                 allowDataOverflow
@@ -691,10 +693,10 @@ export function EvolutionTab({ filters }: EvolutionTabProps) {
                   key={`rolling-${marker.x}`}
                   x={marker.x}
                   yAxisId="left"
-                  stroke="#e5e7eb"
+                  stroke={c.grid}
                   strokeDasharray="2 4"
                   ifOverflow="extendDomain"
-                  label={{ value: marker.label, position: 'insideBottom', fill: '#6b7280', fontSize: 10 }}
+                  label={{ value: marker.label, position: 'insideBottom', fill: c.tick, fontSize: 10 }}
                 />
               ))}
             </ComposedChart>
@@ -703,7 +705,7 @@ export function EvolutionTab({ filters }: EvolutionTabProps) {
 
         <div className="card p-4">
           <div className="flex items-center gap-2 mb-2">
-            <h3 className="text-sm font-semibold text-gray-700">Cumulative R vs Cumulative Net P&L</h3>
+            <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Cumulative R vs Cumulative Net P&L</h3>
             <InfoTooltip
               text={
                 'What this shows: Total performance over time in two currencies: Cumulative R (left axis, dimensionless) and Cumulative Net P&L (right axis, currency). R excludes trades with undefined initial risk; P&L is net of fees.\n\nHow to read:\n• Both lines rising: healthy, scalable performance.\n• Cum$ ↑ while CumR flat/↓: profits mainly from exposure/sizing, not risk-normalized edge.\n• Drawdowns/flat spots: reveal path dependence and risk of the system.'
@@ -712,13 +714,13 @@ export function EvolutionTab({ filters }: EvolutionTabProps) {
           </div>
           <ResponsiveContainer width="100%" height={250}>
             <ComposedChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 34 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
-              <XAxis dataKey="x" tick={{ fontSize: 11 }} />
-              <YAxis yAxisId="left" tick={{ fontSize: 11 }} domain={cumulativeLeftDomain} tickFormatter={formatR} allowDataOverflow />
+              <CartesianGrid strokeDasharray="3 3" stroke={c.grid} />
+              <XAxis dataKey="x" tick={{ fontSize: 11, fill: c.tick }} />
+              <YAxis yAxisId="left" tick={{ fontSize: 11, fill: c.tick }} domain={cumulativeLeftDomain} tickFormatter={formatR} allowDataOverflow />
               <YAxis
                 yAxisId="right"
                 orientation="right"
-                tick={{ fontSize: 11 }}
+                tick={{ fontSize: 11, fill: c.tick }}
                 tickFormatter={(v: number) => formatCurrency(v)}
                 domain={cumulativeRightAlignedDomain}
                 allowDataOverflow
@@ -756,10 +758,10 @@ export function EvolutionTab({ filters }: EvolutionTabProps) {
                   key={`cum-${marker.x}`}
                   x={marker.x}
                   yAxisId="left"
-                  stroke="#e5e7eb"
+                  stroke={c.grid}
                   strokeDasharray="2 4"
                   ifOverflow="extendDomain"
-                  label={{ value: marker.label, position: 'insideBottom', fill: '#6b7280', fontSize: 10 }}
+                  label={{ value: marker.label, position: 'insideBottom', fill: c.tick, fontSize: 10 }}
                 />
               ))}
             </ComposedChart>

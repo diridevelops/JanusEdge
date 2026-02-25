@@ -38,8 +38,8 @@ export function ImportPage() {
     <div className="max-w-5xl mx-auto space-y-6">
       {/* Page header */}
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Import Trades</h1>
-        <p className="mt-1 text-sm text-gray-500">
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Import Trades</h1>
+        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
           Upload one or more CSV exports from NinjaTrader or Quantower to import your trades.
         </p>
       </div>
@@ -63,8 +63,8 @@ export function ImportPage() {
                           isCompleted
                             ? 'bg-brand-600 text-white'
                             : isCurrent
-                              ? 'bg-brand-100 text-brand-700 ring-2 ring-brand-600'
-                              : 'bg-gray-100 text-gray-500'
+                              ? 'bg-brand-100 text-brand-700 ring-2 ring-brand-600 dark:bg-brand-900/40 dark:text-brand-400'
+                              : 'bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400'
                         }`}
                     >
                       {isCompleted ? (
@@ -75,7 +75,7 @@ export function ImportPage() {
                     </span>
                     <span
                       className={`text-sm font-medium ${
-                        isCurrent ? 'text-brand-700' : 'text-gray-500'
+                        isCurrent ? 'text-brand-700 dark:text-brand-400' : 'text-gray-500 dark:text-gray-400'
                       }`}
                     >
                       {STEP_LABELS[step]}
@@ -84,7 +84,7 @@ export function ImportPage() {
                   {idx < 2 && (
                     <div
                       className={`flex-1 h-0.5 mx-4 ${
-                        isCompleted ? 'bg-brand-600' : 'bg-gray-200'
+                        isCompleted ? 'bg-brand-600' : 'bg-gray-200 dark:bg-gray-700'
                       }`}
                     />
                   )}
@@ -100,7 +100,7 @@ export function ImportPage() {
         {/* Step 1: Upload */}
         {wizard.step === 'upload' && (
           <div className="space-y-4">
-            <h2 className="text-lg font-semibold text-gray-900">
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
               Upload CSV Files
             </h2>
             <FileDropZone
@@ -114,7 +114,7 @@ export function ImportPage() {
         {/* Step 2: Preview */}
         {wizard.step === 'preview' && (
           <div className="space-y-4">
-            <h2 className="text-lg font-semibold text-gray-900">
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
               Preview Parsed Executions
             </h2>
 
@@ -123,7 +123,7 @@ export function ImportPage() {
             )}
 
             {wizard.warnings.length > 0 && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-700">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-sm text-blue-700 dark:bg-blue-900/30 dark:border-blue-800 dark:text-blue-300">
                 {wizard.warnings.map((w, i) => (
                   <p key={i}>{w}</p>
                 ))}
@@ -139,7 +139,7 @@ export function ImportPage() {
             />
 
             {wizard.error && (
-              <div className="text-sm text-red-600 bg-red-50 p-3 rounded-md">
+              <div className="text-sm text-red-600 bg-red-50 p-3 rounded-md dark:bg-red-900/30 dark:text-red-400">
                 {wizard.error}
               </div>
             )}
@@ -173,10 +173,10 @@ export function ImportPage() {
         {/* Step 3: Fee Entry */}
         {wizard.step === 'fees' && (
           <div className="space-y-4">
-            <h2 className="text-lg font-semibold text-gray-900">
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
               Assign Fees & Initial Risk
             </h2>
-            <p className="text-sm text-gray-500">
+            <p className="text-sm text-gray-500 dark:text-gray-400">
               {wizard.trades.length} {wizard.trades.length === 1 ? 'trade' : 'trades'}{' '}
               reconstructed. Enter fees and initial risk for each trade or use bulk entry.
             </p>
@@ -192,7 +192,7 @@ export function ImportPage() {
             />
 
             {wizard.error && (
-              <div className="text-sm text-red-600 bg-red-50 p-3 rounded-md">
+              <div className="text-sm text-red-600 bg-red-50 p-3 rounded-md dark:bg-red-900/30 dark:text-red-400">
                 {wizard.error}
               </div>
             )}

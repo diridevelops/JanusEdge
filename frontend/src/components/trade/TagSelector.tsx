@@ -73,7 +73,7 @@ export function TagSelector({ tradeId, tagIds, onChanged }: TagSelectorProps) {
 
   return (
     <div className="space-y-2">
-      <h3 className="text-sm font-semibold text-gray-900 uppercase tracking-wider">
+      <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
         Tags
       </h3>
 
@@ -101,7 +101,7 @@ export function TagSelector({ tradeId, tagIds, onChanged }: TagSelectorProps) {
         {!showAdd ? (
           <button
             onClick={() => setShowAdd(true)}
-            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-600 hover:bg-gray-200"
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-400 dark:hover:bg-gray-600"
           >
             <Plus className="h-3 w-3" />
             Add Tag
@@ -128,7 +128,7 @@ export function TagSelector({ tradeId, tagIds, onChanged }: TagSelectorProps) {
             </select>
             <button
               onClick={() => setShowAdd(false)}
-              className="text-gray-400 hover:text-gray-600"
+              className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
             >
               <X className="h-4 w-4" />
             </button>

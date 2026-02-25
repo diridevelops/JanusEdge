@@ -38,60 +38,60 @@ export function ImportSummary({
     <div className="text-center space-y-6">
       {/* Success icon */}
       <div className="flex justify-center">
-        <div className="rounded-full bg-green-100 p-4">
-          <CheckCircle className="h-12 w-12 text-green-600" />
+        <div className="rounded-full bg-green-100 dark:bg-green-900/30 p-4">
+          <CheckCircle className="h-12 w-12 text-green-600 dark:text-green-400" />
         </div>
       </div>
 
       <div>
-        <h2 className="text-xl font-semibold text-gray-900">Import Complete!</h2>
-        <p className="mt-1 text-gray-500">
+        <h2 className="text-xl font-semibold text-gray-900 dark:text-gray-100">Import Complete!</h2>
+        <p className="mt-1 text-gray-500 dark:text-gray-400">
           Successfully imported {tradeCount} {tradeCount === 1 ? 'trade' : 'trades'} from{' '}
           {platform}
         </p>
       </div>
 
       {/* File info */}
-      <div className="inline-flex items-center gap-2 px-4 py-2 bg-gray-50 rounded-lg text-sm text-gray-600">
+      <div className="inline-flex items-center gap-2 px-4 py-2 bg-gray-50 dark:bg-gray-800 rounded-lg text-sm text-gray-600 dark:text-gray-400">
         <FileText className="h-4 w-4" />
         {fileName}
       </div>
 
       {/* Stats grid */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 max-w-lg mx-auto">
-        <div className="bg-gray-50 rounded-lg p-3">
-          <p className="text-xs text-gray-500 uppercase">Trades</p>
-          <p className="text-lg font-semibold text-gray-900">{tradeCount}</p>
+        <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3">
+          <p className="text-xs text-gray-500 dark:text-gray-400 uppercase">Trades</p>
+          <p className="text-lg font-semibold text-gray-900 dark:text-gray-100">{tradeCount}</p>
         </div>
-        <div className="bg-gray-50 rounded-lg p-3">
-          <p className="text-xs text-gray-500 uppercase">Winners</p>
+        <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3">
+          <p className="text-xs text-gray-500 dark:text-gray-400 uppercase">Winners</p>
           <p className="text-lg font-semibold text-green-600">{winners}</p>
         </div>
-        <div className="bg-gray-50 rounded-lg p-3">
-          <p className="text-xs text-gray-500 uppercase">Losers</p>
+        <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3">
+          <p className="text-xs text-gray-500 dark:text-gray-400 uppercase">Losers</p>
           <p className="text-lg font-semibold text-red-600">{losers}</p>
         </div>
-        <div className="bg-gray-50 rounded-lg p-3">
-          <p className="text-xs text-gray-500 uppercase">Break Even</p>
-          <p className="text-lg font-semibold text-gray-600">{breakEven}</p>
+        <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-3">
+          <p className="text-xs text-gray-500 dark:text-gray-400 uppercase">Break Even</p>
+          <p className="text-lg font-semibold text-gray-600 dark:text-gray-400">{breakEven}</p>
         </div>
       </div>
 
       {/* P&L summary */}
-      <div className="max-w-sm mx-auto bg-gray-50 rounded-lg p-4 space-y-2 text-sm">
+      <div className="max-w-sm mx-auto bg-gray-50 dark:bg-gray-800 rounded-lg p-4 space-y-2 text-sm">
         <div className="flex justify-between">
-          <span className="text-gray-600">Gross P&L</span>
+          <span className="text-gray-600 dark:text-gray-400">Gross P&L</span>
           <span className={`font-medium ${totalGrossPnl >= 0 ? 'text-profit' : 'text-loss'}`}>
             {formatCurrency(totalGrossPnl)}
           </span>
         </div>
         <div className="flex justify-between">
-          <span className="text-gray-600">Total Fees</span>
-          <span className="font-medium text-gray-900">{formatCurrency(totalFees)}</span>
+          <span className="text-gray-600 dark:text-gray-400">Total Fees</span>
+          <span className="font-medium text-gray-900 dark:text-gray-100">{formatCurrency(totalFees)}</span>
         </div>
-        <hr className="border-gray-200" />
+        <hr className="border-gray-200 dark:border-gray-700" />
         <div className="flex justify-between">
-          <span className="font-medium text-gray-900">Net P&L</span>
+          <span className="font-medium text-gray-900 dark:text-gray-100">Net P&L</span>
           <span className={`font-semibold ${totalNetPnl >= 0 ? 'text-profit' : 'text-loss'}`}>
             {formatCurrency(totalNetPnl)}
           </span>

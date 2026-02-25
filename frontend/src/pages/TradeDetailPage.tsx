@@ -145,7 +145,7 @@ export function TradeDetailPage() {
 
   if (!trade) {
     return (
-      <div className="text-center py-24 text-gray-500">
+      <div className="text-center py-24 text-gray-500 dark:text-gray-400">
         <p>Trade not found.</p>
         <Link to="/trades" className="text-brand-600 hover:underline mt-2 inline-block">
           Back to Trades
@@ -161,13 +161,13 @@ export function TradeDetailPage() {
         <div className="flex items-center gap-3">
           <Link
             to="/trades"
-            className="text-gray-400 hover:text-gray-600"
+            className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
             aria-label="Back to trades"
           >
             <ArrowLeft className="h-5 w-5" />
           </Link>
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
               {trade.symbol}{' '}
               <span
                 className={`text-lg ${trade.side === 'Long' ? 'text-green-600' : 'text-red-600'}`}
@@ -175,7 +175,7 @@ export function TradeDetailPage() {
                 {trade.side}
               </span>
             </h1>
-            <p className="text-sm text-gray-500">
+            <p className="text-sm text-gray-500 dark:text-gray-400">
               {formatDateTime(trade.entry_time, user?.display_timezone)} —{' '}
               {formatDateTime(trade.exit_time, user?.display_timezone)}
             </p>
@@ -195,43 +195,43 @@ export function TradeDetailPage() {
       <div className="card p-4">
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-9 gap-4 text-sm">
           <div>
-            <p className="text-xs text-gray-500 uppercase">Quantity</p>
-            <p className="font-semibold text-gray-900">{trade.total_quantity}</p>
+            <p className="text-xs text-gray-500 uppercase dark:text-gray-400">Quantity</p>
+            <p className="font-semibold text-gray-900 dark:text-gray-100">{trade.total_quantity}</p>
           </div>
           <div>
-            <p className="text-xs text-gray-500 uppercase">Avg Entry</p>
-            <p className="font-semibold text-gray-900">{formatCurrency(trade.avg_entry_price)}</p>
+            <p className="text-xs text-gray-500 uppercase dark:text-gray-400">Avg Entry</p>
+            <p className="font-semibold text-gray-900 dark:text-gray-100">{formatCurrency(trade.avg_entry_price)}</p>
           </div>
           <div>
-            <p className="text-xs text-gray-500 uppercase">Avg Exit</p>
-            <p className="font-semibold text-gray-900">{formatCurrency(trade.avg_exit_price)}</p>
+            <p className="text-xs text-gray-500 uppercase dark:text-gray-400">Avg Exit</p>
+            <p className="font-semibold text-gray-900 dark:text-gray-100">{formatCurrency(trade.avg_exit_price)}</p>
           </div>
           <div>
-            <p className="text-xs text-gray-500 uppercase">Gross P&L</p>
+            <p className="text-xs text-gray-500 uppercase dark:text-gray-400">Gross P&L</p>
             <p className={`font-semibold ${trade.gross_pnl >= 0 ? 'text-profit' : 'text-loss'}`}>
               {formatCurrency(trade.gross_pnl)}
             </p>
           </div>
           <div>
-            <p className="text-xs text-gray-500 uppercase">Fees</p>
-            <p className="font-semibold text-gray-700">{formatCurrency(trade.fee)}</p>
+            <p className="text-xs text-gray-500 uppercase dark:text-gray-400">Fees</p>
+            <p className="font-semibold text-gray-700 dark:text-gray-300">{formatCurrency(trade.fee)}</p>
           </div>
           <div>
-            <p className="text-xs text-gray-500 uppercase">Net P&L</p>
+            <p className="text-xs text-gray-500 uppercase dark:text-gray-400">Net P&L</p>
             <p className={`font-bold ${trade.net_pnl >= 0 ? 'text-profit' : 'text-loss'}`}>
               {formatCurrency(trade.net_pnl)}
             </p>
           </div>
           <div>
-            <p className="text-xs text-gray-500 uppercase">Initial Risk</p>
-            <p className="font-semibold text-gray-900">
+            <p className="text-xs text-gray-500 uppercase dark:text-gray-400">Initial Risk</p>
+            <p className="font-semibold text-gray-900 dark:text-gray-100">
               {trade.initial_risk > 0
                 ? formatCurrency(trade.initial_risk)
                 : '—'}
             </p>
           </div>
           <div>
-            <p className="text-xs text-gray-500 uppercase">R-multiple</p>
+            <p className="text-xs text-gray-500 uppercase dark:text-gray-400">R-multiple</p>
             <p className={`font-semibold ${trade.net_pnl >= 0 ? 'text-profit' : 'text-loss'}`}>
               {trade.initial_risk > 0
                 ? `${(trade.net_pnl / trade.initial_risk).toFixed(2)}R`
@@ -239,8 +239,8 @@ export function TradeDetailPage() {
             </p>
           </div>
           <div>
-            <p className="text-xs text-gray-500 uppercase">Duration</p>
-            <p className="font-semibold text-gray-900">
+            <p className="text-xs text-gray-500 uppercase dark:text-gray-400">Duration</p>
+            <p className="font-semibold text-gray-900 dark:text-gray-100">
               {formatDuration(trade.holding_time_seconds)}
             </p>
           </div>
@@ -250,14 +250,14 @@ export function TradeDetailPage() {
       {/* Chart */}
       <div className="card p-4">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wider">
+          <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wider dark:text-gray-100">
             Price Chart
           </h2>
           <button
             type="button"
             onClick={handleRefreshChartData}
             disabled={isChartLoading}
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600 hover:text-gray-800 disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600 hover:text-gray-800 disabled:opacity-50 dark:text-gray-400 dark:hover:text-gray-200"
             title="Redownload market data for this trade day"
           >
             <RefreshCw className={`h-4 w-4 ${isChartLoading ? 'animate-spin' : ''}`} />
@@ -280,7 +280,7 @@ export function TradeDetailPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Executions */}
         <div className="card p-4">
-          <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wider mb-3">
+          <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wider mb-3 dark:text-gray-100">
             Executions ({executions.length})
           </h2>
           <ExecutionList executions={executions} />
