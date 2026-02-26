@@ -4,7 +4,6 @@ import {
     getApptByDayOfWeek,
     getApptByTimeframe,
     getByTag,
-    getCalendar,
     getDrawdown,
     getEquityCurve,
     getSummary,
@@ -12,7 +11,6 @@ import {
 import { EvolutionTab } from '../components/analytics/EvolutionTab';
 import { StatsGrid } from '../components/analytics/StatsGrid';
 import { APPTDailyChart } from '../components/charts/APPTDailyChart';
-import { CalendarHeatmap } from '../components/charts/CalendarHeatmap';
 import { DayOfWeekAPPTChart } from '../components/charts/DayOfWeekAPPTChart';
 import { DrawdownChart } from '../components/charts/DrawdownChart';
 import { EquityCurveChart } from '../components/charts/EquityCurveChart';
@@ -24,14 +22,13 @@ import type {
     AnalyticsSummary,
     ApptByDayOfWeekEntry,
     ApptByTimeframeEntry,
-    CalendarDay,
     DrawdownPoint,
     EquityCurvePoint,
     TagAnalytics,
 } from '../types/analytics.types';
 import { formatCurrency, formatPercent } from '../utils/formatters';
 
-type AnalyticsTab = 'overview' | 'time-date' | 'calendar' | 'evolution';
+type AnalyticsTab = 'overview' | 'time-date' | 'evolution';
 
 /** Analytics dashboard with charts and summary metrics. */
 export function AnalyticsPage() {
@@ -49,7 +46,6 @@ export function AnalyticsPage() {
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
   const [equityCurve, setEquityCurve] = useState<EquityCurvePoint[]>([]);
   const [drawdown, setDrawdown] = useState<DrawdownPoint[]>([]);
-  const [calendar, setCalendar] = useState<CalendarDay[]>([]);
   const [apptByDayOfWeek, setApptByDayOfWeek] = useState<ApptByDayOfWeekEntry[]>([]);
   const [apptByTimeframe, setApptByTimeframe] = useState<ApptByTimeframeEntry[]>([]);
   const [tagAnalytics, setTagAnalytics] = useState<TagAnalytics[]>([]);
@@ -68,7 +64,6 @@ export function AnalyticsPage() {
         summaryRes,
         equityRes,
         drawdownRes,
-        calendarRes,
         dayOfWeekRes,
         timeframeRes,
         tagRes,
@@ -76,7 +71,6 @@ export function AnalyticsPage() {
         getSummary(apiFilters),
         getEquityCurve(apiFilters),
         getDrawdown(apiFilters),
-        getCalendar(apiFilters),
         getApptByDayOfWeek(apiFilters, displayTimezone),
         getApptByTimeframe(apiFilters, displayTimezone),
         getByTag(apiFilters),
@@ -85,7 +79,6 @@ export function AnalyticsPage() {
       setSummary(summaryRes);
       setEquityCurve(equityRes);
       setDrawdown(drawdownRes);
-      setCalendar(calendarRes);
       setApptByDayOfWeek(dayOfWeekRes);
       setApptByTimeframe(timeframeRes);
       setTagAnalytics(tagRes);
@@ -148,17 +141,6 @@ export function AnalyticsPage() {
             }`}
           >
             Time & Date
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('calendar')}
-            className={`px-4 py-2 text-sm font-medium rounded-t-md border border-b-0 ${
-              activeTab === 'calendar'
-                ? 'bg-white text-gray-900 border-gray-300 dark:bg-gray-800 dark:text-gray-100 dark:border-gray-600'
-                : 'bg-gray-100 text-gray-600 border-transparent hover:text-gray-800 dark:bg-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
-            }`}
-          >
-            Calendar
           </button>
           <button
             type="button"
@@ -296,15 +278,6 @@ export function AnalyticsPage() {
               isLoading={loading}
             />
           </div>
-        </div>
-      )}
-
-      {activeTab === 'calendar' && (
-        <div className="card p-4">
-          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
-            Calendar Heatmap
-          </h2>
-          <CalendarHeatmap data={calendar} isLoading={loading} />
         </div>
       )}
 

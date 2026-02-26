@@ -1,5 +1,6 @@
 import {
     BarChart3,
+    Calendar,
     LayoutDashboard,
     List,
     PlusCircle,
@@ -14,6 +15,7 @@ const navItems = [
   { to: '/trades/new', label: 'New Trade', icon: PlusCircle },
   { to: '/import', label: 'Import', icon: Upload },
   { to: '/analytics', label: 'Analytics', icon: BarChart3 },
+  { to: '/calendar', label: 'Calendar', icon: Calendar },
   { to: '/settings', label: 'Settings', icon: Settings },
 ];
 

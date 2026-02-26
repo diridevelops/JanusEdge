@@ -8,6 +8,7 @@ import { FilterProvider } from './contexts/FilterContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { ToastProvider } from './contexts/ToastContext';
 import { AnalyticsPage } from './pages/AnalyticsPage';
+import { CalendarPage } from './pages/CalendarPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { ImportPage } from './pages/ImportPage';
 import { LoginPage } from './pages/LoginPage';
@@ -48,6 +49,7 @@ export default function App() {
                     <Route path="/trades/:id" element={<TradeDetailPage />} />
                     <Route path="/import" element={<ImportPage />} />
                     <Route path="/analytics" element={<AnalyticsPage />} />
+                    <Route path="/calendar" element={<CalendarPage />} />
                     <Route path="/settings" element={<SettingsPage />} />
                   </Route>
 
