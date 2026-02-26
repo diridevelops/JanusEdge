@@ -451,6 +451,7 @@ class AnalyticsService:
         )
 
         expectancy_r = None
+        wl_ratio_r = None
         r_trades = list(
             mongo.db.trades.find(
                 {
@@ -486,6 +487,11 @@ class AnalyticsService:
             expectancy_r = (
                 r_win_rate * avg_win_r
             ) - ((1 - r_win_rate) * avg_loss_r)
+            wl_ratio_r = (
+                avg_win_r / avg_loss_r
+                if avg_loss_r > 0
+                else None
+            )
 
         return {
             "total_trades": total,
@@ -529,6 +535,11 @@ class AnalyticsService:
                 if expectancy_r is not None
                 else None
             ),
+            "wl_ratio_r": (
+                round(wl_ratio_r, 2)
+                if wl_ratio_r is not None
+                else None
+            ),
             "win_per_share_avg": round(
                 win_per_share_avg, 2
             ),
@@ -542,6 +553,48 @@ class AnalyticsService:
                 loss_per_share_high, 2
             ),
         }
+
+    def get_trade_pnls(
+        self,
+        user_id: str,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Return per-trade net P&L for bootstrap resampling.
+
+        Returns a lightweight list of {net_pnl} dicts
+        for all closed trades matching filters.
+
+        Parameters:
+            user_id: The user's ObjectId string.
+            filters: Optional filter parameters.
+
+        Returns:
+            List of dicts with net_pnl values.
+        """
+        if filters is None:
+            filters = {}
+
+        match = _build_base_match(user_id, filters)
+
+        trades = mongo.db.trades.find(
+            match,
+            {"net_pnl": 1, "initial_risk": 1, "_id": 0},
+        ).sort("exit_time", 1)
+
+        results: List[Dict[str, Any]] = []
+        for t in trades:
+            pnl = round(t["net_pnl"], 2)
+            risk = t.get("initial_risk")
+            r_mul = (
+                round(pnl / risk, 4)
+                if risk and risk != 0
+                else None
+            )
+            results.append(
+                {"net_pnl": pnl, "r_multiple": r_mul}
+            )
+        return results
 
     def get_equity_curve(
         self,
@@ -1558,6 +1611,7 @@ def _empty_summary() -> Dict[str, Any]:
         "appt": 0.0,
         "pl_ratio": None,
         "expectancy_r": None,
+        "wl_ratio_r": None,
         "win_per_share_avg": 0.0,
         "win_per_share_high": 0.0,
         "loss_per_share_avg": 0.0,

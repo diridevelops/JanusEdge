@@ -68,3 +68,13 @@ export async function updateDisplayTimezone(
   });
   return res.data;
 }
+
+/** Update the current user's starting equity for simulations. */
+export async function updateStartingEquity(
+  startingEquity: number
+): Promise<User> {
+  const res = await apiClient.put<User>('/auth/starting-equity', {
+    starting_equity: startingEquity,
+  });
+  return res.data;
+}

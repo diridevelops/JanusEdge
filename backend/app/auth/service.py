@@ -70,6 +70,7 @@ class AuthService:
                 "username": username,
                 "timezone": timezone,
                 "display_timezone": timezone,
+                "starting_equity": 50000.0,
             },
         }
 
@@ -116,6 +117,9 @@ class AuthService:
                     "display_timezone",
                     user["timezone"],
                 ),
+                "starting_equity": user.get(
+                    "starting_equity", 50000.0
+                ),
             },
         }
 
@@ -143,6 +147,9 @@ class AuthService:
             "display_timezone": user.get(
                 "display_timezone",
                 user["timezone"],
+            ),
+            "starting_equity": user.get(
+                "starting_equity", 50000.0
             ),
         }
 
@@ -225,6 +232,9 @@ class AuthService:
                 "display_timezone",
                 timezone,
             ),
+            "starting_equity": user.get(
+                "starting_equity", 50000.0
+            ),
         }
 
     def update_display_timezone(
@@ -264,4 +274,41 @@ class AuthService:
             "username": user["username"],
             "timezone": user["timezone"],
             "display_timezone": display_timezone,
+        }
+
+    def update_starting_equity(
+        self,
+        user_id: str,
+        starting_equity: float,
+    ) -> dict:
+        """
+        Update a user's starting equity for simulations.
+
+        Parameters:
+            user_id: The user's ObjectId string.
+            starting_equity: New starting equity value.
+
+        Returns:
+            Updated user profile dict.
+
+        Raises:
+            AuthenticationError: If user not found.
+        """
+        user = self.user_repo.find_by_id(user_id)
+        if not user:
+            raise AuthenticationError("User not found.")
+
+        self.user_repo.update_starting_equity(
+            user_id, starting_equity
+        )
+
+        return {
+            "id": str(user["_id"]),
+            "username": user["username"],
+            "timezone": user["timezone"],
+            "display_timezone": user.get(
+                "display_timezone",
+                user["timezone"],
+            ),
+            "starting_equity": starting_equity,
         }

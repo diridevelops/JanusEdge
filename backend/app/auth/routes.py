@@ -14,6 +14,7 @@ from app.auth.schemas import (
     ChangePasswordSchema,
     UpdateTimezoneSchema,
     UpdateDisplayTimezoneSchema,
+    UpdateStartingEquitySchema,
 )
 from app.auth.service import AuthService
 from app.utils.errors import ValidationError
@@ -24,6 +25,7 @@ login_schema = LoginSchema()
 change_password_schema = ChangePasswordSchema()
 update_timezone_schema = UpdateTimezoneSchema()
 update_display_timezone_schema = UpdateDisplayTimezoneSchema()
+update_starting_equity_schema = UpdateStartingEquitySchema()
 
 
 @auth_bp.route("/health", methods=["GET"])
@@ -193,5 +195,35 @@ def update_display_timezone():
     profile = auth_service.update_display_timezone(
         user_id=user_id,
         display_timezone=validated["display_timezone"],
+    )
+    return jsonify(profile), 200
+
+
+@auth_bp.route("/starting-equity", methods=["PUT"])
+@jwt_required()
+def update_starting_equity():
+    """
+    Update the current user's starting equity.
+
+    Expects JSON: {starting_equity}
+    Returns: {user}
+    """
+    data = request.get_json()
+    if not data:
+        raise ValidationError("Request body is required.")
+
+    try:
+        validated = update_starting_equity_schema.load(
+            data
+        )
+    except MarshmallowError as e:
+        raise ValidationError(
+            "Validation failed.", details=e.messages
+        )
+
+    user_id = get_jwt_identity()
+    profile = auth_service.update_starting_equity(
+        user_id=user_id,
+        starting_equity=validated["starting_equity"],
     )
     return jsonify(profile), 200

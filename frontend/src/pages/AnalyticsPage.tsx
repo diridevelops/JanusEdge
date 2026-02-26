@@ -7,8 +7,10 @@ import {
     getDrawdown,
     getEquityCurve,
     getSummary,
+    getTradePnls,
 } from '../api/analytics.api';
 import { EvolutionTab } from '../components/analytics/EvolutionTab';
+import { MonteCarloSimulator } from '../components/analytics/MonteCarloSimulator';
 import { StatsGrid } from '../components/analytics/StatsGrid';
 import { APPTDailyChart } from '../components/charts/APPTDailyChart';
 import { DayOfWeekAPPTChart } from '../components/charts/DayOfWeekAPPTChart';
@@ -25,10 +27,11 @@ import type {
     DrawdownPoint,
     EquityCurvePoint,
     TagAnalytics,
+    TradePnl,
 } from '../types/analytics.types';
 import { formatCurrency, formatPercent } from '../utils/formatters';
 
-type AnalyticsTab = 'overview' | 'time-date' | 'evolution';
+type AnalyticsTab = 'overview' | 'time-date' | 'evolution' | 'simulator';
 
 /** Analytics dashboard with charts and summary metrics. */
 export function AnalyticsPage() {
@@ -49,6 +52,7 @@ export function AnalyticsPage() {
   const [apptByDayOfWeek, setApptByDayOfWeek] = useState<ApptByDayOfWeekEntry[]>([]);
   const [apptByTimeframe, setApptByTimeframe] = useState<ApptByTimeframeEntry[]>([]);
   const [tagAnalytics, setTagAnalytics] = useState<TagAnalytics[]>([]);
+  const [tradePnls, setTradePnls] = useState<TradePnl[]>([]);
   const [activeTab, setActiveTab] = useState<AnalyticsTab>('overview');
 
   type Filters = typeof filters;
@@ -67,6 +71,7 @@ export function AnalyticsPage() {
         dayOfWeekRes,
         timeframeRes,
         tagRes,
+        tradePnlsRes,
       ] = await Promise.all([
         getSummary(apiFilters),
         getEquityCurve(apiFilters),
@@ -74,6 +79,7 @@ export function AnalyticsPage() {
         getApptByDayOfWeek(apiFilters, displayTimezone),
         getApptByTimeframe(apiFilters, displayTimezone),
         getByTag(apiFilters),
+        getTradePnls(apiFilters),
       ]);
 
       setSummary(summaryRes);
@@ -82,6 +88,7 @@ export function AnalyticsPage() {
       setApptByDayOfWeek(dayOfWeekRes);
       setApptByTimeframe(timeframeRes);
       setTagAnalytics(tagRes);
+      setTradePnls(tradePnlsRes);
     } catch {
       // Toast handled by Axios interceptor for 401; silent catch otherwise
     } finally {
@@ -152,6 +159,17 @@ export function AnalyticsPage() {
             }`}
           >
             Evolution
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('simulator')}
+            className={`px-4 py-2 text-sm font-medium rounded-t-md border border-b-0 ${
+              activeTab === 'simulator'
+                ? 'bg-white text-gray-900 border-gray-300 dark:bg-gray-800 dark:text-gray-100 dark:border-gray-600'
+                : 'bg-gray-100 text-gray-600 border-transparent hover:text-gray-800 dark:bg-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
+            }`}
+          >
+            Simulator
           </button>
         </nav>
       </div>
@@ -283,6 +301,10 @@ export function AnalyticsPage() {
 
       {activeTab === 'evolution' && (
         <EvolutionTab filters={filters} />
+      )}
+
+      {activeTab === 'simulator' && (
+        <MonteCarloSimulator summary={summary} tradePnls={tradePnls} />
       )}
     </div>
   );

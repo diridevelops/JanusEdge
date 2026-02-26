@@ -86,12 +86,20 @@ export function StatsGrid({ summary, isLoading }: StatsGridProps) {
         tooltip="Average Profitability Per Trade\nTotal Net P&L ÷ Total Trades"
       />
       <StatsCard
+        label="W:L Ratio (R)"
+        value={summary.wl_ratio_r != null ? summary.wl_ratio_r.toFixed(2) : 'N/A'}
+        valueColor={
+          summary.wl_ratio_r != null && summary.wl_ratio_r >= 1 ? 'text-profit' : 'text-loss'
+        }
+        tooltip="Avg Win R-multiple ÷ |Avg Loss R-multiple|\nComputed only on trades with defined initial risk"
+      />
+      <StatsCard
         label="P/L Ratio"
         value={summary.pl_ratio != null ? summary.pl_ratio.toFixed(2) : 'N/A'}
         valueColor={
           summary.pl_ratio != null && summary.pl_ratio >= 1 ? 'text-profit' : 'text-loss'
         }
-        tooltip="Average win / average loss per trade"
+        tooltip="Average win ($) ÷ |Average loss ($)|"
       />
       <StatsCard
         label="Expectancy (R)"

@@ -10,6 +10,7 @@ import type {
   ApptByDayOfWeekEntry,
   ApptByTimeframeEntry,
   EvolutionPoint,
+  TradePnl,
 } from '../types/analytics.types';
 import type { FilterParams } from '../types/common.types';
 
@@ -19,6 +20,17 @@ export async function getSummary(
 ): Promise<AnalyticsSummary> {
   const res = await apiClient.get<AnalyticsSummary>(
     '/analytics/summary',
+    { params: filters }
+  );
+  return res.data;
+}
+
+/** Get per-trade P&L values for bootstrap resampling. */
+export async function getTradePnls(
+  filters?: FilterParams
+): Promise<TradePnl[]> {
+  const res = await apiClient.get<TradePnl[]>(
+    '/analytics/trade-pnls',
     { params: filters }
   );
   return res.data;

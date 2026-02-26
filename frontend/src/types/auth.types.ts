@@ -4,6 +4,7 @@ export interface User {
   username: string;
   timezone: string;
   display_timezone: string;
+  starting_equity: number;
   created_at: string;
 }
 

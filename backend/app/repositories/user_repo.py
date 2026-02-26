@@ -98,3 +98,28 @@ class UserRepository(BaseRepository):
                 }
             },
         )
+
+    def update_starting_equity(
+        self, user_id: str, starting_equity: float
+    ) -> bool:
+        """
+        Update a user's starting equity for simulations.
+
+        Parameters:
+            user_id: The user's ObjectId string.
+            starting_equity: New starting equity value.
+
+        Returns:
+            True if updated successfully.
+        """
+        from app.utils.datetime_utils import utc_now
+
+        return self.update_one(
+            user_id,
+            {
+                "$set": {
+                    "starting_equity": starting_equity,
+                    "updated_at": utc_now(),
+                }
+            },
+        )

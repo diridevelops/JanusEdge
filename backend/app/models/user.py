@@ -11,6 +11,7 @@ def create_user_doc(
     password_hash: str,
     timezone: str = "America/New_York",
     display_timezone: str | None = None,
+    starting_equity: float = 10000.0,
 ) -> dict:
     """
     Create a user document for MongoDB insertion.
@@ -21,6 +22,8 @@ def create_user_doc(
         timezone: User's trading timezone.
         display_timezone: Timezone for UI display
             (defaults to trading timezone).
+        starting_equity: Initial account equity for
+            Monte Carlo simulations (default 50 000).
 
     Returns:
         Dict ready for MongoDB insert.
@@ -31,6 +34,7 @@ def create_user_doc(
         "password_hash": password_hash,
         "timezone": timezone,
         "display_timezone": display_timezone or timezone,
+        "starting_equity": starting_equity,
         "created_at": now,
         "updated_at": now,
     }

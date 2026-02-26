@@ -15,6 +15,7 @@ export interface AnalyticsSummary {
   profit_factor: number | null;
   expectancy: number;
   expectancy_r: number | null;
+  wl_ratio_r: number | null;
   avg_holding_time_seconds: number;
   avg_executions: number;
   appt: number;
@@ -121,4 +122,11 @@ export interface EvolutionPoint {
   running_r_win_rate: number | null;
   running_r_avg_win: number | null;
   running_r_avg_loss_abs: number | null;
+}
+
+/** Per-trade P&L for bootstrap resampling. */
+export interface TradePnl {
+  net_pnl: number;
+  /** R-multiple (net_pnl / initial_risk). null when no initial risk. */
+  r_multiple: number | null;
 }

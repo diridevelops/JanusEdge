@@ -53,3 +53,12 @@ class UpdateDisplayTimezoneSchema(Schema):
         required=True,
         validate=validate.Length(min=1, max=50),
     )
+
+
+class UpdateStartingEquitySchema(Schema):
+    """Schema for starting equity update."""
+
+    starting_equity = fields.Float(
+        required=True,
+        validate=validate.Range(min=0),
+    )

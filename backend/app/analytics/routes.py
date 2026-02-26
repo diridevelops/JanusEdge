@@ -58,6 +58,23 @@ def get_summary():
     return jsonify(summary), 200
 
 
+@analytics_bp.route("/trade-pnls", methods=["GET"])
+@jwt_required()
+def get_trade_pnls():
+    """
+    Get per-trade net P&L values for bootstrap resampling.
+
+    Returns:
+        JSON array of {net_pnl} dicts.
+    """
+    user_id = get_jwt_identity()
+    filters = _parse_filters()
+    data = analytics_service.get_trade_pnls(
+        user_id, filters
+    )
+    return jsonify(data), 200
+
+
 @analytics_bp.route("/equity-curve", methods=["GET"])
 @jwt_required()
 def get_equity_curve():

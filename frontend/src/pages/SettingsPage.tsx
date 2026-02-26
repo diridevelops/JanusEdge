@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { changePassword, updateDisplayTimezone, updateTimezone } from '../api/auth.api';
+import { changePassword, updateDisplayTimezone, updateStartingEquity, updateTimezone } from '../api/auth.api';
 import { useAuth } from '../hooks/useAuth';
 import { useTheme } from '../hooks/useTheme';
 import { useToast } from '../hooks/useToast';
@@ -43,6 +43,12 @@ export function SettingsPage() {
     user?.display_timezone ?? user?.timezone ?? 'America/New_York'
   );
   const [dtzLoading, setDtzLoading] = useState(false);
+
+  // Starting equity
+  const [startingEquity, setStartingEquity] = useState(
+    String(user?.starting_equity ?? 50000)
+  );
+  const [seLoading, setSeLoading] = useState(false);
 
   async function handleChangePassword(e: React.FormEvent) {
     e.preventDefault();
@@ -99,6 +105,27 @@ export function SettingsPage() {
       addToast('error', message);
     } finally {
       setDtzLoading(false);
+    }
+  }
+
+  async function handleUpdateStartingEquity(e: React.FormEvent) {
+    e.preventDefault();
+    const value = parseFloat(startingEquity);
+    if (isNaN(value) || value < 0) {
+      addToast('error', 'Starting equity must be a non-negative number.');
+      return;
+    }
+    setSeLoading(true);
+    try {
+      await updateStartingEquity(value);
+      addToast('success', 'Starting equity updated successfully.');
+      refreshProfile();
+    } catch (err: unknown) {
+      const message =
+        err instanceof Error ? err.message : 'Failed to update starting equity.';
+      addToast('error', message);
+    } finally {
+      setSeLoading(false);
     }
   }
 
@@ -268,6 +295,35 @@ export function SettingsPage() {
           </div>
           <button type="submit" className="btn-primary" disabled={dtzLoading}>
             {dtzLoading ? 'Saving…' : 'Update Display Timezone'}
+          </button>
+        </form>
+      </div>
+
+      {/* Starting Equity */}
+      <div className="card p-4">
+        <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">
+          Starting Equity
+        </h2>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+          Default starting account equity used to prefill Monte Carlo simulations.
+        </p>
+        <form onSubmit={handleUpdateStartingEquity} className="space-y-4">
+          <div>
+            <label htmlFor="startingEquity" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+              Equity ($)
+            </label>
+            <input
+              id="startingEquity"
+              type="number"
+              min="0"
+              step="any"
+              className="input-field mt-1"
+              value={startingEquity}
+              onChange={(e) => setStartingEquity(e.target.value)}
+            />
+          </div>
+          <button type="submit" className="btn-primary" disabled={seLoading}>
+            {seLoading ? 'Saving…' : 'Update Starting Equity'}
           </button>
         </form>
       </div>
