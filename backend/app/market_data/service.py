@@ -103,6 +103,12 @@ class MarketDataService:
                         ohlc.extend(doc.get("ohlc", []))
                     ohlc.sort(key=lambda x: x["time"])
                     return ohlc
+        else:
+            # Delete old cache so fresh data replaces it
+            self.cache_repo.delete_cached_range(
+                yahoo_ticker, interval,
+                start_date, end_date,
+            )
 
         # Fetch from yfinance
         ohlc_data = self._fetch_yfinance(

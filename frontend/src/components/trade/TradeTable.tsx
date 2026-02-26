@@ -55,7 +55,7 @@ export function TradeTable({ trades, sortBy, sortDir, onSortChange }: TradeTable
       rowClass:
         stripeIndex % 2 === 0
           ? 'bg-white dark:bg-gray-800 hover:bg-gray-100 dark:hover:bg-gray-700'
-          : 'bg-gray-50/70 dark:bg-gray-850/50 hover:bg-gray-100/70 dark:hover:bg-gray-700/70',
+          : 'bg-gray-50/70 dark:bg-gray-900/50 hover:bg-gray-100/70 dark:hover:bg-gray-700/70',
     };
   });
 

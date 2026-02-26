@@ -107,3 +107,38 @@ class MarketDataRepository(BaseRepository):
             }
         )
         return doc is not None
+
+    def delete_cached_range(
+        self,
+        symbol: str,
+        interval: str,
+        start_date,
+        end_date,
+    ) -> int:
+        """
+        Delete cached OHLC data for a date range.
+
+        Parameters:
+            symbol: yfinance ticker.
+            interval: Time interval.
+            start_date: Start date.
+            end_date: End date.
+
+        Returns:
+            Number of deleted documents.
+        """
+        result = self.collection.delete_many(
+            {
+                "symbol": symbol,
+                "interval": interval,
+                "date": {
+                    "$gte": self._to_datetime(
+                        start_date
+                    ),
+                    "$lte": self._to_datetime(
+                        end_date
+                    ),
+                },
+            }
+        )
+        return result.deleted_count

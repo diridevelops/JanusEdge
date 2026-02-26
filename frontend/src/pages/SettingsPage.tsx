@@ -112,7 +112,7 @@ export function SettingsPage() {
       </div>
 
       {/* Appearance */}
-      <div className="card">
+      <div className="card p-4">
         <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">
           Appearance
         </h2>
@@ -141,7 +141,7 @@ export function SettingsPage() {
       </div>
 
       {/* Profile info */}
-      <div className="card">
+      <div className="card p-4">
         <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">Profile</h2>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
           <div>
@@ -160,7 +160,7 @@ export function SettingsPage() {
       </div>
 
       {/* Change password */}
-      <div className="card">
+      <div className="card p-4">
         <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">
           Change Password
         </h2>
@@ -213,7 +213,7 @@ export function SettingsPage() {
       </div>
 
       {/* Trading Timezone */}
-      <div className="card">
+      <div className="card p-4">
         <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">
           Trading Timezone
         </h2>
@@ -243,7 +243,7 @@ export function SettingsPage() {
       </div>
 
       {/* Display Timezone */}
-      <div className="card">
+      <div className="card p-4">
         <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">
           Display Timezone
         </h2>
