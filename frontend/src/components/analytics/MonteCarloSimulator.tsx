@@ -1,4 +1,3 @@
-import { Info } from 'lucide-react';
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CartesianGrid,
@@ -14,6 +13,7 @@ import { useAuth } from '../../hooks/useAuth';
 import { useChartColors } from '../../hooks/useChartColors';
 import type { AnalyticsSummary, TradePnl } from '../../types/analytics.types';
 import { formatCurrency, formatPercent } from '../../utils/formatters';
+import { InfoTooltip } from '../ui/InfoTooltip';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -305,53 +305,15 @@ function runSimulationAsync(params: {
 /* ------------------------------------------------------------------ */
 
 function MetricCard({ label, value, color, tooltip }: { label: string; value: string; color?: string; tooltip?: string }) {
-  const [showTooltip, setShowTooltip] = useState(false);
-  const [pos, setPos] = useState({ top: 0, left: 0 });
-  const btnRef = useRef<HTMLButtonElement | null>(null);
-
-  function openTooltip() {
-    const rect = btnRef.current?.getBoundingClientRect();
-    if (rect) {
-      const tipW = 224; // w-56 = 14rem = 224px
-      let left = rect.left + rect.width / 2;
-      // Clamp so the tooltip doesn't overflow viewport edges
-      left = Math.max(tipW / 2 + 8, Math.min(left, globalThis.innerWidth - tipW / 2 - 8));
-      setPos({ top: rect.top - 8, left });
-    }
-    setShowTooltip(true);
-  }
-
   return (
     <div className="flex flex-col">
       <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap flex items-center gap-1">
         {label}
-        {tooltip && (
-          <button
-            ref={btnRef}
-            type="button"
-            className="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 transition-colors"
-            onMouseEnter={openTooltip}
-            onMouseLeave={() => setShowTooltip(false)}
-            onFocus={openTooltip}
-            onBlur={() => setShowTooltip(false)}
-            aria-label={`Info about ${label}`}
-          >
-            <Info className="w-3 h-3" strokeWidth={2.25} />
-          </button>
-        )}
+        {tooltip && <InfoTooltip text={tooltip} ariaLabel={`Info about ${label}`} iconSize="w-3 h-3" />}
       </span>
       <span className={`text-sm font-semibold ${color ?? 'text-gray-900 dark:text-gray-100'}`}>
         {value}
       </span>
-      {tooltip && showTooltip && (
-        <div
-          className="fixed z-[120] w-56 px-3 py-2 text-xs text-gray-100 bg-gray-800 dark:bg-gray-700 rounded-lg shadow-lg whitespace-pre-line pointer-events-none"
-          style={{ top: pos.top, left: pos.left, transform: 'translate(-50%, -100%)' }}
-        >
-          {tooltip}
-          <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-x-4 border-x-transparent border-t-4 border-t-gray-800 dark:border-t-gray-700" />
-        </div>
-      )}
     </div>
   );
 }

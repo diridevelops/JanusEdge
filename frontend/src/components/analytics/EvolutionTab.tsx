@@ -1,5 +1,4 @@
-import { Info } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Area,
   CartesianGrid,
@@ -16,58 +15,12 @@ import { useChartColors } from '../../hooks/useChartColors';
 import type { EvolutionPoint } from '../../types/analytics.types';
 import type { FilterParams } from '../../types/common.types';
 import { formatCurrency } from '../../utils/formatters';
+import { InfoTooltip } from '../ui/InfoTooltip';
 
 interface EvolutionTabProps {
   filters: FilterParams;
 }
 
-interface InfoTooltipProps {
-  text: string;
-}
-
-function InfoTooltip({ text }: InfoTooltipProps) {
-  const [open, setOpen] = useState(false);
-  const [position, setPosition] = useState({ top: 0, left: 0 });
-  const buttonRef = useRef<HTMLButtonElement | null>(null);
-
-  function openTip() {
-    const rect = buttonRef.current?.getBoundingClientRect();
-    if (rect) {
-      const tipW = 320; // w-80 = 20rem = 320px
-      let left = rect.left + rect.width / 2;
-      // Clamp so the tooltip stays within the viewport
-      left = Math.max(tipW / 2 + 8, Math.min(left, globalThis.innerWidth - tipW / 2 - 8));
-      setPosition({ top: rect.top - 8, left });
-    }
-    setOpen(true);
-  }
-
-  return (
-    <span className="relative inline-flex">
-      <button
-        ref={buttonRef}
-        type="button"
-        className="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 transition-colors"
-        onMouseEnter={openTip}
-        onMouseLeave={() => setOpen(false)}
-        onFocus={openTip}
-        onBlur={() => setOpen(false)}
-        aria-label="Chart info"
-      >
-        <Info className="w-3.5 h-3.5" strokeWidth={2.25} />
-      </button>
-      {open && (
-        <div
-          className="fixed z-[120] w-80 max-w-[80vw] px-3 py-2 text-xs text-gray-100 bg-gray-800 dark:bg-gray-700 rounded-lg shadow-lg whitespace-pre-line pointer-events-none"
-          style={{ top: position.top, left: position.left, transform: 'translate(-50%, -100%)' }}
-        >
-          {text}
-          <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-x-4 border-x-transparent border-t-4 border-t-gray-800 dark:border-t-gray-700" />
-        </div>
-      )}
-    </span>
-  );
-}
 
 /** Evolution tab with running metrics per trade index. */
 export function EvolutionTab({ filters }: EvolutionTabProps) {
@@ -418,6 +371,8 @@ export function EvolutionTab({ filters }: EvolutionTabProps) {
           <div className="flex items-center gap-2 mb-2">
             <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Running Mean R (95% CI) vs Running APPT</h3>
             <InfoTooltip
+              widthClass="w-80"
+              ariaLabel="Chart info"
               text={
                 'What this shows: Running mean R (left axis) with 95% CI = average risk-normalized edge per trade; Running APPT (right axis) = average profit per trade in money. Undefined R trades are excluded from R statistics.\n\nHow to read:\n• Mean R above 0 with CI mostly above 0: evidence of positive edge.\n• APPT > 0 but Mean R ≤ 0: profits driven by position sizing/exposure rather than edge.\n• EWMA above Mean: recent improvement; EWMA below Mean: recent deterioration.\n• EWMA crossing 0 before Mean: early regime shift signal.\n• CI narrows as trades grow: increasing statistical stability.'
               }
@@ -570,6 +525,8 @@ export function EvolutionTab({ filters }: EvolutionTabProps) {
           <div className="flex items-center gap-2 mb-2">
             <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Rolling Expectancy R (95% CI) vs Rolling APPT</h3>
             <InfoTooltip
+              widthClass="w-80"
+              ariaLabel="Chart info"
               text={
                 'What this shows: Rolling (windowed) expectancy in R (left axis) with 95% CI and Rolling APPT (right axis), over the last W trades (selected window). Captures recent regime performance.\n\nHow to read:\n• R rolling mean > 0: current edge is positive; < 0 indicates deterioration.\n• APPT diverges from R: money results driven by sizing/fees/execution, not edge.\n• Wide CI or frequent zero-crossings: limited data or unstable recent performance; consider larger W or more trades.'
               }
@@ -705,6 +662,8 @@ export function EvolutionTab({ filters }: EvolutionTabProps) {
           <div className="flex items-center gap-2 mb-2">
             <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">Cumulative R vs Cumulative Net P&L</h3>
             <InfoTooltip
+              widthClass="w-80"
+              ariaLabel="Chart info"
               text={
                 'What this shows: Total performance over time in two currencies: Cumulative R (left axis, dimensionless) and Cumulative Net P&L (right axis, currency). R excludes trades with undefined initial risk; P&L is net of fees.\n\nHow to read:\n• Both lines rising: healthy, scalable performance.\n• Cum$ ↑ while CumR flat/↓: profits mainly from exposure/sizing, not risk-normalized edge.\n• Drawdowns/flat spots: reveal path dependence and risk of the system.'
               }

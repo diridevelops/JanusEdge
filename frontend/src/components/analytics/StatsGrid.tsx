@@ -1,7 +1,6 @@
-import { Info } from 'lucide-react';
-import { useRef, useState } from 'react';
 import type { AnalyticsSummary } from '../../types/analytics.types';
 import { formatCurrency, formatPercent } from '../../utils/formatters';
+import { InfoTooltip } from '../ui/InfoTooltip';
 
 interface StatsCardProps {
   label: string;
@@ -12,51 +11,13 @@ interface StatsCardProps {
 
 /** Single metric display card with optional info tooltip. */
 function StatsCard({ label, value, valueColor, tooltip }: StatsCardProps) {
-  const [showTooltip, setShowTooltip] = useState(false);
-  const [pos, setPos] = useState({ top: 0, left: 0 });
-  const btnRef = useRef<HTMLButtonElement | null>(null);
-
-  function openTooltip() {
-    const rect = btnRef.current?.getBoundingClientRect();
-    if (rect) {
-      const tipW = 224; // w-56 = 14rem = 224px
-      let left = rect.left + rect.width / 2;
-      // Clamp so the tooltip doesn't overflow viewport edges
-      left = Math.max(tipW / 2 + 8, Math.min(left, globalThis.innerWidth - tipW / 2 - 8));
-      setPos({ top: rect.top - 8, left });
-    }
-    setShowTooltip(true);
-  }
-
   return (
     <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
       <div className="flex items-center gap-1.5">
         <p className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider">{label}</p>
-        {tooltip && (
-          <button
-            ref={btnRef}
-            type="button"
-            className="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 transition-colors"
-            onMouseEnter={openTooltip}
-            onMouseLeave={() => setShowTooltip(false)}
-            onFocus={openTooltip}
-            onBlur={() => setShowTooltip(false)}
-            aria-label={`Info about ${label}`}
-          >
-            <Info className="w-3.5 h-3.5" strokeWidth={2.25} />
-          </button>
-        )}
+        {tooltip && <InfoTooltip text={tooltip.replace(/\\n/g, '\n')} ariaLabel={`Info about ${label}`} />}
       </div>
       <p className={`mt-1 text-lg font-bold ${valueColor ?? 'text-gray-900 dark:text-gray-100'}`}>{value}</p>
-      {tooltip && showTooltip && (
-        <div
-          className="fixed z-[120] w-56 px-3 py-2 text-xs text-gray-100 bg-gray-800 dark:bg-gray-700 rounded-lg shadow-lg whitespace-pre-line pointer-events-none"
-          style={{ top: pos.top, left: pos.left, transform: 'translate(-50%, -100%)' }}
-        >
-          {tooltip.replace(/\\n/g, '\n')}
-          <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-x-4 border-x-transparent border-t-4 border-t-gray-800 dark:border-t-gray-700" />
-        </div>
-      )}
     </div>
   );
 }
