@@ -485,7 +485,7 @@ export function MonteCarloSimulator({ summary, tradePnls }: MonteCarloSimulatorP
                 } disabled:opacity-40 disabled:cursor-not-allowed`}
                 title={rMultiples.length === 0 ? 'No trades with R-multiples available' : 'Resample R-multiples from actual trades'}
               >
-                Bootstrap
+                Sampling
               </button>
               <button
                 type="button"
