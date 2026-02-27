@@ -72,6 +72,7 @@ def create_app(config_class=None):
     from app.tags import tags_bp
     from app.market_data import market_data_bp
     from app.analytics import analytics_bp
+    from app.media import media_bp
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(imports_bp)
@@ -81,6 +82,17 @@ def create_app(config_class=None):
     app.register_blueprint(tags_bp)
     app.register_blueprint(market_data_bp)
     app.register_blueprint(analytics_bp)
+    app.register_blueprint(media_bp)
+
+    # Initialise MinIO object storage
+    try:
+        from app.storage import init_storage
+
+        init_storage(app)
+    except Exception:
+        app.logger.warning(
+            "MinIO unavailable — media uploads disabled"
+        )
 
     # Initialize database indexes on first request
     with app.app_context():

@@ -21,9 +21,32 @@ class Config:
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=1)
     JWT_TOKEN_LOCATION = ["headers"]
     JWT_HEADER_TYPE = "Bearer"
-    MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB upload limit
+    MAX_CONTENT_LENGTH = 500 * 1024 * 1024  # 500 MB upload
     CORS_ORIGINS = os.environ.get(
         "CORS_ORIGINS", "http://localhost:5173"
+    )
+
+    # MinIO object storage
+    MINIO_ENDPOINT = os.environ.get(
+        "MINIO_ENDPOINT", "localhost:9000"
+    )
+    MINIO_ACCESS_KEY = os.environ.get(
+        "MINIO_ACCESS_KEY", "minioadmin"
+    )
+    MINIO_SECRET_KEY = os.environ.get(
+        "MINIO_SECRET_KEY", "minioadmin"
+    )
+    MINIO_BUCKET = os.environ.get(
+        "MINIO_BUCKET", "tradelogs-media"
+    )
+    MINIO_USE_SSL = (
+        os.environ.get("MINIO_USE_SSL", "false").lower()
+        == "true"
+    )
+    # Public URL for presigned links (defaults to
+    # localhost for local dev)
+    MINIO_PUBLIC_URL = os.environ.get(
+        "MINIO_PUBLIC_URL", "http://localhost:9000"
     )
 
 

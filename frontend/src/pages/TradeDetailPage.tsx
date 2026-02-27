@@ -7,6 +7,7 @@ import { deleteTrade, getTrade } from '../api/trades.api';
 import { CandlestickChart } from '../components/charts/CandlestickChart';
 import { ExecutionList } from '../components/trade/ExecutionList';
 import { TagSelector } from '../components/trade/TagSelector';
+import { TradeMedia } from '../components/trade/TradeMedia';
 import { TradeNotes } from '../components/trade/TradeNotes';
 import { Spinner } from '../components/ui/Spinner';
 import { useAuth } from '../hooks/useAuth';
@@ -302,6 +303,9 @@ export function TradeDetailPage() {
               postTradeNotes={trade.post_trade_notes}
               onSaved={fetchTrade}
             />
+          </div>
+          <div className="card p-4">
+            <TradeMedia tradeId={trade.id} />
           </div>
         </div>
       </div>

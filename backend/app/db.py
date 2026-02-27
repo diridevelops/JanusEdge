@@ -84,3 +84,8 @@ def init_db(db: Database) -> None:
     db.audit_logs.create_index(
         [("user_id", 1), ("action", 1), ("timestamp", -1)]
     )
+
+    # Media Attachments
+    db.media.create_index(
+        [("user_id", 1), ("trade_id", 1), ("created_at", 1)]
+    )
