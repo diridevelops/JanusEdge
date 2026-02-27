@@ -1,12 +1,13 @@
+import { Info } from 'lucide-react';
 import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-    CartesianGrid,
-    Line,
-    LineChart,
-    ResponsiveContainer,
-    Tooltip,
-    XAxis,
-    YAxis,
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
 } from 'recharts';
 
 import { useAuth } from '../../hooks/useAuth';
@@ -44,6 +45,8 @@ interface SimMetrics {
   returnOnMaxDrawdown: number;
   maxConsecutiveWins: number;
   maxConsecutiveLosses: number;
+  pctProfitable: number;
+  pctRuined: number;
 }
 
 interface SimResult {
@@ -92,6 +95,11 @@ function runParametricSim(params: {
     const equity: number[] = [startingEquity];
     for (let t = 0; t < NUM_TRADES; t++) {
       const cur = equity[equity.length - 1]!;
+      if (cur <= 0) {
+        // Ruined — fill remaining trades with 0
+        for (let r = t; r < NUM_TRADES; r++) equity.push(0);
+        break;
+      }
       const risk =
         riskMode === 'fixed'
           ? riskFixed
@@ -99,7 +107,7 @@ function runParametricSim(params: {
       if (rng() < wr) {
         equity.push(cur + risk * winLossRatio);
       } else {
-        equity.push(cur - risk);
+        equity.push(Math.max(0, cur - risk));
       }
     }
     simulations.push(equity);
@@ -124,6 +132,11 @@ function runBootstrapSim(params: {
     const equity: number[] = [startingEquity];
     for (let t = 0; t < NUM_TRADES; t++) {
       const cur = equity[equity.length - 1]!;
+      if (cur <= 0) {
+        // Ruined — fill remaining trades with 0
+        for (let r = t; r < NUM_TRADES; r++) equity.push(0);
+        break;
+      }
       // Dollar risk per trade: fixed or max(equity × pct, minRisk)
       const risk =
         riskMode === 'fixed'
@@ -132,7 +145,7 @@ function runBootstrapSim(params: {
       // Randomly sample a real trade's R-multiple
       const idx = Math.floor(rng() * n);
       const rMul = rMultiples[idx]!;
-      equity.push(cur + rMul * risk);
+      equity.push(Math.max(0, cur + rMul * risk));
     }
     simulations.push(equity);
   }
@@ -155,6 +168,7 @@ function computeMetrics(
   let globalMaxEquity = -Infinity;
   let globalMaxConsWins = 0;
   let globalMaxConsLosses = 0;
+  let ruinedCount = 0;
 
   for (const equity of simulations) {
     let peak = equity[0]!;
@@ -163,10 +177,12 @@ function computeMetrics(
     let consLosses = 0;
     let simMaxConsWins = 0;
     let simMaxConsLosses = 0;
+    let hitZero = false;
 
     for (let i = 1; i < equity.length; i++) {
       const val = equity[i]!;
       const prev = equity[i - 1]!;
+      if (val <= 0) { hitZero = true; }
       if (val > peak) peak = val;
       const dd = peak - val;
       if (dd > maxDD) maxDD = dd;
@@ -183,6 +199,7 @@ function computeMetrics(
       }
     }
 
+    if (hitZero) ruinedCount++;
     maxDrawdowns.push(maxDD);
     finalEquities.push(equity[equity.length - 1]!);
     if (simMaxConsWins > globalMaxConsWins) globalMaxConsWins = simMaxConsWins;
@@ -194,6 +211,8 @@ function computeMetrics(
   const avgFinalEquity = finalEquities.reduce((a, b) => a + b, 0) / finalEquities.length;
   const avgPerformancePct = ((avgFinalEquity - startingEquity) / startingEquity) * 100;
   const returnOnMaxDrawdown = avgMaxDrawdown > 0 ? (avgFinalEquity - startingEquity) / avgMaxDrawdown : 0;
+  const pctProfitable = (finalEquities.filter((e) => e > startingEquity).length / simulations.length) * 100;
+  const pctRuined = (ruinedCount / simulations.length) * 100;
 
   return {
     kelly, expectation, biggestMaxDrawdown, avgMaxDrawdown,
@@ -201,6 +220,8 @@ function computeMetrics(
     avgFinalEquity, avgPerformancePct, returnOnMaxDrawdown,
     maxConsecutiveWins: globalMaxConsWins,
     maxConsecutiveLosses: globalMaxConsLosses,
+    pctProfitable,
+    pctRuined,
   };
 }
 
@@ -283,13 +304,54 @@ function runSimulationAsync(params: {
 /*  Sub-components                                                     */
 /* ------------------------------------------------------------------ */
 
-function MetricCard({ label, value, color }: { label: string; value: string; color?: string }) {
+function MetricCard({ label, value, color, tooltip }: { label: string; value: string; color?: string; tooltip?: string }) {
+  const [showTooltip, setShowTooltip] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const btnRef = useRef<HTMLButtonElement | null>(null);
+
+  function openTooltip() {
+    const rect = btnRef.current?.getBoundingClientRect();
+    if (rect) {
+      const tipW = 224; // w-56 = 14rem = 224px
+      let left = rect.left + rect.width / 2;
+      // Clamp so the tooltip doesn't overflow viewport edges
+      left = Math.max(tipW / 2 + 8, Math.min(left, globalThis.innerWidth - tipW / 2 - 8));
+      setPos({ top: rect.top - 8, left });
+    }
+    setShowTooltip(true);
+  }
+
   return (
     <div className="flex flex-col">
-      <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap">{label}</span>
+      <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap flex items-center gap-1">
+        {label}
+        {tooltip && (
+          <button
+            ref={btnRef}
+            type="button"
+            className="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 transition-colors"
+            onMouseEnter={openTooltip}
+            onMouseLeave={() => setShowTooltip(false)}
+            onFocus={openTooltip}
+            onBlur={() => setShowTooltip(false)}
+            aria-label={`Info about ${label}`}
+          >
+            <Info className="w-3 h-3" strokeWidth={2.25} />
+          </button>
+        )}
+      </span>
       <span className={`text-sm font-semibold ${color ?? 'text-gray-900 dark:text-gray-100'}`}>
         {value}
       </span>
+      {tooltip && showTooltip && (
+        <div
+          className="fixed z-[120] w-56 px-3 py-2 text-xs text-gray-100 bg-gray-800 dark:bg-gray-700 rounded-lg shadow-lg whitespace-pre-line pointer-events-none"
+          style={{ top: pos.top, left: pos.left, transform: 'translate(-50%, -100%)' }}
+        >
+          {tooltip}
+          <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-x-4 border-x-transparent border-t-4 border-t-gray-800 dark:border-t-gray-700" />
+        </div>
+      )}
     </div>
   );
 }
@@ -689,54 +751,77 @@ export function MonteCarloSimulator({ summary, tradePnls }: MonteCarloSimulatorP
                 label="Kelly Criterion"
                 value={formatPercent(metrics.kelly * 100, 1)}
                 color={metrics.kelly > 0 ? 'pnl-positive' : 'pnl-negative'}
+                tooltip="Optimal fraction of capital to risk per trade for maximum long-term growth."
               />
               <MetricCard
                 label="Expectation (R)"
                 value={metrics.expectation.toFixed(3)}
                 color={metrics.expectation > 0 ? 'pnl-positive' : 'pnl-negative'}
+                tooltip="Average R-multiple expected per trade. Positive means profitable on average."
               />
               <MetricCard
                 label="Biggest Max DD"
                 value={formatCurrency(metrics.biggestMaxDrawdown)}
                 color="pnl-negative"
+                tooltip="Largest peak-to-trough drawdown observed across all simulations."
               />
               <MetricCard
                 label="Avg Max Drawdown"
                 value={formatCurrency(metrics.avgMaxDrawdown)}
                 color="pnl-negative"
+                tooltip="Average of the maximum drawdown from each simulation run."
               />
               <MetricCard
                 label="Min Equity"
                 value={formatCurrency(metrics.minEquity)}
+                tooltip="Lowest equity value reached across all simulations."
               />
               <MetricCard
                 label="Max Equity"
                 value={formatCurrency(metrics.maxEquity)}
+                tooltip="Highest equity value reached across all simulations."
               />
               <MetricCard
                 label="Avg Final Equity"
                 value={formatCurrency(metrics.avgFinalEquity)}
                 color={metrics.avgFinalEquity >= (parseFloat(startingEquity) || 0) ? 'pnl-positive' : 'pnl-negative'}
+                tooltip="Mean ending equity averaged across all simulation runs."
               />
               <MetricCard
                 label="Avg Performance"
                 value={formatPercent(metrics.avgPerformancePct, 1)}
                 color={metrics.avgPerformancePct >= 0 ? 'pnl-positive' : 'pnl-negative'}
+                tooltip="Average percentage return from starting equity across all runs."
               />
               <MetricCard
                 label="Return / Max DD"
                 value={metrics.returnOnMaxDrawdown.toFixed(2) + 'x'}
                 color={metrics.returnOnMaxDrawdown >= 1 ? 'pnl-positive' : 'pnl-negative'}
+                tooltip="Ratio of average return to average max drawdown. Higher is better."
+              />
+              <MetricCard
+                label="% Profitable"
+                value={formatPercent(metrics.pctProfitable, 1)}
+                color={metrics.pctProfitable >= 50 ? 'pnl-positive' : 'pnl-negative'}
+                tooltip="Percentage of simulations ending with equity above starting equity."
+              />
+              <MetricCard
+                label="% Ruined"
+                value={formatPercent(metrics.pctRuined, 1)}
+                color={metrics.pctRuined === 0 ? 'pnl-positive' : 'pnl-negative'}
+                tooltip="Percentage of simulations where equity reached zero (account blown)."
               />
               <MetricCard
                 label="Max Consec. Wins"
                 value={String(metrics.maxConsecutiveWins)}
                 color="pnl-positive"
+                tooltip="Longest winning streak observed across all simulations."
               />
               <MetricCard
                 label="Max Consec. Losses"
                 value={String(metrics.maxConsecutiveLosses)}
                 color="pnl-negative"
+                tooltip="Longest losing streak observed across all simulations."
               />
             </div>
           </div>
