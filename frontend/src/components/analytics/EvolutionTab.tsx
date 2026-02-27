@@ -1,15 +1,15 @@
 import { Info } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
-    Area,
-    CartesianGrid,
-    ComposedChart,
-    Line,
-    ReferenceLine,
-    ResponsiveContainer,
-    Tooltip,
-    XAxis,
-    YAxis,
+  Area,
+  CartesianGrid,
+  ComposedChart,
+  Line,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
 } from 'recharts';
 import { getEvolution } from '../../api/analytics.api';
 import { useChartColors } from '../../hooks/useChartColors';
@@ -30,13 +30,14 @@ function InfoTooltip({ text }: InfoTooltipProps) {
   const [position, setPosition] = useState({ top: 0, left: 0 });
   const buttonRef = useRef<HTMLButtonElement | null>(null);
 
-  function openTooltip() {
+  function openTip() {
     const rect = buttonRef.current?.getBoundingClientRect();
     if (rect) {
-      setPosition({
-        top: rect.top - 8,
-        left: rect.left + rect.width / 2,
-      });
+      const tipW = 320; // w-80 = 20rem = 320px
+      let left = rect.left + rect.width / 2;
+      // Clamp so the tooltip stays within the viewport
+      left = Math.max(tipW / 2 + 8, Math.min(left, globalThis.innerWidth - tipW / 2 - 8));
+      setPosition({ top: rect.top - 8, left });
     }
     setOpen(true);
   }
@@ -46,25 +47,22 @@ function InfoTooltip({ text }: InfoTooltipProps) {
       <button
         ref={buttonRef}
         type="button"
-        className="inline-flex"
-        onMouseEnter={openTooltip}
+        className="text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 transition-colors"
+        onMouseEnter={openTip}
         onMouseLeave={() => setOpen(false)}
-        onFocus={openTooltip}
+        onFocus={openTip}
         onBlur={() => setOpen(false)}
         aria-label="Chart info"
       >
-        <Info className="h-4 w-4 text-gray-400" />
+        <Info className="w-3.5 h-3.5" strokeWidth={2.25} />
       </button>
       {open && (
         <div
-          className="fixed z-[120] w-80 max-w-[80vw] px-3 py-2 text-xs text-gray-100 bg-gray-800 rounded-lg shadow-lg whitespace-pre-line pointer-events-none"
-          style={{
-            top: position.top,
-            left: position.left,
-            transform: 'translate(-50%, -100%)',
-          }}
+          className="fixed z-[120] w-80 max-w-[80vw] px-3 py-2 text-xs text-gray-100 bg-gray-800 dark:bg-gray-700 rounded-lg shadow-lg whitespace-pre-line pointer-events-none"
+          style={{ top: position.top, left: position.left, transform: 'translate(-50%, -100%)' }}
         >
           {text}
+          <div className="absolute top-full left-1/2 -translate-x-1/2 w-0 h-0 border-x-4 border-x-transparent border-t-4 border-t-gray-800 dark:border-t-gray-700" />
         </div>
       )}
     </span>
