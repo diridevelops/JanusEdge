@@ -248,33 +248,41 @@ export function TradeDetailPage() {
         </div>
       </div>
 
-      {/* Chart */}
-      <div className="card p-4">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wider dark:text-gray-100">
-            Price Chart
-          </h2>
-          <button
-            type="button"
-            onClick={handleRefreshChartData}
-            disabled={isChartLoading}
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600 hover:text-gray-800 disabled:opacity-50 dark:text-gray-400 dark:hover:text-gray-200"
-            title="Redownload market data for this trade day"
-          >
-            <RefreshCw className={`h-4 w-4 ${isChartLoading ? 'animate-spin' : ''}`} />
-            Refresh Data
-          </button>
+      {/* Chart + Media sidebar */}
+      <div className="flex flex-col lg:flex-row gap-6">
+        {/* Chart */}
+        <div className="card p-4 flex-1 min-w-0">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wider dark:text-gray-100">
+              Price Chart
+            </h2>
+            <button
+              type="button"
+              onClick={handleRefreshChartData}
+              disabled={isChartLoading}
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600 hover:text-gray-800 disabled:opacity-50 dark:text-gray-400 dark:hover:text-gray-200"
+              title="Redownload market data for this trade day"
+            >
+              <RefreshCw className={`h-4 w-4 ${isChartLoading ? 'animate-spin' : ''}`} />
+              Refresh Data
+            </button>
+          </div>
+          <CandlestickChart
+            ohlcData={ohlcData}
+            executions={executions}
+            interval={interval}
+            onIntervalChange={setInterval}
+            avgEntryPrice={trade.avg_entry_price}
+            avgExitPrice={trade.avg_exit_price}
+            isLoading={isChartLoading}
+            displayTimezone={user?.display_timezone ?? user?.timezone}
+          />
         </div>
-        <CandlestickChart
-          ohlcData={ohlcData}
-          executions={executions}
-          interval={interval}
-          onIntervalChange={setInterval}
-          avgEntryPrice={trade.avg_entry_price}
-          avgExitPrice={trade.avg_exit_price}
-          isLoading={isChartLoading}
-          displayTimezone={user?.display_timezone ?? user?.timezone}
-        />
+
+        {/* Media sidebar — same height as chart card */}
+        <div className="card w-full lg:w-28 lg:self-stretch flex flex-col min-h-0 lg:max-h-[none]">
+          <TradeMedia tradeId={trade.id} compact />
+        </div>
       </div>
 
       {/* Lower section: Executions + Notes/Tags */}
@@ -303,9 +311,6 @@ export function TradeDetailPage() {
               postTradeNotes={trade.post_trade_notes}
               onSaved={fetchTrade}
             />
-          </div>
-          <div className="card p-4">
-            <TradeMedia tradeId={trade.id} />
           </div>
         </div>
       </div>
