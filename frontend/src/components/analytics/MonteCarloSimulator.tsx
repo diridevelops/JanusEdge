@@ -37,7 +37,9 @@ interface SimMetrics {
   kelly: number;
   expectation: number;
   biggestMaxDrawdown: number;
+  biggestMaxDrawdownPct: number;
   avgMaxDrawdown: number;
+  avgMaxDrawdownPct: number;
   minEquity: number;
   maxEquity: number;
   avgFinalEquity: number;
@@ -88,10 +90,11 @@ function runParametricSim(params: {
   riskPct: number;
   minRisk: number;
   riskMode: 'fixed' | 'percent';
+  seed: number;
 }): number[][] {
-  const { startingEquity, winRate, winLossRatio, riskFixed, riskPct, minRisk, riskMode } = params;
+  const { startingEquity, winRate, winLossRatio, riskFixed, riskPct, minRisk, riskMode, seed } = params;
   const wr = winRate / 100;
-  const rng = mulberry32(42);
+  const rng = mulberry32(seed);
   const simulations: number[][] = [];
 
   for (let s = 0; s < NUM_SIMULATIONS; s++) {
@@ -125,9 +128,10 @@ function runBootstrapSim(params: {
   riskPct: number;
   minRisk: number;
   riskMode: 'fixed' | 'percent';
+  seed: number;
 }): number[][] {
-  const { startingEquity, rMultiples, riskFixed, riskPct, minRisk, riskMode } = params;
-  const rng = mulberry32(42);
+  const { startingEquity, rMultiples, riskFixed, riskPct, minRisk, riskMode, seed } = params;
+  const rng = mulberry32(seed);
   const simulations: number[][] = [];
   const n = rMultiples.length;
 
@@ -165,7 +169,8 @@ function computeMetrics(
   const kelly = winLossRatio > 0 ? wr - (1 - wr) / winLossRatio : 0;
   const expectation = wr * winLossRatio - (1 - wr);
 
-  const maxDrawdowns: number[] = [];
+  const maxDrawdowns: number[] = [];      // dollar MDD per simulation
+  const maxDrawdownPcts: number[] = [];   // percentage MDD per simulation (0..1)
   const finalEquities: number[] = [];
   let globalMinEquity = Infinity;
   let globalMaxEquity = -Infinity;
@@ -175,7 +180,8 @@ function computeMetrics(
 
   for (const equity of simulations) {
     let peak = equity[0]!;
-    let maxDD = 0;
+    let maxDD = 0;       // largest dollar drop from peak
+    let maxDDPct = 0;    // largest fractional drop from peak (0..1)
     let consWins = 0;
     let consLosses = 0;
     let simMaxConsWins = 0;
@@ -187,8 +193,14 @@ function computeMetrics(
       const prev = equity[i - 1]!;
       if (val <= 0) { hitZero = true; }
       if (val > peak) peak = val;
+      // Dollar drawdown from peak
       const dd = peak - val;
       if (dd > maxDD) maxDD = dd;
+      // Percentage drawdown from peak: 1 − val / peak
+      if (peak > 0) {
+        const ddPct = 1 - val / peak;
+        if (ddPct > maxDDPct) maxDDPct = ddPct;
+      }
       if (val < globalMinEquity) globalMinEquity = val;
       if (val > globalMaxEquity) globalMaxEquity = val;
       if (val > prev) {
@@ -204,6 +216,7 @@ function computeMetrics(
 
     if (hitZero) ruinedCount++;
     maxDrawdowns.push(maxDD);
+    maxDrawdownPcts.push(maxDDPct);
     finalEquities.push(equity[equity.length - 1]!);
     if (simMaxConsWins > globalMaxConsWins) globalMaxConsWins = simMaxConsWins;
     if (simMaxConsLosses > globalMaxConsLosses) globalMaxConsLosses = simMaxConsLosses;
@@ -211,14 +224,19 @@ function computeMetrics(
 
   const biggestMaxDrawdown = Math.max(...maxDrawdowns);
   const avgMaxDrawdown = maxDrawdowns.reduce((a, b) => a + b, 0) / maxDrawdowns.length;
+  // MDD percentages: max of per-sim (1 − val/peak), converted to 0..100
+  const biggestMaxDrawdownPct = Math.max(...maxDrawdownPcts) * 100;
+  const avgMaxDrawdownPct = (maxDrawdownPcts.reduce((a, b) => a + b, 0) / maxDrawdownPcts.length) * 100;
   const avgFinalEquity = finalEquities.reduce((a, b) => a + b, 0) / finalEquities.length;
-  const avgPerformancePct = ((avgFinalEquity - startingEquity) / startingEquity) * 100;
-  const returnOnMaxDrawdown = avgMaxDrawdown > 0 ? (avgFinalEquity - startingEquity) / avgMaxDrawdown : 0;
+  const avgPerformancePct = startingEquity > 0 ? (avgFinalEquity / startingEquity) * 100 : 0;
+  const returnOnMaxDrawdown = biggestMaxDrawdown > 0 ? avgFinalEquity / biggestMaxDrawdown : 0;
   const pctProfitable = (finalEquities.filter((e) => e > startingEquity).length / simulations.length) * 100;
   const pctRuined = (ruinedCount / simulations.length) * 100;
 
   return {
-    kelly, expectation, biggestMaxDrawdown, avgMaxDrawdown,
+    kelly, expectation,
+    biggestMaxDrawdown, biggestMaxDrawdownPct,
+    avgMaxDrawdown, avgMaxDrawdownPct,
     minEquity: globalMinEquity, maxEquity: globalMaxEquity,
     avgFinalEquity, avgPerformancePct, returnOnMaxDrawdown,
     maxConsecutiveWins: globalMaxConsWins,
@@ -272,16 +290,17 @@ function runSimulationAsync(params: {
   minRisk: number;
   riskMode: 'fixed' | 'percent';
   rMultiples: number[];
+  seed: number;
 }): Promise<SimResult> {
   return new Promise((resolve) => {
     // Defer heavy computation to next tick to avoid blocking the UI
     setTimeout(() => {
-      const { mode, startingEquity, winRate, winLossRatio, riskFixed, riskPct, minRisk, riskMode, rMultiples } = params;
+      const { mode, startingEquity, winRate, winLossRatio, riskFixed, riskPct, minRisk, riskMode, rMultiples, seed } = params;
 
       const simulations =
         mode === 'bootstrap' && rMultiples.length > 0
-          ? runBootstrapSim({ startingEquity, rMultiples, riskFixed, riskPct, minRisk, riskMode })
-          : runParametricSim({ startingEquity, winRate, winLossRatio, riskFixed, riskPct, minRisk, riskMode });
+          ? runBootstrapSim({ startingEquity, rMultiples, riskFixed, riskPct, minRisk, riskMode, seed })
+          : runParametricSim({ startingEquity, winRate, winLossRatio, riskFixed, riskPct, minRisk, riskMode, seed });
 
       // For bootstrap mode, derive effective winRate and winLossRatio from R-multiples for Kelly/expectation
       let effectiveWinRate = winRate;
@@ -413,6 +432,7 @@ export function MonteCarloSimulator({ summary, tradePnls }: MonteCarloSimulatorP
   // ---- Async simulation state ----
   const [simResult, setSimResult] = useState<SimResult | null>(null);
   const [simLoading, setSimLoading] = useState(false);
+  const [seed, setSeed] = useState(42);
   const runIdRef = useRef(0); // to discard stale results
 
   // Extract R-multiples (only trades that have initial risk) for bootstrap
@@ -446,6 +466,7 @@ export function MonteCarloSimulator({ summary, tradePnls }: MonteCarloSimulatorP
         minRisk: mr,
         riskMode,
         rMultiples,
+        seed,
       }).then((result) => {
         // Only apply if this is the latest run
         if (id === runIdRef.current) {
@@ -456,7 +477,7 @@ export function MonteCarloSimulator({ summary, tradePnls }: MonteCarloSimulatorP
     }, 400); // 400ms debounce — lets the user finish typing
 
     return () => clearTimeout(timer);
-  }, [startingEquity, winRate, winLossRatio, avgRiskFixed, avgRiskPct, minRisk, riskMode, simMode, rMultiples]);
+  }, [startingEquity, winRate, winLossRatio, avgRiskFixed, avgRiskPct, minRisk, riskMode, simMode, rMultiples, seed]);
 
   // ---- Tooltip: only show average line info ----
   const renderTooltip = useCallback(
@@ -676,6 +697,16 @@ export function MonteCarloSimulator({ summary, tradePnls }: MonteCarloSimulatorP
           <p className="text-[10px] text-gray-400 dark:text-gray-500 leading-tight">
             {NUM_SIMULATIONS} simulations × {NUM_TRADES.toLocaleString()} trades each.
           </p>
+
+          {/* Run button */}
+          <button
+            type="button"
+            onClick={() => setSeed((s) => s + 1)}
+            disabled={simLoading}
+            className="w-full btn-primary py-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {simLoading ? 'Simulating…' : 'New Simulation'}
+          </button>
         </div>
       </div>
 
@@ -758,15 +789,15 @@ export function MonteCarloSimulator({ summary, tradePnls }: MonteCarloSimulatorP
               />
               <MetricCard
                 label="Biggest Max DD"
-                value={formatCurrency(metrics.biggestMaxDrawdown)}
+                value={`${formatPercent(metrics.biggestMaxDrawdownPct, 1)} (${formatCurrency(metrics.biggestMaxDrawdown)})`}
                 color="pnl-negative"
-                tooltip="Largest peak-to-trough drawdown observed across all simulations."
+                tooltip="Largest peak-to-trough drawdown observed across all simulations, as % of starting equity."
               />
               <MetricCard
                 label="Avg Max Drawdown"
-                value={formatCurrency(metrics.avgMaxDrawdown)}
+                value={`${formatPercent(metrics.avgMaxDrawdownPct, 1)} (${formatCurrency(metrics.avgMaxDrawdown)})`}
                 color="pnl-negative"
-                tooltip="Average of the maximum drawdown from each simulation run."
+                tooltip="Average of the maximum drawdown from each simulation run, as % of starting equity."
               />
               <MetricCard
                 label="Min Equity"
@@ -779,22 +810,16 @@ export function MonteCarloSimulator({ summary, tradePnls }: MonteCarloSimulatorP
                 tooltip="Highest equity value reached across all simulations."
               />
               <MetricCard
-                label="Avg Final Equity"
-                value={formatCurrency(metrics.avgFinalEquity)}
-                color={metrics.avgFinalEquity >= (parseFloat(startingEquity) || 0) ? 'pnl-positive' : 'pnl-negative'}
-                tooltip="Mean ending equity averaged across all simulation runs."
-              />
-              <MetricCard
                 label="Avg Performance"
-                value={formatPercent(metrics.avgPerformancePct, 1)}
-                color={metrics.avgPerformancePct >= 0 ? 'pnl-positive' : 'pnl-negative'}
-                tooltip="Average percentage return from starting equity across all runs."
+                value={`${formatPercent(metrics.avgPerformancePct, 1)} (${formatCurrency(metrics.avgFinalEquity)})`}
+                color={metrics.avgFinalEquity >= (parseFloat(startingEquity) || 0) ? 'pnl-positive' : 'pnl-negative'}
+                tooltip={"Average final equity as % of starting equity, with dollar value.\nFormula: Avg Final Equity / Starting Equity × 100"}
               />
               <MetricCard
                 label="Return / Max DD"
                 value={metrics.returnOnMaxDrawdown.toFixed(2) + 'x'}
                 color={metrics.returnOnMaxDrawdown >= 1 ? 'pnl-positive' : 'pnl-negative'}
-                tooltip="Ratio of average return to average max drawdown. Higher is better."
+                tooltip={"Ratio of average final equity to biggest max drawdown. Higher is better.\nFormula: Avg Final Equity / Biggest Max Drawdown"}
               />
               <MetricCard
                 label="% Profitable"
