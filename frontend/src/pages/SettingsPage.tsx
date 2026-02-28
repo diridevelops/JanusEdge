@@ -46,7 +46,7 @@ export function SettingsPage() {
 
   // Starting equity
   const [startingEquity, setStartingEquity] = useState(
-    String(user?.starting_equity ?? 50000)
+    String(user?.starting_equity ?? 10000)
   );
   const [seLoading, setSeLoading] = useState(false);
 

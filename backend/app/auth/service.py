@@ -12,6 +12,8 @@ from app.utils.errors import (
 from app.utils.validators import is_valid_timezone
 
 
+DEFAULT_STARTING_EQUITY: int = 10000
+
 class AuthService:
     """Service for authentication operations."""
 
@@ -70,7 +72,7 @@ class AuthService:
                 "username": username,
                 "timezone": timezone,
                 "display_timezone": timezone,
-                "starting_equity": 50000.0,
+                "starting_equity": DEFAULT_STARTING_EQUITY,
             },
         }
 
@@ -118,7 +120,7 @@ class AuthService:
                     user["timezone"],
                 ),
                 "starting_equity": user.get(
-                    "starting_equity", 50000.0
+                    "starting_equity", DEFAULT_STARTING_EQUITY
                 ),
             },
         }
@@ -149,7 +151,7 @@ class AuthService:
                 user["timezone"],
             ),
             "starting_equity": user.get(
-                "starting_equity", 50000.0
+                "starting_equity", DEFAULT_STARTING_EQUITY
             ),
         }
 
@@ -233,7 +235,7 @@ class AuthService:
                 timezone,
             ),
             "starting_equity": user.get(
-                "starting_equity", 50000.0
+                "starting_equity", DEFAULT_STARTING_EQUITY
             ),
         }
 

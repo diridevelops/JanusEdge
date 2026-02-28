@@ -62,6 +62,9 @@ type SimMode = 'bootstrap' | 'parametric';
 
 const NUM_SIMULATIONS = 100;
 const NUM_TRADES = 1000;
+const DEFAULT_STARTING_EQUITY = 10000;
+const DEFAULT_WIN_RATE_PCT = 50;
+const DEFAULT_WIN_LOSS_RATIO_R = 2;
 
 /** Deterministic pseudo-random number generator (Mulberry32). */
 function mulberry32(seed: number) {
@@ -338,16 +341,37 @@ function ChartLoadingOverlay() {
 export function MonteCarloSimulator({ summary, tradePnls }: MonteCarloSimulatorProps) {
   const { user } = useAuth();
   const c = useChartColors();
+  const hasImportedTrades = tradePnls.length > 0;
+
+  const fallbackWinRate = useMemo(() => {
+    if (!hasImportedTrades) return DEFAULT_WIN_RATE_PCT;
+    if (summary && Number.isFinite(summary.win_rate)) {
+      return summary.win_rate;
+    }
+    return DEFAULT_WIN_RATE_PCT;
+  }, [hasImportedTrades, summary]);
+
+  const fallbackWinLossRatio = useMemo(() => {
+    if (!hasImportedTrades) return DEFAULT_WIN_LOSS_RATIO_R;
+    if (
+      summary?.wl_ratio_r != null
+      && Number.isFinite(summary.wl_ratio_r)
+      && summary.wl_ratio_r >= 0
+    ) {
+      return summary.wl_ratio_r;
+    }
+    return DEFAULT_WIN_LOSS_RATIO_R;
+  }, [hasImportedTrades, summary]);
 
   // ---- Parameters ----
   const [startingEquity, setStartingEquity] = useState(
-    String(user?.starting_equity ?? 50000),
+    String(user?.starting_equity ?? DEFAULT_STARTING_EQUITY),
   );
   const [winRate, setWinRate] = useState(
-    summary ? summary.win_rate.toFixed(1) : '55.0',
+    fallbackWinRate.toFixed(1),
   );
   const [winLossRatio, setWinLossRatio] = useState(
-    summary?.wl_ratio_r != null ? summary.wl_ratio_r.toFixed(2) : '1.50',
+    fallbackWinLossRatio.toFixed(2),
   );
   const [avgRiskFixed, setAvgRiskFixed] = useState('200');
   const [avgRiskPct, setAvgRiskPct] = useState('1.0');
@@ -358,8 +382,19 @@ export function MonteCarloSimulator({ summary, tradePnls }: MonteCarloSimulatorP
   );
   const [riskMode, setRiskMode] = useState<'fixed' | 'percent'>('percent');
   const [simMode, setSimMode] = useState<SimMode>(
-    tradePnls.length > 0 ? 'bootstrap' : 'parametric',
+    hasImportedTrades ? 'bootstrap' : 'parametric',
   );
+
+  useEffect(() => {
+    if (!hasImportedTrades) {
+      setWinRate(DEFAULT_WIN_RATE_PCT.toFixed(1));
+      setWinLossRatio(DEFAULT_WIN_LOSS_RATIO_R.toFixed(2));
+      return;
+    }
+
+    setWinRate(fallbackWinRate.toFixed(1));
+    setWinLossRatio(fallbackWinLossRatio.toFixed(2));
+  }, [hasImportedTrades, fallbackWinRate, fallbackWinLossRatio]);
 
   // Pre-fill avg risk from summary on first load
   const prefilled = useRef(false);
@@ -393,9 +428,9 @@ export function MonteCarloSimulator({ summary, tradePnls }: MonteCarloSimulatorP
     const id = ++runIdRef.current;
     setSimLoading(true);
 
-    const se = parseFloat(startingEquity) || 50000;
-    const wr = parseFloat(winRate) || 55;
-    const wlr = parseFloat(winLossRatio) || 1.5;
+    const se = parseFloat(startingEquity) || DEFAULT_STARTING_EQUITY;
+    const wr = parseFloat(winRate) || DEFAULT_WIN_RATE_PCT;
+    const wlr = parseFloat(winLossRatio) || DEFAULT_WIN_LOSS_RATIO_R;
     const rf = parseFloat(avgRiskFixed) || 200;
     const rp = parseFloat(avgRiskPct) || 1;
     const mr = parseFloat(minRisk) || 0;
