@@ -167,6 +167,12 @@ export function StatsGrid({
           tooltip="Winners ÷ Total Trades × 100"
         />
         <StatsCard
+          label="APPT"
+          value={formatCurrency(summary.appt)}
+          valueColor={summary.appt >= 0 ? 'text-profit' : 'text-loss'}
+          tooltip="Average Profitability Per Trade\nTotal Net P&L ÷ # Trades"
+        />
+        <StatsCard
           label="Net Profit Factor ($)"
           value={netProfitFactor}
           valueColor={
