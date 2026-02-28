@@ -60,8 +60,8 @@ type SimMode = 'bootstrap' | 'parametric';
 /*  Constants                                                          */
 /* ------------------------------------------------------------------ */
 
-const NUM_SIMULATIONS = 100;
-const NUM_TRADES = 1000;
+const NUM_SIMULATIONS = 50;
+const NUM_TRADES = 500;
 const DEFAULT_STARTING_EQUITY = 10000;
 const DEFAULT_WIN_RATE_PCT = 50;
 const DEFAULT_WIN_LOSS_RATIO_R = 2;

@@ -1,4 +1,4 @@
-import { Plus } from 'lucide-react';
+import { Plus, Upload } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { listTrades } from '../api/trades.api';
@@ -153,10 +153,15 @@ export function TradeListPage() {
             {totalItems} {totalItems === 1 ? 'trade' : 'trades'} total
           </p>
         </div>
-        <Link to="/trades/new" className="btn-primary inline-flex items-center gap-1.5">
-          <Plus className="h-4 w-4" />
-          New Trade
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link to="/import" className="btn-primary text-sm inline-flex items-center gap-1">
+            Import <Upload className="h-4 w-4" />
+          </Link>
+          <Link to="/trades/new" className="btn-primary inline-flex items-center gap-1.5">
+            <Plus className="h-4 w-4" />
+            New Trade
+          </Link>
+        </div>
       </div>
 
       {/* Filters */}

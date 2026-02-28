@@ -217,7 +217,7 @@ class AnalyticsService:
                             "$cond": [
                                 {
                                     "$eq": [
-                                        "$net_pnl",
+                                        "$gross_pnl",
                                         0,
                                     ]
                                 },

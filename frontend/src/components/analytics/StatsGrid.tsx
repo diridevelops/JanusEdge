@@ -138,8 +138,9 @@ export function StatsGrid({
                 </p>
                 <InfoTooltip
                   text={
-                    'Sum of net P&L across all closed trades after fees.\\n'
-                    + 'Also shows total fees and fees as a % of |gross P&L|.'
+                    'Sum of net P&L across all closed trades after fees.\n'
+                    + 'Also shows total fees and fees as a % of |gross P&L|.\n'
+                    + 'Breakeven = trades with gross P&L = 0.'
                   }
                   ariaLabel="Info about Cumulated Net P&L"
                 />
@@ -164,13 +165,13 @@ export function StatsGrid({
         <StatsCard
           label="Win Rate"
           value={formatPercent(summary.win_rate)}
-          tooltip="Winners ÷ Total Trades × 100"
+          tooltip="Percentage of trades that were winners (net P&L > 0).\nFormula: Winners ÷ Total Trades × 100"
         />
         <StatsCard
           label="APPT"
           value={formatCurrency(summary.appt)}
           valueColor={summary.appt >= 0 ? 'text-profit' : 'text-loss'}
-          tooltip="Average Profitability Per Trade\nTotal Net P&L ÷ # Trades"
+          tooltip="Average Profitability Per Trade.\nFormula: Total Net P&L ÷ Total Trades"
         />
         <StatsCard
           label="Net Profit Factor ($)"
@@ -180,7 +181,7 @@ export function StatsGrid({
               ? 'text-profit'
               : 'text-loss'
           }
-          tooltip="sum(winner net P&L) ÷ |sum(loser net P&L)|"
+          tooltip="Ratio of total winning P&L to total losing P&L (dollar-based).\nFormula: Σ(winner net P&L) ÷ |Σ(loser net P&L)|"
         />
       </MetricSection>
 
@@ -189,25 +190,25 @@ export function StatsGrid({
           label="Expectancy (R)"
           value={summary.expectancy_r != null ? `${summary.expectancy_r.toFixed(2)}R` : 'N/A'}
           valueColor={summary.expectancy_r != null && summary.expectancy_r >= 0 ? 'text-profit' : 'text-loss'}
-          tooltip="E[R] = p(win)×avg(win R) − p(loss)×avg(loss R)."
+          tooltip="Expected value per trade in R-multiples.\nFormula: p(win) × avg(win R) − p(loss) × |avg(loss R)|"
         />
         <StatsCard
           label="W:L Ratio (R)"
           value={summary.wl_ratio_r != null ? summary.wl_ratio_r.toFixed(2) : 'N/A'}
           valueColor={summary.wl_ratio_r != null && summary.wl_ratio_r >= 1 ? 'text-profit' : 'text-loss'}
-          tooltip="avg(win R) ÷ |avg(loss R)|"
-        />
-        <StatsCard
-          label="Median R"
-          value={summary.median_r != null ? `${summary.median_r.toFixed(2)}R` : 'N/A'}
-          valueColor={summary.median_r != null && summary.median_r >= 0 ? 'text-profit' : 'text-loss'}
-          tooltip="50th percentile of trade R-multiples (trades with initial risk > 0)."
+          tooltip="Average winning R divided by average losing R.\nFormula: avg(win R) ÷ |avg(loss R)|"
         />
         <StatsCard
           label="Profit Factor (R)"
           value={profitFactorR}
           valueColor={summary.profit_factor_r != null && summary.profit_factor_r >= 1 ? 'text-profit' : 'text-loss'}
-          tooltip="(Σ r_i for r_i>0) ÷ |Σ r_i for r_i<0|"
+          tooltip="Ratio of total positive R to total negative R.\nFormula: Σ(positive R) ÷ |Σ(negative R)|"
+        />
+        <StatsCard
+          label="Median R"
+          value={summary.median_r != null ? `${summary.median_r.toFixed(2)}R` : 'N/A'}
+          valueColor={summary.median_r != null && summary.median_r >= 0 ? 'text-profit' : 'text-loss'}
+          tooltip="50th percentile of trade R-multiples.\nOnly trades with initial risk > 0 are included."
         />
       </MetricSection>
 
@@ -216,18 +217,18 @@ export function StatsGrid({
           label="Current Drawdown ($)"
           value={formatCurrency(currentDrawdown)}
           valueColor={currentDrawdown > 0 ? 'text-loss' : undefined}
-          tooltip="Current peak-to-trough decline in the equity curve."
+          tooltip="Current peak-to-trough decline in the equity curve.\nMeasured from the most recent equity peak."
         />
         <StatsCard
           label="Max Drawdown ($)"
           value={formatCurrency(maxDrawdown)}
           valueColor={maxDrawdown > 0 ? 'text-loss' : undefined}
-          tooltip="Worst peak-to-trough decline observed in the equity curve."
+          tooltip="Largest peak-to-trough decline observed across the entire equity curve."
         />
         <StatsCard
           label="Avg Initial Risk ($)"
           value={formatCurrency(summary.avg_initial_risk)}
-          tooltip="Average initial risk across trades with initial risk > 0."
+          tooltip="Average initial risk per trade.\nOnly trades with initial risk > 0 are included."
         />
       </MetricSection>
 
@@ -236,22 +237,22 @@ export function StatsGrid({
           label="Win / Share Avg"
           value={formatCurrency(summary.win_per_share_avg)}
           valueColor="text-profit"
-          tooltip="Average winner P&L per contract = Σ(winner net P&L ÷ qty) ÷ # winners."
+          tooltip="Average net P&L per contract among winning trades.\nFormula: Σ(winner net P&L ÷ qty) ÷ Winners"
         />
         <StatsCard
           label="Loss / Share Avg"
           value={formatCurrency(summary.loss_per_share_avg)}
           valueColor="text-loss"
-          tooltip="Average loser P&L per contract = Σ(loser net P&L ÷ qty) ÷ # losers."
+          tooltip="Average net P&L per contract among losing trades.\nFormula: Σ(loser net P&L ÷ qty) ÷ Losers"
         />
         <StatsCard
           label="Win / Share P95"
           value={formatCurrency(summary.win_per_share_p95)}
           valueColor="text-profit"
           tooltip={
-            '95th percentile of winner P&L per contract.\\n'
-            + 'Formula: P95({net_pnl_i / qty_i | net_pnl_i > 0}).\\n'
-            + 'Gives typical extreme performance without being dominated by outliers.'
+            '95th percentile of winner P&L per contract.\n'
+            + 'Represents near-best performance without outlier dominance.\n'
+            + 'Formula: P95(net_pnl ÷ qty for winners)'
           }
         />
         <StatsCard
@@ -259,9 +260,9 @@ export function StatsGrid({
           value={formatCurrency(summary.loss_per_share_p05)}
           valueColor="text-loss"
           tooltip={
-            '5th percentile of loser P&L per contract.\\n'
-            + 'Formula: P05({net_pnl_i / qty_i | net_pnl_i < 0}).\\n'
-            + 'Gives typical extreme performance without being dominated by outliers.'
+            '5th percentile of loser P&L per contract.\n'
+            + 'Represents near-worst performance without outlier dominance.\n'
+            + 'Formula: P05(net_pnl ÷ qty for losers)'
           }
         />
 

@@ -138,6 +138,7 @@ class TestAnalyticsSummary:
         user_id = _get_user_id(app)
 
         # Insert 5 trades: 3 winners, 1 loser, 1 BE
+        # Breakeven = gross_pnl == 0 (trade itself was flat)
         base = datetime(2025, 1, 15, 10, 0, 0)
         _insert_trade(
             app,
@@ -170,7 +171,8 @@ class TestAnalyticsSummary:
         _insert_trade(
             app,
             user_id,
-            net_pnl=0.0,
+            net_pnl=-2.0,
+            gross_pnl=0.0,
             fee=2.0,
             exit_time=base + timedelta(hours=5),
         )
@@ -184,37 +186,36 @@ class TestAnalyticsSummary:
 
         assert data["total_trades"] == 5
         assert data["winners"] == 3
-        assert data["losers"] == 1
+        assert data["losers"] == 2
         assert data["breakeven"] == 1
         assert data["win_rate"] == 60.0
-        assert data["total_net_pnl"] == 145.0
+        assert data["total_net_pnl"] == 143.0
         assert data["total_fees"] == 10.0
 
         # avg winner = (100+50+75)/3 = 75.0
         assert data["avg_winner"] == 75.0
-        # avg loser = -80/1 = -80.0
-        assert data["avg_loser"] == -80.0
+        # avg loser = (-80 + -2)/2 = -41.0
+        assert data["avg_loser"] == -41.0
         # largest win = 100
         assert data["largest_win"] == 100.0
         # largest loss = -80
         assert data["largest_loss"] == -80.0
-        # profit factor = 225 / 80 = 2.8125 -> 2.81
-        assert data["profit_factor"] == 2.81
-        # expectancy = 0.6*75 + 0.4*(-80)
-        #   = 45 + (-32) = 13.0
-        assert data["expectancy"] == 13.0
+        # profit factor = 225 / 82 = 2.7439.. -> 2.74
+        assert data["profit_factor"] == 2.74
+        # expectancy = 0.6*75 + 0.4*(-41) = 45-16.4 = 28.6
+        assert data["expectancy"] == 28.6
 
-        # APPT = 145 / 5 = 29.0
-        assert data["appt"] == 29.0
-        # P/L Ratio = 75 / 80 = 0.9375 -> 0.94
-        assert data["pl_ratio"] == 0.94
+        # APPT = 143 / 5 = 28.6
+        assert data["appt"] == 28.6
+        # P/L Ratio = 75 / 41 = 1.8292.. -> 1.83
+        assert data["pl_ratio"] == 1.83
         # Per-share: all trades have total_quantity=1
         # win_per_share_avg = (100+50+75)/3 = 75.0
         assert data["win_per_share_avg"] == 75.0
         # win_per_share_high = 100.0
         assert data["win_per_share_high"] == 100.0
-        # loss_per_share_avg = -80/1 = -80.0
-        assert data["loss_per_share_avg"] == -80.0
+        # loss_per_share_avg = (-80-2)/2 = -41.0
+        assert data["loss_per_share_avg"] == -41.0
         # loss_per_share_high = -80.0
         assert data["loss_per_share_high"] == -80.0
 
