@@ -122,7 +122,11 @@ export function AnalyticsPage() {
       <FilterBar filters={filters} onFilterChange={handleFilterChange} onClearFilters={handleClearFilters} />
 
       {/* Summary metrics */}
-      <StatsGrid summary={summary} isLoading={loading} />
+      <StatsGrid
+        summary={summary}
+        drawdown={drawdown}
+        isLoading={loading}
+      />
 
       {/* Tabs */}
       <div className="border-b border-gray-200 dark:border-gray-700">

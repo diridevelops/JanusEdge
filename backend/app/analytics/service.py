@@ -84,6 +84,32 @@ def _build_base_match(
     return match
 
 
+def _percentile(values: List[float], pct: float) -> float:
+    """Compute linear-interpolated percentile.
+
+    Parameters:
+        values: Numeric samples.
+        pct: Percentile in [0, 100].
+
+    Returns:
+        Percentile value (0.0 for empty input).
+    """
+    if not values:
+        return 0.0
+
+    sorted_values = sorted(values)
+    if len(sorted_values) == 1:
+        return float(sorted_values[0])
+
+    rank = (pct / 100.0) * (len(sorted_values) - 1)
+    low_idx = int(rank)
+    high_idx = min(low_idx + 1, len(sorted_values) - 1)
+    weight = rank - low_idx
+    low_val = float(sorted_values[low_idx])
+    high_val = float(sorted_values[high_idx])
+    return low_val + (high_val - low_val) * weight
+
+
 class AnalyticsService:
     """
     Service for computing trade analytics and metrics.
@@ -452,18 +478,52 @@ class AnalyticsService:
 
         expectancy_r = None
         wl_ratio_r = None
-        r_trades = list(
+        median_r = None
+        profit_factor_r = None
+        avg_initial_risk = 0.0
+        win_per_share_p95 = 0.0
+        loss_per_share_p05 = 0.0
+
+        trade_details = list(
             mongo.db.trades.find(
-                {
-                    **match,
-                    "initial_risk": {"$gt": 0},
-                },
+                match,
                 {
                     "net_pnl": 1,
                     "initial_risk": 1,
+                    "total_quantity": 1,
                 },
             )
         )
+
+        per_share_wins: List[float] = []
+        per_share_losses: List[float] = []
+        r_trades = []
+        for trade in trade_details:
+            qty = trade.get("total_quantity", 0)
+            pnl = float(trade.get("net_pnl", 0.0))
+            if qty and qty > 0:
+                per_share = pnl / qty
+                if pnl > 0:
+                    per_share_wins.append(per_share)
+                elif pnl < 0:
+                    per_share_losses.append(per_share)
+
+            risk = trade.get("initial_risk")
+            if risk and risk > 0:
+                r_trades.append(trade)
+
+        win_per_share_p95 = _percentile(
+            per_share_wins, 95
+        )
+        loss_per_share_p05 = _percentile(
+            per_share_losses, 5
+        )
+
+        if r_trades:
+            avg_initial_risk = sum(
+                float(t["initial_risk"]) for t in r_trades
+            ) / len(r_trades)
+
         if r_trades:
             r_values = [
                 t["net_pnl"] / t["initial_risk"]
@@ -492,6 +552,17 @@ class AnalyticsService:
                 if avg_loss_r > 0
                 else None
             )
+            median_r = _percentile(r_values, 50)
+            sum_win_r = sum(win_r_values)
+            sum_loss_r_abs = abs(sum(loss_r_values))
+            if sum_loss_r_abs > 0:
+                profit_factor_r = (
+                    sum_win_r / sum_loss_r_abs
+                )
+            elif sum_win_r > 0:
+                profit_factor_r = None
+            else:
+                profit_factor_r = 0.0
 
         return {
             "total_trades": total,
@@ -551,6 +622,25 @@ class AnalyticsService:
             ),
             "loss_per_share_high": round(
                 loss_per_share_high, 2
+            ),
+            "win_per_share_p95": round(
+                win_per_share_p95, 2
+            ),
+            "loss_per_share_p05": round(
+                loss_per_share_p05, 2
+            ),
+            "median_r": (
+                round(median_r, 2)
+                if median_r is not None
+                else None
+            ),
+            "profit_factor_r": (
+                round(profit_factor_r, 2)
+                if profit_factor_r is not None
+                else None
+            ),
+            "avg_initial_risk": round(
+                avg_initial_risk, 2
             ),
         }
 
@@ -1616,4 +1706,9 @@ def _empty_summary() -> Dict[str, Any]:
         "win_per_share_high": 0.0,
         "loss_per_share_avg": 0.0,
         "loss_per_share_high": 0.0,
+        "win_per_share_p95": 0.0,
+        "loss_per_share_p05": 0.0,
+        "median_r": None,
+        "profit_factor_r": 0.0,
+        "avg_initial_risk": 0.0,
     }

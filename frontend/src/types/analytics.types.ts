@@ -22,8 +22,13 @@ export interface AnalyticsSummary {
   pl_ratio: number | null;
   win_per_share_avg: number;
   win_per_share_high: number;
+  win_per_share_p95: number;
   loss_per_share_avg: number;
   loss_per_share_high: number;
+  loss_per_share_p05: number;
+  median_r: number | null;
+  profit_factor_r: number | null;
+  avg_initial_risk: number;
 }
 
 /** Single point on the daily equity curve. */
