@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { changePassword, updateDisplayTimezone, updateStartingEquity, updateTimezone } from '../api/auth.api';
 import { useAuth } from '../hooks/useAuth';
-import { useTheme } from '../hooks/useTheme';
 import { useToast } from '../hooks/useToast';
 
 const TIMEZONES = [
@@ -25,7 +24,6 @@ const TIMEZONES = [
 /** Settings page — password change and timezone update. */
 export function SettingsPage() {
   const { user, refreshProfile } = useAuth();
-  const { theme, toggleTheme } = useTheme();
   const { addToast } = useToast();
 
   // Password change
@@ -136,35 +134,6 @@ export function SettingsPage() {
         <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
           Manage your account preferences.
         </p>
-      </div>
-
-      {/* Appearance */}
-      <div className="card p-4">
-        <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">
-          Appearance
-        </h2>
-        <div className="flex items-center justify-between">
-          <div>
-            <p className="text-sm font-medium text-gray-900 dark:text-gray-100">Dark Mode</p>
-            <p className="text-xs text-gray-500 dark:text-gray-400">
-              Toggle between light and dark colour scheme.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={toggleTheme}
-            aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
-            className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 dark:focus:ring-offset-gray-900 ${
-              theme === 'dark' ? 'bg-brand-600' : 'bg-gray-200'
-            }`}
-          >
-            <span
-              className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
-                theme === 'dark' ? 'translate-x-5' : 'translate-x-0'
-              }`}
-            />
-          </button>
-        </div>
       </div>
 
       {/* Profile info */}
