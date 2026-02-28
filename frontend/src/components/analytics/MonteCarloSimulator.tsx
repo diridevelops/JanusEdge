@@ -9,6 +9,8 @@ import {
   YAxis,
 } from 'recharts';
 
+import { Loader2 } from 'lucide-react';
+
 import { useAuth } from '../../hooks/useAuth';
 import { useChartColors } from '../../hooks/useChartColors';
 import type { AnalyticsSummary, TradePnl } from '../../types/analytics.types';
@@ -97,9 +99,9 @@ function MetricCard({ label, value, color, tooltip }: { label: string; value: st
 
 function ChartLoadingOverlay() {
   return (
-    <div className="absolute inset-0 flex items-center justify-center bg-white/60 dark:bg-gray-900/60 z-10 rounded-lg">
+    <div className="absolute inset-0 flex items-center justify-center bg-white/70 dark:bg-gray-900/70 z-10 rounded-lg">
       <div className="flex flex-col items-center gap-2">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-gray-300 dark:border-gray-600 border-t-brand-600" />
+        <Loader2 className="h-8 w-8 animate-spin text-brand-600" />
         <span className="text-xs text-gray-500 dark:text-gray-400">Simulating…</span>
       </div>
     </div>
@@ -194,7 +196,7 @@ export function MonteCarloSimulator({ summary, tradePnls }: MonteCarloSimulatorP
     riskMode,
     rMultiples,
     seed: seedRef.current,
-    numTrades: Math.max(10, Math.min(10000, parseInt(numTrades, 10) || DEFAULT_NUM_TRADES)),
+    numTrades: Math.max(10, Math.min(1000, parseInt(numTrades, 10) || DEFAULT_NUM_TRADES)),
   };
 
   // ---- Dispatch simulation to Web Worker ----
