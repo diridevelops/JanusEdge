@@ -14,6 +14,7 @@ import { useChartColors } from '../../hooks/useChartColors';
 import type { AnalyticsSummary, TradePnl } from '../../types/analytics.types';
 import { formatCurrency, formatPercent } from '../../utils/formatters';
 import { InfoTooltip } from '../ui/InfoTooltip';
+import type { WorkerParams, WorkerResult } from './mc.worker';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -25,11 +26,9 @@ interface MonteCarloSimulatorProps {
   tradePnls: TradePnl[];
 }
 
-/** One point on the average-equity series (also holds all sim values). */
 interface SimPoint {
   trade: number;
   avgEquity: number;
-  /** Individual simulation lines stored as sim_0 … sim_N-1. */
   [key: string]: number;
 }
 
@@ -63,263 +62,19 @@ type SimMode = 'bootstrap' | 'parametric';
 /* ------------------------------------------------------------------ */
 
 const NUM_SIMULATIONS = 50;
-const NUM_TRADES = 500;
+/** Matches MAX_DISPLAY_LINES in the worker — only these sim lines are charted. */
+const MAX_DISPLAY_LINES = 15;
+const DEFAULT_NUM_TRADES = 500;
 const DEFAULT_STARTING_EQUITY = 10000;
 const DEFAULT_WIN_RATE_PCT = 50;
 const DEFAULT_WIN_LOSS_RATIO_R = 2;
 
-/** Deterministic pseudo-random number generator (Mulberry32). */
-function mulberry32(seed: number) {
-  return () => {
-    let t = (seed += 0x6d2b79f5);
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
 /* ------------------------------------------------------------------ */
-/*  Simulation engine (runs off main thread via setTimeout chunks)     */
+/*  Web Worker helper                                                  */
 /* ------------------------------------------------------------------ */
 
-function runParametricSim(params: {
-  startingEquity: number;
-  winRate: number;
-  winLossRatio: number;
-  riskFixed: number;
-  riskPct: number;
-  minRisk: number;
-  riskMode: 'fixed' | 'percent';
-  seed: number;
-}): number[][] {
-  const { startingEquity, winRate, winLossRatio, riskFixed, riskPct, minRisk, riskMode, seed } = params;
-  const wr = winRate / 100;
-  const rng = mulberry32(seed);
-  const simulations: number[][] = [];
-
-  for (let s = 0; s < NUM_SIMULATIONS; s++) {
-    const equity: number[] = [startingEquity];
-    for (let t = 0; t < NUM_TRADES; t++) {
-      const cur = equity[equity.length - 1]!;
-      if (cur <= 0) {
-        // Ruined — fill remaining trades with 0
-        for (let r = t; r < NUM_TRADES; r++) equity.push(0);
-        break;
-      }
-      const risk =
-        riskMode === 'fixed'
-          ? riskFixed
-          : Math.max((riskPct / 100) * cur, minRisk);
-      if (rng() < wr) {
-        equity.push(cur + risk * winLossRatio);
-      } else {
-        equity.push(Math.max(0, cur - risk));
-      }
-    }
-    simulations.push(equity);
-  }
-  return simulations;
-}
-
-function runBootstrapSim(params: {
-  startingEquity: number;
-  rMultiples: number[];
-  riskFixed: number;
-  riskPct: number;
-  minRisk: number;
-  riskMode: 'fixed' | 'percent';
-  seed: number;
-}): number[][] {
-  const { startingEquity, rMultiples, riskFixed, riskPct, minRisk, riskMode, seed } = params;
-  const rng = mulberry32(seed);
-  const simulations: number[][] = [];
-  const n = rMultiples.length;
-
-  for (let s = 0; s < NUM_SIMULATIONS; s++) {
-    const equity: number[] = [startingEquity];
-    for (let t = 0; t < NUM_TRADES; t++) {
-      const cur = equity[equity.length - 1]!;
-      if (cur <= 0) {
-        // Ruined — fill remaining trades with 0
-        for (let r = t; r < NUM_TRADES; r++) equity.push(0);
-        break;
-      }
-      // Dollar risk per trade: fixed or max(equity × pct, minRisk)
-      const risk =
-        riskMode === 'fixed'
-          ? riskFixed
-          : Math.max((riskPct / 100) * cur, minRisk);
-      // Randomly sample a real trade's R-multiple
-      const idx = Math.floor(rng() * n);
-      const rMul = rMultiples[idx]!;
-      equity.push(Math.max(0, cur + rMul * risk));
-    }
-    simulations.push(equity);
-  }
-  return simulations;
-}
-
-function computeMetrics(
-  simulations: number[][],
-  startingEquity: number,
-  winRate: number,
-  winLossRatio: number,
-): SimMetrics {
-  const wr = winRate / 100;
-  const kelly = winLossRatio > 0 ? wr - (1 - wr) / winLossRatio : 0;
-  const expectation = wr * winLossRatio - (1 - wr);
-
-  const maxDrawdowns: number[] = [];      // dollar MDD per simulation
-  const maxDrawdownPcts: number[] = [];   // percentage MDD per simulation (0..1)
-  const finalEquities: number[] = [];
-  let globalMinEquity = Infinity;
-  let globalMaxEquity = -Infinity;
-  let globalMaxConsWins = 0;
-  let globalMaxConsLosses = 0;
-  let ruinedCount = 0;
-
-  for (const equity of simulations) {
-    let peak = equity[0]!;
-    let maxDD = 0;       // largest dollar drop from peak
-    let maxDDPct = 0;    // largest fractional drop from peak (0..1)
-    let consWins = 0;
-    let consLosses = 0;
-    let simMaxConsWins = 0;
-    let simMaxConsLosses = 0;
-    let hitZero = false;
-
-    for (let i = 1; i < equity.length; i++) {
-      const val = equity[i]!;
-      const prev = equity[i - 1]!;
-      if (val <= 0) { hitZero = true; }
-      if (val > peak) peak = val;
-      // Dollar drawdown from peak
-      const dd = peak - val;
-      if (dd > maxDD) maxDD = dd;
-      // Percentage drawdown from peak: 1 − val / peak
-      if (peak > 0) {
-        const ddPct = 1 - val / peak;
-        if (ddPct > maxDDPct) maxDDPct = ddPct;
-      }
-      if (val < globalMinEquity) globalMinEquity = val;
-      if (val > globalMaxEquity) globalMaxEquity = val;
-      if (val > prev) {
-        consWins++;
-        consLosses = 0;
-        if (consWins > simMaxConsWins) simMaxConsWins = consWins;
-      } else if (val < prev) {
-        consLosses++;
-        consWins = 0;
-        if (consLosses > simMaxConsLosses) simMaxConsLosses = consLosses;
-      }
-    }
-
-    if (hitZero) ruinedCount++;
-    maxDrawdowns.push(maxDD);
-    maxDrawdownPcts.push(maxDDPct);
-    finalEquities.push(equity[equity.length - 1]!);
-    if (simMaxConsWins > globalMaxConsWins) globalMaxConsWins = simMaxConsWins;
-    if (simMaxConsLosses > globalMaxConsLosses) globalMaxConsLosses = simMaxConsLosses;
-  }
-
-  const biggestMaxDrawdown = Math.max(...maxDrawdowns);
-  const avgMaxDrawdown = maxDrawdowns.reduce((a, b) => a + b, 0) / maxDrawdowns.length;
-  // MDD percentages: max of per-sim (1 − val/peak), converted to 0..100
-  const biggestMaxDrawdownPct = Math.max(...maxDrawdownPcts) * 100;
-  const avgMaxDrawdownPct = (maxDrawdownPcts.reduce((a, b) => a + b, 0) / maxDrawdownPcts.length) * 100;
-  const avgFinalEquity = finalEquities.reduce((a, b) => a + b, 0) / finalEquities.length;
-  const avgPerformancePct = startingEquity > 0 ? (avgFinalEquity / startingEquity) * 100 : 0;
-  const returnOnMaxDrawdown = biggestMaxDrawdown > 0 ? avgFinalEquity / biggestMaxDrawdown : 0;
-  const pctProfitable = (finalEquities.filter((e) => e > startingEquity).length / simulations.length) * 100;
-  const pctRuined = (ruinedCount / simulations.length) * 100;
-
-  return {
-    kelly, expectation,
-    biggestMaxDrawdown, biggestMaxDrawdownPct,
-    avgMaxDrawdown, avgMaxDrawdownPct,
-    minEquity: globalMinEquity, maxEquity: globalMaxEquity,
-    avgFinalEquity, avgPerformancePct, returnOnMaxDrawdown,
-    maxConsecutiveWins: globalMaxConsWins,
-    maxConsecutiveLosses: globalMaxConsLosses,
-    pctProfitable,
-    pctRuined,
-  };
-}
-
-/** Build chart data by sampling simulation arrays. */
-function buildChartData(simulations: number[][]): SimPoint[] {
-  const step = Math.max(1, Math.floor(NUM_TRADES / 500));
-  const points: SimPoint[] = [];
-
-  for (let t = 0; t <= NUM_TRADES; t += step) {
-    const point: SimPoint = { trade: t, avgEquity: 0 };
-    let sum = 0;
-    for (let s = 0; s < NUM_SIMULATIONS; s++) {
-      const val = simulations[s]![t]!;
-      point[`sim_${s}`] = val;
-      sum += val;
-    }
-    point.avgEquity = sum / NUM_SIMULATIONS;
-    points.push(point);
-  }
-
-  const lastPoint = points[points.length - 1];
-  if (lastPoint && lastPoint.trade !== NUM_TRADES) {
-    const point: SimPoint = { trade: NUM_TRADES, avgEquity: 0 };
-    let sum = 0;
-    for (let s = 0; s < NUM_SIMULATIONS; s++) {
-      const val = simulations[s]![NUM_TRADES]!;
-      point[`sim_${s}`] = val;
-      sum += val;
-    }
-    point.avgEquity = sum / NUM_SIMULATIONS;
-    points.push(point);
-  }
-
-  return points;
-}
-
-/** Run full simulation async (yields to the event loop via setTimeout). */
-function runSimulationAsync(params: {
-  mode: SimMode;
-  startingEquity: number;
-  winRate: number;
-  winLossRatio: number;
-  riskFixed: number;
-  riskPct: number;
-  minRisk: number;
-  riskMode: 'fixed' | 'percent';
-  rMultiples: number[];
-  seed: number;
-}): Promise<SimResult> {
-  return new Promise((resolve) => {
-    // Defer heavy computation to next tick to avoid blocking the UI
-    setTimeout(() => {
-      const { mode, startingEquity, winRate, winLossRatio, riskFixed, riskPct, minRisk, riskMode, rMultiples, seed } = params;
-
-      const simulations =
-        mode === 'bootstrap' && rMultiples.length > 0
-          ? runBootstrapSim({ startingEquity, rMultiples, riskFixed, riskPct, minRisk, riskMode, seed })
-          : runParametricSim({ startingEquity, winRate, winLossRatio, riskFixed, riskPct, minRisk, riskMode, seed });
-
-      // For bootstrap mode, derive effective winRate and winLossRatio from R-multiples for Kelly/expectation
-      let effectiveWinRate = winRate;
-      let effectiveWlr = winLossRatio;
-      if (mode === 'bootstrap' && rMultiples.length > 0) {
-        const wins = rMultiples.filter((r) => r > 0);
-        const losses = rMultiples.filter((r) => r < 0);
-        effectiveWinRate = (wins.length / rMultiples.length) * 100;
-        const avgWinR = wins.length > 0 ? wins.reduce((a, b) => a + b, 0) / wins.length : 0;
-        const avgLossR = losses.length > 0 ? Math.abs(losses.reduce((a, b) => a + b, 0) / losses.length) : 0;
-        effectiveWlr = avgLossR > 0 ? avgWinR / avgLossR : 0;
-      }
-
-      const metrics = computeMetrics(simulations, startingEquity, effectiveWinRate, effectiveWlr);
-      const chartData = buildChartData(simulations);
-
-      resolve({ chartData, metrics });
-    }, 0);
-  });
+function createWorker() {
+  return new Worker(new URL('./mc.worker.ts', import.meta.url), { type: 'module' });
 }
 
 /* ------------------------------------------------------------------ */
@@ -340,7 +95,6 @@ function MetricCard({ label, value, color, tooltip }: { label: string; value: st
   );
 }
 
-/** Spinning loader overlay for the chart area. */
 function ChartLoadingOverlay() {
   return (
     <div className="absolute inset-0 flex items-center justify-center bg-white/60 dark:bg-gray-900/60 z-10 rounded-lg">
@@ -356,7 +110,6 @@ function ChartLoadingOverlay() {
 /*  Main Component                                                     */
 /* ------------------------------------------------------------------ */
 
-/** Monte Carlo equity simulation with editable parameters and chart. */
 export function MonteCarloSimulator({ summary, tradePnls }: MonteCarloSimulatorProps) {
   const { user } = useAuth();
   const c = useChartColors();
@@ -364,34 +117,23 @@ export function MonteCarloSimulator({ summary, tradePnls }: MonteCarloSimulatorP
 
   const fallbackWinRate = useMemo(() => {
     if (!hasImportedTrades) return DEFAULT_WIN_RATE_PCT;
-    if (summary && Number.isFinite(summary.win_rate)) {
-      return summary.win_rate;
-    }
+    if (summary && Number.isFinite(summary.win_rate)) return summary.win_rate;
     return DEFAULT_WIN_RATE_PCT;
   }, [hasImportedTrades, summary]);
 
   const fallbackWinLossRatio = useMemo(() => {
     if (!hasImportedTrades) return DEFAULT_WIN_LOSS_RATIO_R;
-    if (
-      summary?.wl_ratio_r != null
-      && Number.isFinite(summary.wl_ratio_r)
-      && summary.wl_ratio_r >= 0
-    ) {
+    if (summary?.wl_ratio_r != null && Number.isFinite(summary.wl_ratio_r) && summary.wl_ratio_r >= 0) {
       return summary.wl_ratio_r;
     }
     return DEFAULT_WIN_LOSS_RATIO_R;
   }, [hasImportedTrades, summary]);
 
-  // ---- Parameters ----
-  const [startingEquity, setStartingEquity] = useState(
-    String(user?.starting_equity ?? DEFAULT_STARTING_EQUITY),
-  );
-  const [winRate, setWinRate] = useState(
-    fallbackWinRate.toFixed(1),
-  );
-  const [winLossRatio, setWinLossRatio] = useState(
-    fallbackWinLossRatio.toFixed(2),
-  );
+  // ---- Parameters (all string state for controlled inputs) ----
+  const [startingEquity, setStartingEquity] = useState(String(user?.starting_equity ?? DEFAULT_STARTING_EQUITY));
+  const [winRate, setWinRate] = useState(fallbackWinRate.toFixed(1));
+  const [winLossRatio, setWinLossRatio] = useState(fallbackWinLossRatio.toFixed(2));
+  const [numTrades, setNumTrades] = useState(String(DEFAULT_NUM_TRADES));
   const [avgRiskFixed, setAvgRiskFixed] = useState('200');
   const [avgRiskPct, setAvgRiskPct] = useState('1.0');
   const [minRisk, setMinRisk] = useState(
@@ -400,17 +142,15 @@ export function MonteCarloSimulator({ summary, tradePnls }: MonteCarloSimulatorP
       : '50',
   );
   const [riskMode, setRiskMode] = useState<'fixed' | 'percent'>('percent');
-  const [simMode, setSimMode] = useState<SimMode>(
-    hasImportedTrades ? 'bootstrap' : 'parametric',
-  );
+  const [simMode, setSimMode] = useState<SimMode>(hasImportedTrades ? 'bootstrap' : 'parametric');
 
+  // Sync win rate / W:L ratio when imported-trade data changes
   useEffect(() => {
     if (!hasImportedTrades) {
       setWinRate(DEFAULT_WIN_RATE_PCT.toFixed(1));
       setWinLossRatio(DEFAULT_WIN_LOSS_RATIO_R.toFixed(2));
       return;
     }
-
     setWinRate(fallbackWinRate.toFixed(1));
     setWinLossRatio(fallbackWinLossRatio.toFixed(2));
   }, [hasImportedTrades, fallbackWinRate, fallbackWinLossRatio]);
@@ -420,74 +160,79 @@ export function MonteCarloSimulator({ summary, tradePnls }: MonteCarloSimulatorP
   useEffect(() => {
     if (!prefilled.current && summary) {
       prefilled.current = true;
-      if (summary.avg_loser !== 0) {
-        setAvgRiskFixed(Math.abs(summary.avg_loser).toFixed(0));
-      }
+      if (summary.avg_loser !== 0) setAvgRiskFixed(Math.abs(summary.avg_loser).toFixed(0));
       if (summary.loss_per_share_avg != null && summary.loss_per_share_avg !== 0) {
         setMinRisk(Math.abs(summary.loss_per_share_avg).toFixed(0));
       }
     }
   }, [summary]);
 
-  // ---- Async simulation state ----
+  // ---- Simulation state ----
   const [simResult, setSimResult] = useState<SimResult | null>(null);
   const [simLoading, setSimLoading] = useState(false);
-  const [seed, setSeed] = useState(42);
-  const runIdRef = useRef(0); // to discard stale results
 
-  // Extract R-multiples (only trades that have initial risk) for bootstrap
+  // ---- Refs ----
+  const workerRef = useRef<Worker | null>(null);
+  const seedRef = useRef(42);
+  const paramsRef = useRef<WorkerParams>(null!);
+
+  // R-multiples for bootstrap mode
   const rMultiples = useMemo(
-    () => tradePnls
-      .filter((t) => t.r_multiple != null)
-      .map((t) => t.r_multiple as number),
+    () => tradePnls.filter((t) => t.r_multiple != null).map((t) => t.r_multiple as number),
     [tradePnls],
   );
 
-  // Debounce + run simulation when parameters change
-  useEffect(() => {
-    const id = ++runIdRef.current;
+  // Keep paramsRef up-to-date every render (cheap — just object allocation)
+  paramsRef.current = {
+    mode: simMode,
+    startingEquity: parseFloat(startingEquity) || DEFAULT_STARTING_EQUITY,
+    winRate: parseFloat(winRate) || DEFAULT_WIN_RATE_PCT,
+    winLossRatio: parseFloat(winLossRatio) || DEFAULT_WIN_LOSS_RATIO_R,
+    riskFixed: parseFloat(avgRiskFixed) || 200,
+    riskPct: parseFloat(avgRiskPct) || 1,
+    minRisk: parseFloat(minRisk) || 0,
+    riskMode,
+    rMultiples,
+    seed: seedRef.current,
+    numTrades: Math.max(10, Math.min(10000, parseInt(numTrades, 10) || DEFAULT_NUM_TRADES)),
+  };
+
+  // ---- Dispatch simulation to Web Worker ----
+  const dispatchSimulation = useCallback(() => {
     setSimLoading(true);
-
-    const se = parseFloat(startingEquity) || DEFAULT_STARTING_EQUITY;
-    const wr = parseFloat(winRate) || DEFAULT_WIN_RATE_PCT;
-    const wlr = parseFloat(winLossRatio) || DEFAULT_WIN_LOSS_RATIO_R;
-    const rf = parseFloat(avgRiskFixed) || 200;
-    const rp = parseFloat(avgRiskPct) || 1;
-    const mr = parseFloat(minRisk) || 0;
-
-    const timer = setTimeout(() => {
-      void runSimulationAsync({
-        mode: simMode,
-        startingEquity: se,
-        winRate: wr,
-        winLossRatio: wlr,
-        riskFixed: rf,
-        riskPct: rp,
-        minRisk: mr,
-        riskMode,
-        rMultiples,
-        seed,
-      }).then((result) => {
-        // Only apply if this is the latest run
-        if (id === runIdRef.current) {
-          setSimResult(result);
-          setSimLoading(false);
-        }
+    // Terminate any in-flight worker to avoid stale results
+    workerRef.current?.terminate();
+    const worker = createWorker();
+    workerRef.current = worker;
+    worker.onmessage = (e: MessageEvent<WorkerResult>) => {
+      startTransition(() => {
+        setSimResult(e.data);
+        setSimLoading(false);
       });
-    }, 400); // 400ms debounce — lets the user finish typing
+    };
+    worker.postMessage(paramsRef.current);
+  }, []);
 
-    return () => clearTimeout(timer);
-  }, [startingEquity, winRate, winLossRatio, avgRiskFixed, avgRiskPct, minRisk, riskMode, simMode, rMultiples, seed]);
+  // Run once automatically on mount
+  useEffect(() => {
+    dispatchSimulation();
+    return () => { workerRef.current?.terminate(); workerRef.current = null; };
+  }, [dispatchSimulation]);
 
-  // ---- Tooltip: only show average line info ----
+  // Button handler — new random seed, then dispatch
+  const handleNewSimulation = () => {
+    seedRef.current += 1;
+    paramsRef.current = { ...paramsRef.current, seed: seedRef.current };
+    dispatchSimulation();
+  };
+
+  // ---- Chart tooltip ----
   const renderTooltip = useCallback(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (props: any) => {
       const { active, payload, label } = props;
       if (!active || !payload?.length) return null;
-      const avg = payload.find(
-        (p: { dataKey: string }) => p.dataKey === 'avgEquity',
-      );
+      const avg = payload.find((p: { dataKey: string }) => p.dataKey === 'avgEquity');
       if (!avg) return null;
       return (
         <div
@@ -506,14 +251,15 @@ export function MonteCarloSimulator({ summary, tradePnls }: MonteCarloSimulatorP
     [c],
   );
 
-  // Simulation line keys
+  // Only generate keys for the display subset (matches worker MAX_DISPLAY_LINES)
   const simKeys = useMemo(
-    () => Array.from({ length: NUM_SIMULATIONS }, (_, i) => `sim_${i}`),
+    () => Array.from({ length: MAX_DISPLAY_LINES }, (_, i) => `sim_${i}`),
     [],
   );
 
   const chartData = simResult?.chartData ?? [];
   const metrics = simResult?.metrics;
+  const parsedNumTrades = Math.max(10, Math.min(1000, parseInt(numTrades, 10) || DEFAULT_NUM_TRADES));
 
   return (
     <div className="flex flex-col lg:flex-row gap-6">
@@ -526,9 +272,7 @@ export function MonteCarloSimulator({ summary, tradePnls }: MonteCarloSimulatorP
 
           {/* Simulation Mode */}
           <div>
-            <span className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
-              Mode
-            </span>
+            <span className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Mode</span>
             <div className="flex gap-2">
               <button
                 type="button"
@@ -581,7 +325,6 @@ export function MonteCarloSimulator({ summary, tradePnls }: MonteCarloSimulatorP
           {/* Parametric-only fields */}
           {simMode === 'parametric' && (
             <>
-              {/* Win Rate */}
               <div>
                 <label htmlFor="mc-winrate" className="block text-xs font-medium text-gray-600 dark:text-gray-400">
                   Win Rate (%)
@@ -597,8 +340,6 @@ export function MonteCarloSimulator({ summary, tradePnls }: MonteCarloSimulatorP
                   onChange={(e) => setWinRate(e.target.value)}
                 />
               </div>
-
-              {/* Win : Loss Ratio */}
               <div>
                 <label htmlFor="mc-wlratio" className="block text-xs font-medium text-gray-600 dark:text-gray-400">
                   Win : Loss Ratio (R)
@@ -616,11 +357,26 @@ export function MonteCarloSimulator({ summary, tradePnls }: MonteCarloSimulatorP
             </>
           )}
 
-          {/* Risk Mode Toggle — shared by both modes */}
+          {/* Number of Trades */}
           <div>
-            <span className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
-              Risk Per Trade
-            </span>
+            <label htmlFor="mc-numtrades" className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+              Number of Trades
+            </label>
+            <input
+              id="mc-numtrades"
+              type="number"
+              min="10"
+              max="1000"
+              step="10"
+              className="input-field mt-1 text-sm"
+              value={numTrades}
+              onChange={(e) => setNumTrades(e.target.value)}
+            />
+          </div>
+
+          {/* Risk Mode Toggle */}
+          <div>
+            <span className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Risk Per Trade</span>
             <div className="flex gap-2 mb-2">
               <button
                 type="button"
@@ -645,7 +401,6 @@ export function MonteCarloSimulator({ summary, tradePnls }: MonteCarloSimulatorP
                 % of Equity
               </button>
             </div>
-
             {riskMode === 'fixed' ? (
               <input
                 id="mc-risk-fixed"
@@ -672,7 +427,7 @@ export function MonteCarloSimulator({ summary, tradePnls }: MonteCarloSimulatorP
             )}
           </div>
 
-          {/* Minimum Risk — only shown in percent mode */}
+          {/* Minimum Risk — percent mode only */}
           {riskMode === 'percent' && (
             <div>
               <label htmlFor="mc-min-risk" className="block text-xs font-medium text-gray-600 dark:text-gray-400">
@@ -695,13 +450,13 @@ export function MonteCarloSimulator({ summary, tradePnls }: MonteCarloSimulatorP
 
           {/* Info */}
           <p className="text-[10px] text-gray-400 dark:text-gray-500 leading-tight">
-            {NUM_SIMULATIONS} simulations × {NUM_TRADES.toLocaleString()} trades each.
+            {NUM_SIMULATIONS} simulations × {parsedNumTrades.toLocaleString()} trades each.
           </p>
 
           {/* Run button */}
           <button
             type="button"
-            onClick={() => setSeed((s) => s + 1)}
+            onClick={handleNewSimulation}
             disabled={simLoading}
             className="w-full btn-primary py-2 text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
           >
@@ -734,24 +489,24 @@ export function MonteCarloSimulator({ summary, tradePnls }: MonteCarloSimulatorP
                 />
                 <Tooltip content={renderTooltip} />
 
-                {/* Individual simulation lines — thin, semi-transparent */}
+                {/* Individual simulation lines — limited subset for perf */}
                 {simKeys.map((key) => (
                   <Line
                     key={key}
-                    type="monotone"
+                    type="linear"
                     dataKey={key}
                     stroke={c.isDark ? '#6366f1' : '#818cf8'}
                     strokeWidth={0.5}
-                    strokeOpacity={0.15}
+                    strokeOpacity={0.5}
                     dot={false}
                     isAnimationActive={false}
                     activeDot={false}
                   />
                 ))}
 
-                {/* Average equity line — bold, on top */}
+                {/* Average equity line */}
                 <Line
-                  type="monotone"
+                  type="linear"
                   dataKey="avgEquity"
                   stroke="#f59e0b"
                   strokeWidth={2.5}
@@ -791,13 +546,13 @@ export function MonteCarloSimulator({ summary, tradePnls }: MonteCarloSimulatorP
                 label="Biggest Max DD"
                 value={`${formatPercent(metrics.biggestMaxDrawdownPct, 1)} (${formatCurrency(metrics.biggestMaxDrawdown)})`}
                 color="pnl-negative"
-                tooltip="Largest peak-to-trough drawdown observed across all simulations, as % of starting equity."
+                tooltip="Largest peak-to-trough drawdown observed across all simulations, as % of the running high-water mark."
               />
               <MetricCard
                 label="Avg Max Drawdown"
                 value={`${formatPercent(metrics.avgMaxDrawdownPct, 1)} (${formatCurrency(metrics.avgMaxDrawdown)})`}
                 color="pnl-negative"
-                tooltip="Average of the maximum drawdown from each simulation run, as % of starting equity."
+                tooltip="Average of the maximum drawdown from each simulation run, as % of the running high-water mark."
               />
               <MetricCard
                 label="Min Equity"
