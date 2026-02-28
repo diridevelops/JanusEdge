@@ -55,14 +55,14 @@ export function StatsGrid({ summary, isLoading }: StatsGridProps) {
       <StatsCard
         label="Win Rate"
         value={formatPercent(summary.win_rate)}
-        valueColor={summary.win_rate >= 50 ? 'text-profit' : 'text-loss'}
-        tooltip="Winners ÷ Total Trades × 100"
+        valueColor={'text-gray-700 dark:text-gray-300'}
+        tooltip="Winners ÷ # Trades × 100"
       />
       <StatsCard
         label="APPT"
         value={formatCurrency(summary.appt)}
         valueColor={summary.appt >= 0 ? 'text-profit' : 'text-loss'}
-        tooltip="Average Profitability Per Trade\nTotal Net P&L ÷ Total Trades"
+        tooltip="Average Profitability Per Trade\nTotal Net P&L ÷ # Trades"
       />
       <StatsCard
         label="W:L Ratio (R)"
@@ -88,7 +88,7 @@ export function StatsGrid({ summary, isLoading }: StatsGridProps) {
             ? 'text-profit'
             : 'text-loss'
         }
-        tooltip="Average R-multiple per trade\nComputed only on trades with defined initial risk\nFormula: Win Rate × Avg Win R − (1 − Win Rate) × Avg Loss R"
+        tooltip="Average R-multiple per trade\nTotal R-multiple ÷ # Trades\nComputed only on trades with defined initial risk"
       />
       <StatsCard
         label="Win / Share Avg"
