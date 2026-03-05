@@ -18,6 +18,7 @@ import { RegisterPage } from './pages/RegisterPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { TradeDetailPage } from './pages/TradeDetailPage';
 import { TradeListPage } from './pages/TradeListPage';
+import { WhatIfPage } from './pages/WhatIfPage';
 
 /**
  * Root application component with routing and context providers.
@@ -50,6 +51,7 @@ export default function App() {
                     <Route path="/import" element={<ImportPage />} />
                     <Route path="/analytics" element={<AnalyticsPage />} />
                     <Route path="/calendar" element={<CalendarPage />} />
+                    <Route path="/whatif" element={<WhatIfPage />} />
                     <Route path="/settings" element={<SettingsPage />} />
                   </Route>
 

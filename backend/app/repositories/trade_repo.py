@@ -125,3 +125,16 @@ class TradeRepository(BaseRepository):
             },
             limit=50,
         )
+
+    def distinct_symbols(
+        self, user_id: str
+    ) -> List[str]:
+        """Return sorted distinct symbols for a user's closed trades."""
+        symbols = self.collection.distinct(
+            "symbol",
+            {
+                "user_id": ObjectId(user_id),
+                "status": "closed",
+            },
+        )
+        return sorted(symbols)

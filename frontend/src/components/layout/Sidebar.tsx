@@ -1,6 +1,7 @@
 import {
     BarChart3,
     Calendar,
+    FlaskConical,
     LayoutDashboard,
     List,
     PlusCircle,
@@ -16,6 +17,7 @@ const navItems = [
   { to: '/import', label: 'Import', icon: Upload },
   { to: '/analytics', label: 'Analytics', icon: BarChart3 },
   { to: '/calendar', label: 'Calendar', icon: Calendar },
+  { to: '/whatif', label: 'What-if', icon: FlaskConical },
   { to: '/settings', label: 'Settings', icon: Settings },
 ];
 

@@ -330,6 +330,10 @@ class TradeService:
             source="manual",
         )
 
+        # Auto-populate target_price for winners
+        if net_pnl > 0:
+            trade_doc["target_price"] = exit_price
+
         # Handle tags
         tag_names = data.get("tags", [])
         if tag_names:
@@ -399,6 +403,50 @@ class TradeService:
                 ObjectId(tid) for tid in data["tag_ids"]
             ]
 
+        if "wish_stop_price" in data:
+            updates["wish_stop_price"] = data[
+                "wish_stop_price"
+            ]
+        if "target_price" in data:
+            updates["target_price"] = data[
+                "target_price"
+            ]
+
+        # Auto-manage wicked-out tag based on wish_stop_price
+        if "wish_stop_price" in data:
+            current_tag_ids = updates.get(
+                "tag_ids",
+                list(trade.get("tag_ids", [])),
+            )
+            wo_tag = self.tag_repo.find_by_name(
+                user_id, "wicked-out"
+            )
+            if data["wish_stop_price"] is not None:
+                # Add wicked-out tag if not present
+                if not wo_tag:
+                    from app.models.tag import (
+                        create_tag_doc,
+                    )
+
+                    doc = create_tag_doc(
+                        user_id=ObjectId(user_id),
+                        name="wicked-out",
+                        category="custom",
+                        color="#ef4444",
+                    )
+                    wo_id = self.tag_repo.insert_one(doc)
+                    wo_oid = ObjectId(wo_id)
+                else:
+                    wo_oid = wo_tag["_id"]
+                if wo_oid not in current_tag_ids:
+                    current_tag_ids.append(wo_oid)
+                    updates["tag_ids"] = current_tag_ids
+            else:
+                # Remove wicked-out tag if present
+                if wo_tag and wo_tag["_id"] in current_tag_ids:
+                    current_tag_ids.remove(wo_tag["_id"])
+                    updates["tag_ids"] = current_tag_ids
+
         if updates:
             updates["updated_at"] = utc_now()
             self.trade_repo.update_one(
@@ -463,6 +511,10 @@ class TradeService:
             self.trade_repo.serialize_doc(t)
             for t in trades
         ]
+
+    def list_symbols(self, user_id: str) -> list:
+        """Return distinct symbols for a user's closed trades."""
+        return self.trade_repo.distinct_symbols(user_id)
 
     def _resolve_tags(
         self, user_id: str, tag_names: list

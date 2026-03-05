@@ -44,3 +44,5 @@ class UpdateTradeSchema(Schema):
     pre_trade_notes = fields.Str(allow_none=True)
     post_trade_notes = fields.Str(allow_none=True)
     tag_ids = fields.List(fields.Str())
+    wish_stop_price = fields.Float(allow_none=True)
+    target_price = fields.Float(allow_none=True)

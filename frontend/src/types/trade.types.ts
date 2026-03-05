@@ -26,6 +26,8 @@ export interface Trade {
   strategy: string | null;
   pre_trade_notes: string | null;
   post_trade_notes: string | null;
+  wish_stop_price: number | null;
+  target_price: number | null;
   attachments: string[];
   created_at: string;
   updated_at: string;
@@ -57,4 +59,6 @@ export interface UpdateTradeRequest {
   pre_trade_notes?: string | null;
   post_trade_notes?: string | null;
   tag_ids?: string[];
+  wish_stop_price?: number | null;
+  target_price?: number | null;
 }

@@ -6,6 +6,7 @@ import { getOHLC } from '../api/marketData.api';
 import { deleteTrade, getTrade } from '../api/trades.api';
 import { CandlestickChart } from '../components/charts/CandlestickChart';
 import { ExecutionList } from '../components/trade/ExecutionList';
+import { StopAnalysisFields } from '../components/trade/StopAnalysisFields';
 import { TagSelector } from '../components/trade/TagSelector';
 import { TradeMedia } from '../components/trade/TradeMedia';
 import { TradeNotes } from '../components/trade/TradeNotes';
@@ -283,6 +284,15 @@ export function TradeDetailPage() {
         <div className="card w-full lg:w-28 lg:self-stretch flex flex-col min-h-0 lg:max-h-[none]">
           <TradeMedia tradeId={trade.id} compact />
         </div>
+      </div>
+
+      {/* Wishful stop & Target price */}
+      <div className="card p-4">
+        <StopAnalysisFields
+          tradeId={trade.id}
+          trade={trade}
+          onSaved={fetchTrade}
+        />
       </div>
 
       {/* Lower section: Executions + Notes/Tags */}

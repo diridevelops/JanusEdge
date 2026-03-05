@@ -209,7 +209,9 @@ class MarketDataService:
 
         grouped = {}
         for bar in ohlc_data:
-            bar_date = date.fromtimestamp(bar["time"])
+            bar_date = dt.datetime.fromtimestamp(
+                bar["time"], tz=dt.timezone.utc
+            ).date()
             if bar_date not in grouped:
                 grouped[bar_date] = []
             grouped[bar_date].append(bar)

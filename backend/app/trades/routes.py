@@ -155,3 +155,12 @@ def search_trades():
 
     trades = trade_service.search_trades(user_id, query)
     return jsonify({"trades": trades}), 200
+
+
+@trades_bp.route("/symbols", methods=["GET"])
+@jwt_required()
+def list_symbols():
+    """Return distinct symbols from user's closed trades."""
+    user_id = get_jwt_identity()
+    symbols = trade_service.list_symbols(user_id)
+    return jsonify({"symbols": symbols}), 200

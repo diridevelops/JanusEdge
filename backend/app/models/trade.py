@@ -84,6 +84,8 @@ def create_trade_doc(
         "strategy": None,
         "pre_trade_notes": None,
         "post_trade_notes": None,
+        "wish_stop_price": None,
+        "target_price": None,
         "attachments": [],
         "created_at": now,
         "updated_at": now,

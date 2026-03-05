@@ -325,6 +325,13 @@ class ImportService:
                 execution_count=trade.execution_count,
                 source="imported",
             )
+
+            # Auto-populate target_price for winners
+            if net_pnl > 0:
+                trade_doc["target_price"] = (
+                    trade.avg_exit_price
+                )
+
             trade_id = self.trade_repo.insert_one(
                 trade_doc
             )

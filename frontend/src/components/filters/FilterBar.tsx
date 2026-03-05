@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { listAccounts } from '../../api/accounts.api';
 import { listTags } from '../../api/tags.api';
+import { getSymbols } from '../../api/trades.api';
 import type { TradeAccount } from '../../types/account.types';
 import type { Tag } from '../../types/marketData.types';
 
@@ -18,12 +19,15 @@ interface FilterBarProps {
   onFilterChange: (key: string, value: string) => void;
   /** Callback to clear all filters. */
   onClearFilters: () => void;
+  /** When true, a symbol must be selected (no "All" option). */
+  requireSymbol?: boolean;
 }
 
 /** Global filter toolbar for trade list and analytics pages. */
-export function FilterBar({ filters, onFilterChange, onClearFilters }: FilterBarProps) {
+export function FilterBar({ filters, onFilterChange, onClearFilters, requireSymbol = false }: FilterBarProps) {
   const [accounts, setAccounts] = useState<TradeAccount[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
+  const [symbols, setSymbols] = useState<string[]>([]);
 
   useEffect(() => {
     listAccounts()
@@ -32,7 +36,16 @@ export function FilterBar({ filters, onFilterChange, onClearFilters }: FilterBar
     listTags()
       .then(setTags)
       .catch(() => {});
-  }, []);
+    getSymbols()
+      .then((syms) => {
+        setSymbols(syms);
+        // Auto-select first symbol when required and none selected
+        if (requireSymbol && !filters.symbol && syms.length > 0) {
+          onFilterChange('symbol', syms[0]!);
+        }
+      })
+      .catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const hasActiveFilters = Object.values(filters).some((v) => v !== '');
 
@@ -43,14 +56,19 @@ export function FilterBar({ filters, onFilterChange, onClearFilters }: FilterBar
         <label htmlFor="filter-symbol" className="block text-xs font-medium text-gray-500 mb-1 dark:text-gray-400">
           Symbol
         </label>
-        <input
+        <select
           id="filter-symbol"
-          type="text"
-          placeholder="e.g. NQ, ES"
           value={filters.symbol}
           onChange={(e) => onFilterChange('symbol', e.target.value)}
           className="input-field w-28 text-sm"
-        />
+        >
+          {!requireSymbol && <option value="">All</option>}
+          {symbols.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
       </div>
 
       {/* Side */}

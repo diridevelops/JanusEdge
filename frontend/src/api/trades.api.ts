@@ -71,3 +71,9 @@ export async function searchTrades(
   });
   return res.data.trades;
 }
+
+/** Get distinct symbols from user's closed trades. */
+export async function getSymbols(): Promise<string[]> {
+  const res = await apiClient.get<{ symbols: string[] }>('/trades/symbols');
+  return res.data.symbols;
+}
