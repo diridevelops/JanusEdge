@@ -18,6 +18,16 @@ import type { ChartInterval, OHLCDataPoint } from '../types/marketData.types';
 import type { Trade } from '../types/trade.types';
 import { formatCurrency, formatDateTime, formatDuration } from '../utils/formatters';
 
+const ALL_INTERVALS: ChartInterval[] = ['1m', '5m', '15m', '1h'];
+
+/** Pick the most relevant chart interval based on trade duration. */
+function bestInterval(holdingSeconds: number): ChartInterval {
+  if (holdingSeconds < 20 * 60) return '1m';
+  if (holdingSeconds < 60 * 60) return '5m';
+  if (holdingSeconds < 4 * 60 * 60) return '15m';
+  return '1h';
+}
+
 /** Trade detail page — chart, executions, notes, tags. */
 export function TradeDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -27,7 +37,7 @@ export function TradeDetailPage() {
 
   const [trade, setTrade] = useState<Trade | null>(null);
   const [executions, setExecutions] = useState<Execution[]>([]);
-  const [ohlcData, setOhlcData] = useState<OHLCDataPoint[]>([]);
+  const [ohlcMap, setOhlcMap] = useState<Record<string, OHLCDataPoint[]>>({});
   const [interval, setInterval] = useState<ChartInterval>('5m');
   const [isLoading, setIsLoading] = useState(true);
   const [isChartLoading, setIsChartLoading] = useState(false);
@@ -51,7 +61,7 @@ export function TradeDetailPage() {
     }
   }, [id, addToast, navigate]);
 
-  const fetchChart = useCallback(async (forceRefresh: boolean = false) => {
+  const fetchAllCharts = useCallback(async (forceRefresh: boolean = false) => {
     if (!trade) return false;
     setIsChartLoading(true);
     let succeeded = true;
@@ -67,10 +77,7 @@ export function TradeDetailPage() {
           first.getUTCFullYear(),
           first.getUTCMonth(),
           first.getUTCDate(),
-          0,
-          0,
-          0,
-          0
+          0, 0, 0, 0
         )
       );
 
@@ -79,33 +86,43 @@ export function TradeDetailPage() {
           last.getUTCFullYear(),
           last.getUTCMonth(),
           last.getUTCDate() + 1,
-          0,
-          0,
-          0,
-          0
+          0, 0, 0, 0
         )
       );
 
-      const data = await getOHLC({
-        symbol: trade.symbol,
-        interval,
-        start: dayStart.toISOString(),
-        end: dayEnd.toISOString(),
-        force_refresh: forceRefresh,
-      });
-      setOhlcData(data);
+      const results = await Promise.all(
+        ALL_INTERVALS.map(async (iv) => {
+          try {
+            const data = await getOHLC({
+              symbol: trade.symbol,
+              interval: iv,
+              start: dayStart.toISOString(),
+              end: dayEnd.toISOString(),
+              force_refresh: forceRefresh,
+            });
+            return [iv, data] as const;
+          } catch {
+            return [iv, [] as OHLCDataPoint[]] as const;
+          }
+        })
+      );
+
+      const map: Record<string, OHLCDataPoint[]> = {};
+      for (const [iv, data] of results) {
+        map[iv] = data;
+      }
+      setOhlcMap(map);
     } catch {
-      // Chart data may not be available for all symbols
       succeeded = false;
-      setOhlcData([]);
+      setOhlcMap({});
     } finally {
       setIsChartLoading(false);
     }
     return succeeded;
-  }, [trade, interval]);
+  }, [trade]);
 
   async function handleRefreshChartData() {
-    const ok = await fetchChart(true);
+    const ok = await fetchAllCharts(true);
     if (ok) {
       addToast('success', 'Market data refreshed');
     } else {
@@ -119,9 +136,10 @@ export function TradeDetailPage() {
 
   useEffect(() => {
     if (trade) {
-      fetchChart();
+      setInterval(bestInterval(trade.holding_time_seconds));
+      fetchAllCharts();
     }
-  }, [trade, fetchChart]);
+  }, [trade, fetchAllCharts]);
 
   async function handleDelete() {
     if (!id || !confirm('Delete this trade? It can be restored later.')) return;
@@ -269,7 +287,7 @@ export function TradeDetailPage() {
             </button>
           </div>
           <CandlestickChart
-            ohlcData={ohlcData}
+            ohlcData={ohlcMap[interval] ?? []}
             executions={executions}
             interval={interval}
             onIntervalChange={setInterval}
