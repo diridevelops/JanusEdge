@@ -206,7 +206,12 @@ class AnalyticsService:
                     "losers": {
                         "$sum": {
                             "$cond": [
-                                {"$lt": ["$net_pnl", 0]},
+                                {
+                                    "$and": [
+                                        {"$lt": ["$net_pnl", 0]},
+                                        {"$ne": ["$gross_pnl", 0]},
+                                    ]
+                                },
                                 1,
                                 0,
                             ]
@@ -238,7 +243,12 @@ class AnalyticsService:
                     "sum_losers": {
                         "$sum": {
                             "$cond": [
-                                {"$lt": ["$net_pnl", 0]},
+                                {
+                                    "$and": [
+                                        {"$lt": ["$net_pnl", 0]},
+                                        {"$ne": ["$gross_pnl", 0]},
+                                    ]
+                                },
                                 "$net_pnl",
                                 0,
                             ]
@@ -288,9 +298,9 @@ class AnalyticsService:
                         "$sum": {
                             "$cond": [
                                 {
-                                    "$lt": [
-                                        "$net_pnl",
-                                        0,
+                                    "$and": [
+                                        {"$lt": ["$net_pnl", 0]},
+                                        {"$ne": ["$gross_pnl", 0]},
                                     ]
                                 },
                                 "$pnl_per_contract",
@@ -302,9 +312,9 @@ class AnalyticsService:
                         "$min": {
                             "$cond": [
                                 {
-                                    "$lt": [
-                                        "$net_pnl",
-                                        0,
+                                    "$and": [
+                                        {"$lt": ["$net_pnl", 0]},
+                                        {"$ne": ["$gross_pnl", 0]},
                                     ]
                                 },
                                 "$pnl_per_contract",
