@@ -108,6 +108,8 @@ def _build_match(
             match["symbol"] = symbol
     if filters.get("side"):
         match["side"] = filters["side"]
+    if filters.get("tag"):
+        match["tag_ids"] = ObjectId(filters["tag"])
     if filters.get("date_from"):
         match.setdefault("exit_time", {})
         match["exit_time"]["$gte"] = _parse_date_from(
@@ -375,7 +377,9 @@ class WhatIfService:
         )
 
         original_pnls: List[float] = []
+        original_grosses: List[float] = []
         whatif_pnls: List[float] = []
+        whatif_grosses: List[float] = []
         original_rs: List[float] = []
         whatif_rs: List[float] = []
         details: List[Dict[str, Any]] = []
@@ -391,6 +395,7 @@ class WhatIfService:
             symbol = t.get("symbol", "")
             qty = t.get("total_quantity", 0)
             fee = t.get("fee", 0)
+            gross_pnl = t.get("gross_pnl", net_pnl + fee)
             initial_risk = t.get("initial_risk", 0)
             entry_time = t.get("entry_time")
             widened_risk = (
@@ -400,14 +405,17 @@ class WhatIfService:
             )
 
             original_pnls.append(net_pnl)
+            original_grosses.append(gross_pnl)
             if initial_risk > 0:
                 original_rs.append(net_pnl / initial_risk)
 
             if net_pnl >= 0:
                 # Winner — keep P&L, widen initial risk
                 whatif_pnls.append(net_pnl)
+                whatif_grosses.append(gross_pnl)
                 if widened_risk:
                     whatif_rs.append(net_pnl / widened_risk)
+                skipped += 1
                 details.append({
                     "trade_id": str(t["_id"]),
                     "symbol": symbol,
@@ -429,6 +437,7 @@ class WhatIfService:
             if target is None:
                 # No target — keep P&L
                 whatif_pnls.append(net_pnl)
+                whatif_grosses.append(gross_pnl)
                 if widened_risk:
                     whatif_rs.append(net_pnl / widened_risk)
                 skipped += 1
@@ -457,6 +466,7 @@ class WhatIfService:
             if price_risk == 0:
                 # Breakeven — can't compute R
                 whatif_pnls.append(net_pnl)
+                whatif_grosses.append(gross_pnl)
                 if widened_risk:
                     whatif_rs.append(net_pnl / widened_risk)
                 skipped += 1
@@ -500,7 +510,6 @@ class WhatIfService:
                         and new_stop <= wish_stop)
                 )
                 if stop_definitely_hit:
-                    simulated += 1
                     if side == "Long":
                         gross = ((new_stop - entry)
                                  * qty * point_value)
@@ -508,7 +517,12 @@ class WhatIfService:
                         gross = ((entry - new_stop)
                                  * qty * point_value)
                     new_pnl = round(gross - fee, 2)
+                    if new_pnl > 0:
+                        converted += 1
+                    else:
+                        simulated += 1
                     whatif_pnls.append(new_pnl)
+                    whatif_grosses.append(round(new_pnl + fee, 2))
                     if widened_risk:
                         whatif_rs.append(new_pnl / widened_risk)
                     details.append({
@@ -524,7 +538,7 @@ class WhatIfService:
                             net_pnl, 2
                         ),
                         "new_pnl": new_pnl,
-                        "converted": False,
+                        "converted": new_pnl > 0,
                         "status": "simulated",
                     })
                     continue
@@ -553,6 +567,7 @@ class WhatIfService:
 
             if ohlc_interval is None:
                 whatif_pnls.append(net_pnl)
+                whatif_grosses.append(gross_pnl)
                 if widened_risk:
                     whatif_rs.append(net_pnl / widened_risk)
                 skipped += 1
@@ -589,6 +604,7 @@ class WhatIfService:
             if new_pnl is None:
                 # Bars don't cover trade entry — skip
                 whatif_pnls.append(net_pnl)
+                whatif_grosses.append(gross_pnl)
                 if widened_risk:
                     whatif_rs.append(net_pnl / widened_risk)
                 skipped += 1
@@ -608,12 +624,14 @@ class WhatIfService:
                 })
                 continue
 
-            simulated += 1
             was_converted = new_pnl > net_pnl
             if was_converted and new_pnl > 0:
                 converted += 1
+            else:
+                simulated += 1
 
             whatif_pnls.append(new_pnl)
+            whatif_grosses.append(round(new_pnl + fee, 2))
             if widened_risk:
                 whatif_rs.append(new_pnl / widened_risk)
             details.append({
@@ -634,10 +652,14 @@ class WhatIfService:
 
         result = {
             "original": self._compute_metrics(
-                original_pnls, original_rs
+                original_pnls,
+                original_rs,
+                original_grosses,
             ),
             "what_if": self._compute_metrics(
-                whatif_pnls, whatif_rs
+                whatif_pnls,
+                whatif_rs,
+                whatif_grosses,
             ),
             "trades_total": len(trades),
             "trades_converted": converted,
@@ -792,6 +814,7 @@ class WhatIfService:
     def _compute_metrics(
         pnls: List[float],
         r_values: Optional[List[float]] = None,
+        gross_values: Optional[List[float]] = None,
     ) -> Dict[str, Any]:
         """Compute summary metrics from P&L list.
 
@@ -811,9 +834,26 @@ class WhatIfService:
                 "profit_factor": 0,
                 "expectancy_r": None,
             }
+
+        loss_filter = []
+        for idx, pnl in enumerate(pnls):
+            gross = (
+                gross_values[idx]
+                if gross_values is not None
+                and idx < len(gross_values)
+                else pnl
+            )
+            loss_filter.append(
+                pnl < 0 and gross != 0
+            )
+
         total = sum(pnls)
         wins = [p for p in pnls if p > 0]
-        losses = [p for p in pnls if p < 0]
+        losses = [
+            pnl
+            for idx, pnl in enumerate(pnls)
+            if loss_filter[idx]
+        ]
         win_rate = (
             len(wins) / len(pnls) * 100
             if pnls

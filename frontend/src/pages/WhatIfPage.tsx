@@ -42,15 +42,26 @@ function DeltaCell({
   isCurrency = false,
   suffix = '',
 }: {
-  value: number;
+  value: number | null;
   isCurrency?: boolean;
   suffix?: string;
 }) {
+  if (value == null) {
+    return <span className="text-gray-500">—</span>;
+  }
+
   const positive = value > 0;
   const cls = positive ? 'pnl-positive' : value < 0 ? 'pnl-negative' : 'text-gray-500';
-  const text = isCurrency
-    ? `${positive ? '+' : ''}${formatCurrency(value)}`
-    : `${positive ? '+' : ''}${value.toFixed(2)}${suffix}`;
+  let text: string;
+
+  if (!Number.isFinite(value)) {
+    text = value > 0 ? '+Inf' : value < 0 ? '-Inf' : '0.00';
+  } else {
+    text = isCurrency
+      ? `${positive ? '+' : ''}${formatCurrency(value)}`
+      : `${positive ? '+' : ''}${value.toFixed(2)}${suffix}`;
+  }
+
   return <span className={cls}>{text}</span>;
 }
 
@@ -69,7 +80,7 @@ function getSimulationStatusLabel(status: string) {
     case 'simulated':
       return 'Simulated';
     case 'winner':
-      return 'Winner';
+      return 'Winner: nothing to do';
     default:
       return status;
   }
@@ -609,7 +620,7 @@ export function WhatIfPage() {
                         </td>
                       </tr>
                       <tr className="border-b border-gray-100 dark:border-gray-700/50">
-                        <td className="px-4 py-2 text-gray-700 dark:text-gray-300">Avg P&L</td>
+                        <td className="px-4 py-2 text-gray-700 dark:text-gray-300">APPT</td>
                         <td className="px-4 py-2 text-right">{formatCurrency(simResult.original.avg_pnl)}</td>
                         <td className="px-4 py-2 text-right">{formatCurrency(simResult.whatIf.avg_pnl)}</td>
                         <td className="px-4 py-2 text-right">
@@ -629,9 +640,7 @@ export function WhatIfPage() {
                         <td className="px-4 py-2 text-right">{String(simResult.original.profit_factor)}</td>
                         <td className="px-4 py-2 text-right">{String(simResult.whatIf.profit_factor)}</td>
                         <td className="px-4 py-2 text-right">
-                          <span className={simResult.delta.profit_factor_improved ? 'pnl-positive' : 'pnl-negative'}>
-                            {simResult.delta.profit_factor_improved ? '↑ Improved' : '↓ Declined'}
-                          </span>
+                          <DeltaCell value={simResult.delta.profit_factor} />
                         </td>
                       </tr>
                       <tr className="border-b border-gray-100 dark:border-gray-700/50">

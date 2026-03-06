@@ -1,6 +1,9 @@
 """Tests for What-If API routes."""
 
+from datetime import datetime, timezone
+
 import pytest
+from bson import ObjectId
 
 from app import create_app
 from config import TestingConfig
@@ -285,6 +288,114 @@ class TestSimulate:
         assert data["trades_skipped"] >= 1
         d = data["details"][0]
         assert d["status"] in ("no_target", "no_risk")
+
+    def test_winners_are_skipped_and_converted_are_not_simulated(
+        self, client, app
+    ):
+        """Winner trades count as skipped; converted trades do not."""
+        token = _register_and_login(client)
+        _create_trade(
+            client, token,
+            exit_price=5010.0,
+        )
+        loser = _create_trade(client, token)
+
+        update_resp = client.put(
+            f"/api/trades/{loser['id']}",
+            json={"target_price": 5005.0},
+            headers=_auth(token),
+        )
+        assert update_resp.status_code == 200
+
+        with app.app_context():
+            from app.extensions import mongo
+
+            mongo.db.market_data_cache.insert_one({
+                "symbol": "MES=F",
+                "interval": "1m",
+                "date": datetime(2026, 1, 5),
+                "ohlc": [
+                    {
+                        "time": int(
+                            datetime(
+                                2026,
+                                1,
+                                5,
+                                10,
+                                0,
+                                tzinfo=timezone.utc,
+                            ).timestamp()
+                        ),
+                        "open": 5000.0,
+                        "high": 5006.0,
+                        "low": 4990.0,
+                        "close": 5004.0,
+                    }
+                ],
+                "bar_count": 1,
+                "fetched_at": datetime(2026, 1, 5),
+                "source": "test",
+            })
+
+        resp = client.post(
+            "/api/whatif/simulate?symbol=MES",
+            json={"r_widening": 0.5},
+            headers=_auth(token),
+        )
+        assert resp.status_code == 200
+
+        data = resp.get_json()
+        assert data["trades_total"] == 2
+        assert data["trades_converted"] == 1
+        assert data["trades_simulated"] == 0
+        assert data["trades_skipped"] == 1
+
+        winner_detail = next(
+            d for d in data["details"]
+            if d["status"] == "winner"
+        )
+        converted_detail = next(
+            d for d in data["details"]
+            if d["trade_id"] == loser["id"]
+        )
+        assert winner_detail["converted"] is False
+        assert converted_detail["converted"] is True
+
+    def test_simulate_filters_by_tag(self, client, app):
+        """Simulation respects the selected tag filter."""
+        token = _register_and_login(client)
+        tagged_trade = _create_trade(
+            client, token, exit_price=5010.0
+        )
+        _create_trade(client, token)
+
+        with app.app_context():
+            from app.extensions import mongo
+
+            tagged_trade_doc = mongo.db.trades.find_one({
+                "_id": ObjectId(tagged_trade["id"])
+            })
+            tag_id = ObjectId()
+            mongo.db.tags.insert_one({
+                "_id": tag_id,
+                "user_id": tagged_trade_doc["user_id"],
+                "name": "focus",
+            })
+            mongo.db.trades.update_one(
+                {"_id": ObjectId(tagged_trade["id"] )},
+                {"$set": {"tag_ids": [tag_id]}},
+            )
+
+        resp = client.post(
+            f"/api/whatif/simulate?symbol=MES&tag={tag_id}",
+            json={"r_widening": 0.5},
+            headers=_auth(token),
+        )
+        assert resp.status_code == 200
+
+        data = resp.get_json()
+        assert data["trades_total"] == 1
+        assert data["details"][0]["trade_id"] == tagged_trade["id"]
 
     def test_requires_auth(self, client):
         """Returns 401 without token."""

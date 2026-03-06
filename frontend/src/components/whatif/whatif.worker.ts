@@ -46,7 +46,7 @@ export interface WorkerOutput {
     expectancy_r: number | null;
     winners_change: number;
     losers_change: number;
-    profit_factor_improved: boolean;
+    profit_factor: number | null;
   };
   tradesTotal: number;
   tradesConverted: number;
@@ -58,11 +58,37 @@ export interface WorkerOutput {
   skippedDetails: SimDetail[];
 }
 
-self.onmessage = (e: MessageEvent<WorkerInput>) => {
-  const { original, what_if, details, trades_total, trades_converted, trades_simulated, trades_skipped } = e.data;
+function parseProfitFactor(value: number | string): number | null {
+  if (typeof value === 'number') {
+    return value;
+  }
+  if (value === 'Inf') {
+    return Number.POSITIVE_INFINITY;
+  }
+  return null;
+}
 
-  const origPF = typeof original.profit_factor === 'number' ? original.profit_factor : 0;
-  const whatIfPF = typeof what_if.profit_factor === 'number' ? what_if.profit_factor : 0;
+self.onmessage = (e: MessageEvent<WorkerInput>) => {
+  const { original, what_if, details, trades_total } = e.data;
+
+  const origPF = parseProfitFactor(original.profit_factor);
+  const whatIfPF = parseProfitFactor(what_if.profit_factor);
+  const profitFactorDelta =
+    origPF === null || whatIfPF === null
+      ? null
+      : Number.isFinite(origPF) && Number.isFinite(whatIfPF)
+        ? whatIfPF - origPF
+        : origPF === whatIfPF
+          ? 0
+          : whatIfPF - origPF;
+
+  const convertedDetails = details.filter((d) => d.converted);
+  const simulatedDetails = details.filter(
+    (d) => d.status === 'simulated' && !d.converted,
+  );
+  const skippedDetails = details.filter(
+    (d) => d.status !== 'simulated' && !d.converted,
+  );
 
   const delta = {
     total_pnl: what_if.total_pnl - original.total_pnl,
@@ -74,25 +100,17 @@ self.onmessage = (e: MessageEvent<WorkerInput>) => {
         : null,
     winners_change: what_if.total_winners - original.total_winners,
     losers_change: what_if.total_losers - original.total_losers,
-    profit_factor_improved: whatIfPF > origPF,
+    profit_factor: profitFactorDelta,
   };
-
-  const convertedDetails = details.filter((d) => d.converted);
-  const simulatedDetails = details.filter(
-    (d) => d.status === 'simulated' && !d.converted,
-  );
-  const skippedDetails = details.filter(
-    (d) => !d.converted && d.status !== 'simulated' && d.status !== 'winner',
-  );
 
   self.postMessage({
     original,
     whatIf: what_if,
     delta,
     tradesTotal: trades_total,
-    tradesConverted: trades_converted,
-    tradesSimulated: trades_simulated,
-    tradesSkipped: trades_skipped,
+    tradesConverted: convertedDetails.length,
+    tradesSimulated: simulatedDetails.length,
+    tradesSkipped: skippedDetails.length,
     allDetails: details,
     convertedDetails,
     simulatedDetails,

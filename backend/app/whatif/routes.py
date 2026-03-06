@@ -23,6 +23,7 @@ def _parse_filters() -> dict:
         "account": request.args.get("account"),
         "symbol": request.args.get("symbol"),
         "side": request.args.get("side"),
+        "tag": request.args.get("tag"),
         "date_from": request.args.get("date_from"),
         "date_to": request.args.get("date_to"),
     }
@@ -42,6 +43,7 @@ def stop_analysis():
         symbol: Required instrument filter.
         account: Optional trade account ID.
         side: Optional side filter (Long/Short).
+        tag: Optional tag filter.
         date_from: ISO date string for range start.
         date_to: ISO date string for range end.
 
@@ -70,6 +72,7 @@ def wicked_out_trades():
         symbol: Optional instrument filter.
         account: Optional trade account ID.
         side: Optional side filter.
+        tag: Optional tag filter.
         date_from: ISO date string for range start.
         date_to: ISO date string for range end.
 
@@ -101,6 +104,7 @@ def simulate():
         symbol: Optional instrument filter.
         account: Optional trade account ID.
         side: Optional side filter.
+        tag: Optional tag filter.
         date_from: ISO date string for range start.
         date_to: ISO date string for range end.
 
