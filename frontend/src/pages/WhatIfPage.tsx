@@ -8,8 +8,8 @@ import { InfoTooltip } from '../components/ui/InfoTooltip';
 import type { WorkerInput, WorkerOutput } from '../components/whatif/whatif.worker';
 import { useToast } from '../hooks/useToast';
 import type {
-    StopAnalysisResponse,
-    WickedOutTrade,
+  StopAnalysisResponse,
+  WickedOutTrade,
 } from '../types/whatif.types';
 import { formatCurrency, formatPnL } from '../utils/formatters';
 
@@ -323,6 +323,7 @@ export function WhatIfPage() {
                 text={
                   'How far past your stop the price went before reversing.\n' +
                   'overshoot_R = |exit_price − wish_stop| / |entry_price − exit_price|\n' +
+                  'Multiply it by your initial risk to determine the dollar amount by which your stop-loss should increase.\n' +
                   'Lower values mean your stop was closer to optimal.'
                 }
                 widthClass="w-80"
@@ -391,8 +392,9 @@ export function WhatIfPage() {
               </h2>
               <InfoTooltip
                 text={
-                  'Simulate widening your stop by xR across all losing trades.\n' +
-                  'Winners keep their P&L. Losers with a target price and 1-min OHLC data ' +
+                  'Simulate widening your stop by xR across all losing trades:\n' +
+                  '- Winners keep their P&L.\n' +
+                  '- Losers with a target price and 1-min OHLC data ' +
                   'are replayed with the wider stop to check if they would have reached the target.'
                 }
                 widthClass="w-80"
