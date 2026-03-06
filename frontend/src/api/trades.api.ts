@@ -52,7 +52,7 @@ export async function updateTrade(
   return res.data.trade;
 }
 
-/** Soft-delete a trade. */
+/** Permanently delete a trade. */
 export async function deleteTrade(id: string): Promise<void> {
   await apiClient.delete(`/trades/${id}`);
 }

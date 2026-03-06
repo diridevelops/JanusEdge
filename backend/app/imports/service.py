@@ -32,6 +32,7 @@ from app.repositories.import_batch_repo import (
     ImportBatchRepository,
 )
 from app.repositories.trade_repo import TradeRepository
+from app.whatif.cache import clear_simulation_cache
 from app.utils.errors import (
     DuplicateImportError,
     ValidationError,
@@ -77,7 +78,7 @@ class ImportService:
         file_hash = compute_file_hash(file_content)
 
         # Check for duplicates
-        existing = self.batch_repo.find_by_file_hash(
+        existing = self._find_active_batch_by_hash(
             user_id, file_hash
         )
         if existing:
@@ -182,7 +183,7 @@ class ImportService:
         user_oid = ObjectId(user_id)
 
         # Check duplicate again
-        existing = self.batch_repo.find_by_file_hash(
+        existing = self._find_active_batch_by_hash(
             user_id, file_hash
         )
         if existing:
@@ -380,6 +381,8 @@ class ImportService:
         )
         self.audit_repo.insert_one(audit_doc)
 
+        clear_simulation_cache()
+
         return {
             "import_batch_id": batch_id,
             "file_name": file_name,
@@ -387,6 +390,36 @@ class ImportService:
             "trades_imported": total_trades,
             "executions_imported": total_execs,
         }
+
+    def _find_active_batch_by_hash(
+        self, user_id: str, file_hash: str
+    ) -> dict | None:
+        """Return an active import batch or clean up stale ones."""
+        batch = self.batch_repo.find_by_file_hash(
+            user_id, file_hash
+        )
+        if not batch:
+            return None
+
+        batch_id = str(batch["_id"])
+        active_trade_count = self.trade_repo.count(
+            {
+                "user_id": ObjectId(user_id),
+                "import_batch_id": ObjectId(batch_id),
+                "status": {"$ne": "deleted"},
+            }
+        )
+        if active_trade_count > 0:
+            return batch
+
+        self.trade_repo.delete_many(
+            {"import_batch_id": ObjectId(batch_id)}
+        )
+        self.exec_repo.delete_many(
+            {"import_batch_id": ObjectId(batch_id)}
+        )
+        self.batch_repo.delete_one(batch_id)
+        return None
 
     def _serialize_execution(
         self, ex: ParsedExecution

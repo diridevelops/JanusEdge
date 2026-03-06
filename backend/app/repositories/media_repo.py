@@ -72,3 +72,14 @@ class MediaRepository(BaseRepository):
                 "trade_id": ObjectId(trade_id),
             }
         )
+
+    def delete_for_trade(
+        self, user_id: str, trade_id: str
+    ) -> int:
+        """Delete all media docs for a trade."""
+        return self.delete_many(
+            {
+                "user_id": ObjectId(user_id),
+                "trade_id": ObjectId(trade_id),
+            }
+        )

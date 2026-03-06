@@ -3,6 +3,7 @@
 import pytest
 
 from app import create_app
+from app.whatif.cache import _sim_cache
 from config import TestingConfig
 
 
@@ -76,6 +77,7 @@ def _create_trade(client, token, **overrides):
 
 def test_create_manual_trade(client):
     token = _register_and_login(client)
+    _sim_cache["stale"] = (0.0, {"cached": True})
     resp = _create_trade(client, token, fee=0.78)
     assert resp.status_code == 201
     trade = resp.get_json()["trade"]
@@ -85,6 +87,7 @@ def test_create_manual_trade(client):
     assert trade["fee"] == 0.78
     assert trade["net_pnl"] == 49.22
     assert trade["initial_risk"] == 0.0
+    assert _sim_cache == {}
 
 
 def test_create_manual_trade_loser_sets_initial_risk(client):
@@ -199,6 +202,7 @@ def test_update_trade_fee(client):
     token = _register_and_login(client)
     create_resp = _create_trade(client, token)
     trade_id = create_resp.get_json()["trade"]["id"]
+    _sim_cache["stale"] = (0.0, {"cached": True})
 
     resp = client.put(
         f"/api/trades/{trade_id}",
@@ -209,6 +213,7 @@ def test_update_trade_fee(client):
     trade = resp.get_json()["trade"]
     assert trade["fee"] == 1.50
     assert trade["net_pnl"] == 48.50
+    assert _sim_cache == {}
 
 
 def test_update_trade_initial_risk(client):
@@ -245,10 +250,11 @@ def test_update_trade_notes(client):
     assert trade["strategy"] == "Breakout"
 
 
-def test_soft_delete_and_restore(client):
+def test_delete_trade_removes_completely(client):
     token = _register_and_login(client)
     create_resp = _create_trade(client, token)
     trade_id = create_resp.get_json()["trade"]["id"]
+    _sim_cache["stale"] = (0.0, {"cached": True})
 
     # Delete
     resp = client.delete(
@@ -263,20 +269,21 @@ def test_soft_delete_and_restore(client):
         headers=_auth_header(token),
     )
     assert resp.get_json()["total"] == 0
+    assert _sim_cache == {}
 
-    # Restore
+    # Trade detail is gone
+    resp = client.get(
+        f"/api/trades/{trade_id}",
+        headers=_auth_header(token),
+    )
+    assert resp.status_code == 404
+
+    # Restore also fails because the trade was removed
     resp = client.post(
         f"/api/trades/{trade_id}/restore",
         headers=_auth_header(token),
     )
-    assert resp.status_code == 200
-
-    # Should appear again
-    resp = client.get(
-        "/api/trades",
-        headers=_auth_header(token),
-    )
-    assert resp.get_json()["total"] == 1
+    assert resp.status_code == 404
 
 
 def test_get_nonexistent_trade(client):

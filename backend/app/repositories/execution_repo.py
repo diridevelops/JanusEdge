@@ -76,6 +76,12 @@ class ExecutionRepository(BaseRepository):
             sort=[("timestamp", 1)],
         )
 
+    def count_by_batch(self, batch_id: str) -> int:
+        """Count executions for an import batch."""
+        return self.count(
+            {"import_batch_id": ObjectId(batch_id)}
+        )
+
     def update_trade_ids(
         self, execution_ids: List[str], trade_id: str
     ) -> int:

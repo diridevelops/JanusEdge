@@ -121,7 +121,7 @@ def update_trade(trade_id):
 @trades_bp.route("/<trade_id>", methods=["DELETE"])
 @jwt_required()
 def delete_trade(trade_id):
-    """Soft-delete a trade."""
+    """Permanently delete a trade."""
     user_id = get_jwt_identity()
     trade_service.delete_trade(user_id, trade_id)
     return jsonify({"message": "Trade deleted."}), 200

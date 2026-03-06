@@ -1,9 +1,12 @@
 """Trade service — business logic for trades."""
 
+import logging
 from datetime import datetime, timedelta
 
 from bson import ObjectId
 
+from app.storage import get_bucket, get_client
+from app.whatif.cache import clear_simulation_cache
 from app.models.trade import create_trade_doc
 from app.repositories.account_repo import (
     AccountRepository,
@@ -14,12 +17,16 @@ from app.repositories.execution_repo import (
 from app.repositories.market_data_repo import (
     MarketDataRepository,
 )
+from app.repositories.media_repo import MediaRepository
 from app.repositories.tag_repo import TagRepository
 from app.repositories.trade_repo import TradeRepository
 from app.imports.reconstructor import get_point_value
 from app.market_data.symbol_mapper import map_to_yahoo
 from app.utils.datetime_utils import utc_now
 from app.utils.errors import NotFoundError
+
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_date_from(value: str) -> datetime:
@@ -48,6 +55,7 @@ class TradeService:
         self.account_repo = AccountRepository()
         self.tag_repo = TagRepository()
         self.market_data_repo = MarketDataRepository()
+        self.media_repo = MediaRepository()
 
     def list_trades(
         self,
@@ -240,6 +248,8 @@ class TradeService:
             raise NotFoundError("Trade not found.")
         if str(trade["user_id"]) != user_id:
             raise NotFoundError("Trade not found.")
+        if trade.get("status") == "deleted":
+            raise NotFoundError("Trade not found.")
 
         executions = self.exec_repo.find_by_trade(
             trade_id
@@ -349,6 +359,7 @@ class TradeService:
 
         trade_id = self.trade_repo.insert_one(trade_doc)
         trade = self.trade_repo.find_by_id(trade_id)
+        clear_simulation_cache()
         return self.trade_repo.serialize_doc(trade)
 
     def update_trade(
@@ -367,6 +378,8 @@ class TradeService:
         if not trade:
             raise NotFoundError("Trade not found.")
         if str(trade["user_id"]) != user_id:
+            raise NotFoundError("Trade not found.")
+        if trade.get("status") == "deleted":
             raise NotFoundError("Trade not found.")
 
         updates = {}
@@ -454,13 +467,14 @@ class TradeService:
             )
 
         trade = self.trade_repo.find_by_id(trade_id)
+        clear_simulation_cache()
         return self.trade_repo.serialize_doc(trade)
 
     def delete_trade(
         self, user_id: str, trade_id: str
     ) -> None:
         """
-        Soft-delete a trade.
+        Permanently delete a trade and related data.
 
         Raises:
             NotFoundError: If trade not found.
@@ -471,7 +485,20 @@ class TradeService:
         if str(trade["user_id"]) != user_id:
             raise NotFoundError("Trade not found.")
 
-        self.trade_repo.soft_delete(trade_id)
+        self._delete_trade_media(user_id, trade_id)
+        self.exec_repo.delete_many(
+            {"trade_id": ObjectId(trade_id)}
+        )
+
+        import_batch_id = trade.get("import_batch_id")
+        self.trade_repo.delete_one(trade_id)
+
+        if import_batch_id is not None:
+            self._cleanup_empty_import_batch(
+                str(import_batch_id)
+            )
+
+        clear_simulation_cache()
 
     def restore_trade(
         self, user_id: str, trade_id: str
@@ -493,6 +520,7 @@ class TradeService:
 
         self.trade_repo.restore(trade_id)
         trade = self.trade_repo.find_by_id(trade_id)
+        clear_simulation_cache()
         return self.trade_repo.serialize_doc(trade)
 
     def search_trades(
@@ -537,3 +565,60 @@ class TradeService:
             else:
                 tag_ids.append(tag["_id"])
         return tag_ids
+
+    def _delete_trade_media(
+        self, user_id: str, trade_id: str
+    ) -> None:
+        """Delete all media objects and records for a trade."""
+        media_docs = self.media_repo.find_by_trade(
+            user_id, trade_id
+        )
+        if not media_docs:
+            return
+
+        try:
+            client = get_client()
+            bucket = get_bucket()
+        except RuntimeError:
+            client = None
+            bucket = None
+
+        if client and bucket:
+            for media_doc in media_docs:
+                try:
+                    client.remove_object(
+                        bucket, media_doc["object_key"]
+                    )
+                except Exception:
+                    logger.warning(
+                        "Failed to remove object %s",
+                        media_doc["object_key"],
+                        exc_info=True,
+                    )
+
+        self.media_repo.delete_for_trade(user_id, trade_id)
+
+    def _cleanup_empty_import_batch(
+        self, import_batch_id: str
+    ) -> None:
+        """Delete import-batch metadata when its trades are gone."""
+        if self.trade_repo.count(
+            {
+                "import_batch_id": ObjectId(import_batch_id),
+                "status": {"$ne": "deleted"},
+            }
+        ) > 0:
+            return
+
+        self.trade_repo.delete_many(
+            {"import_batch_id": ObjectId(import_batch_id)}
+        )
+        self.exec_repo.delete_many(
+            {"import_batch_id": ObjectId(import_batch_id)}
+        )
+
+        from app.repositories.import_batch_repo import (
+            ImportBatchRepository,
+        )
+
+        ImportBatchRepository().delete_one(import_batch_id)

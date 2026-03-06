@@ -17,6 +17,7 @@ from app.repositories.market_data_repo import (
 )
 from app.repositories.tag_repo import TagRepository
 from app.repositories.trade_repo import TradeRepository
+from app.whatif.cache import _CACHE_TTL, _sim_cache
 
 
 def _parse_date_from(value: str) -> datetime:
@@ -118,11 +119,6 @@ def _build_match(
             filters["date_to"]
         )
     return match
-
-
-# Simple in-memory cache with TTL (5 min)
-_sim_cache: Dict[str, Tuple[float, Any]] = {}
-_CACHE_TTL = 300  # seconds
 
 
 def _cache_key(

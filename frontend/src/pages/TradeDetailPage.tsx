@@ -142,7 +142,7 @@ export function TradeDetailPage() {
   }, [trade, fetchAllCharts]);
 
   async function handleDelete() {
-    if (!id || !confirm('Delete this trade? It can be restored later.')) return;
+    if (!id || !confirm('Delete this trade permanently?')) return;
     setIsDeleting(true);
     try {
       await deleteTrade(id);

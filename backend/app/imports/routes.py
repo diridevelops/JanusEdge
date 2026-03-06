@@ -21,6 +21,7 @@ from app.repositories.execution_repo import (
 from app.repositories.trade_repo import TradeRepository
 from app.repositories.user_repo import UserRepository
 from app.utils.errors import NotFoundError, ValidationError
+from app.whatif.cache import clear_simulation_cache
 
 import_service = ImportService()
 batch_repo = ImportBatchRepository()
@@ -269,6 +270,8 @@ def delete_batch(batch_id):
 
     # Delete the batch itself
     batch_repo.delete_one(batch_id)
+
+    clear_simulation_cache()
 
     return jsonify(
         {"message": "Import batch deleted."}
