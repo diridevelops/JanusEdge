@@ -45,10 +45,14 @@ export interface SimulationMetrics {
   total_winners: number;
   total_losers: number;
   profit_factor: number | string;
+  expectancy_r: number | null;
 }
 
 export interface SimulationDetail {
   trade_id: string;
+  symbol: string;
+  side: string;
+  entry_time: string;
   original_pnl: number;
   new_pnl: number;
   converted: boolean;

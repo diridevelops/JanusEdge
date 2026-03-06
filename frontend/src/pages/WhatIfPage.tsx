@@ -8,6 +8,7 @@ import { InfoTooltip } from '../components/ui/InfoTooltip';
 import type { WorkerInput, WorkerOutput } from '../components/whatif/whatif.worker';
 import { useToast } from '../hooks/useToast';
 import type {
+  SimulationDetail,
   StopAnalysisResponse,
   WickedOutTrade,
 } from '../types/whatif.types';
@@ -36,13 +37,142 @@ function MetricCard({ label, value, tooltip }: { label: string; value: string; t
   );
 }
 
-function DeltaCell({ value, isCurrency = false }: { value: number; isCurrency?: boolean }) {
+function DeltaCell({
+  value,
+  isCurrency = false,
+  suffix = '',
+}: {
+  value: number;
+  isCurrency?: boolean;
+  suffix?: string;
+}) {
   const positive = value > 0;
   const cls = positive ? 'pnl-positive' : value < 0 ? 'pnl-negative' : 'text-gray-500';
   const text = isCurrency
     ? `${positive ? '+' : ''}${formatCurrency(value)}`
-    : `${positive ? '+' : ''}${value.toFixed(2)}`;
+    : `${positive ? '+' : ''}${value.toFixed(2)}${suffix}`;
   return <span className={cls}>{text}</span>;
+}
+
+function formatRValue(value: number | null) {
+  return value == null ? '—' : `${value.toFixed(2)}R`;
+}
+
+function getSimulationStatusLabel(status: string) {
+  switch (status) {
+    case 'no_target':
+      return 'Skipped: no target';
+    case 'no_ohlc':
+      return 'Skipped: no OHLC';
+    case 'no_risk':
+      return 'Skipped: no risk';
+    case 'simulated':
+      return 'Simulated';
+    case 'winner':
+      return 'Winner';
+    default:
+      return status;
+  }
+}
+
+function ResultSection({
+  title,
+  count,
+  expanded,
+  onToggle,
+  trades,
+}: {
+  title: string;
+  count: number;
+  expanded: boolean;
+  onToggle: () => void;
+  trades: SimulationDetail[];
+}) {
+  return (
+    <div className="rounded-lg border border-gray-200 dark:border-gray-700">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center justify-between px-4 py-3 text-left"
+      >
+        <div className="flex items-center gap-2">
+          {expanded ? (
+            <ChevronDown className="h-4 w-4 text-gray-400" />
+          ) : (
+            <ChevronRight className="h-4 w-4 text-gray-400" />
+          )}
+          <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">{title}</span>
+        </div>
+        <span className="text-xs text-gray-500 dark:text-gray-400">{count}</span>
+      </button>
+
+      {expanded && (
+        <div className="border-t border-gray-200 dark:border-gray-700">
+          {trades.length === 0 ? (
+            <p className="px-4 py-4 text-sm text-gray-400 dark:text-gray-500">No trades in this section.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[920px] table-fixed text-sm">
+                <colgroup>
+                  <col className="w-[20%]" />
+                  <col className="w-[12%]" />
+                  <col className="w-[10%]" />
+                  <col className="w-[14%]" />
+                  <col className="w-[14%]" />
+                  <col className="w-[12%]" />
+                  <col className="w-[20%]" />
+                </colgroup>
+                <thead>
+                  <tr className="border-b border-gray-200 dark:border-gray-700 text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                    <th className="px-4 py-2 text-left">Trade</th>
+                    <th className="px-4 py-2 text-left">Date</th>
+                    <th className="px-4 py-2 text-left">Side</th>
+                    <th className="px-4 py-2 text-left">Original P&L</th>
+                    <th className="px-4 py-2 text-left">New P&L</th>
+                    <th className="px-4 py-2 text-left">Change</th>
+                    <th className="px-4 py-2 text-left">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {trades.map((trade) => {
+                    const original = formatPnL(trade.original_pnl);
+                    const next = formatPnL(trade.new_pnl);
+                    return (
+                      <tr
+                        key={`${title}-${trade.trade_id}`}
+                        className="border-b border-gray-100 dark:border-gray-700/50 hover:bg-gray-50 dark:hover:bg-gray-700/30"
+                      >
+                        <td className="px-4 py-2">
+                          <Link
+                            to={`/trades/${trade.trade_id}`}
+                            className="block truncate text-brand-600 hover:underline"
+                          >
+                            {trade.symbol} · {trade.trade_id.slice(-6)}
+                          </Link>
+                        </td>
+                        <td className="px-4 py-2 text-gray-600 dark:text-gray-300">
+                          {new Date(trade.entry_time).toLocaleDateString()}
+                        </td>
+                        <td className="px-4 py-2 text-gray-700 dark:text-gray-300">{trade.side}</td>
+                        <td className={`px-4 py-2 text-left ${original.className}`}>{original.text}</td>
+                        <td className={`px-4 py-2 text-left ${next.className}`}>{next.text}</td>
+                        <td className="px-4 py-2 text-left">
+                          <DeltaCell value={trade.new_pnl - trade.original_pnl} isCurrency />
+                        </td>
+                        <td className="px-4 py-2 text-gray-600 dark:text-gray-300">
+                          {trade.converted ? 'Converted to winner' : getSimulationStatusLabel(trade.status)}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -87,6 +217,11 @@ export function WhatIfPage() {
   const [rWidening, setRWidening] = useState('0.5');
   const [simLoading, setSimLoading] = useState(false);
   const [simResult, setSimResult] = useState<WorkerOutput | null>(null);
+  const [resultSectionsExpanded, setResultSectionsExpanded] = useState({
+    converted: true,
+    simulated: false,
+    skipped: false,
+  });
   const simCache = useRef<Map<string, WorkerOutput>>(new Map());
   const workerRef = useRef<Worker | null>(null);
 
@@ -148,6 +283,11 @@ export function WhatIfPage() {
       worker.onmessage = (e: MessageEvent<WorkerOutput>) => {
         startTransition(() => {
           setSimResult(e.data);
+          setResultSectionsExpanded({
+            converted: true,
+            simulated: false,
+            skipped: false,
+          });
           simCache.current.set(cacheKey, e.data);
           setSimLoading(false);
         });
@@ -178,6 +318,9 @@ export function WhatIfPage() {
   // Wicked-out summary counts
   const woWithData = woTrades.filter((t) => t.has_ohlc_data).length;
   const woMissing = woTrades.length - woWithData;
+  const overshootByTradeId = new Map(
+    (analysis?.details ?? []).map((detail) => [detail.trade_id, detail.overshoot_r]),
+  );
 
   return (
     <div className="space-y-6">
@@ -255,12 +398,14 @@ export function WhatIfPage() {
                           <th className="px-4 py-2 text-right">Net P&L</th>
                           <th className="px-4 py-2 text-right">Wishful Stop</th>
                           <th className="px-4 py-2 text-right">Target</th>
+                          <th className="px-4 py-2 text-right">Overshoot</th>
                           <th className="px-4 py-2 text-center">OHLC</th>
                         </tr>
                       </thead>
                       <tbody>
                         {woTrades.map((t) => {
                           const pnl = formatPnL(t.net_pnl);
+                          const overshoot = overshootByTradeId.get(t.id);
                           return (
                             <tr
                               key={t.id}
@@ -294,6 +439,9 @@ export function WhatIfPage() {
                               </td>
                               <td className="px-4 py-2 text-right text-gray-700 dark:text-gray-300">
                                 {t.target_price != null ? t.target_price.toFixed(2) : '—'}
+                              </td>
+                              <td className="px-4 py-2 text-right text-gray-700 dark:text-gray-300">
+                                {overshoot != null ? `${overshoot.toFixed(2)}R` : '—'}
                               </td>
                               <td className="px-4 py-2 text-center">
                                 {t.has_ohlc_data ? (
@@ -487,6 +635,18 @@ export function WhatIfPage() {
                         </td>
                       </tr>
                       <tr className="border-b border-gray-100 dark:border-gray-700/50">
+                        <td className="px-4 py-2 text-gray-700 dark:text-gray-300">Expectancy (R)</td>
+                        <td className="px-4 py-2 text-right">{formatRValue(simResult.original.expectancy_r)}</td>
+                        <td className="px-4 py-2 text-right">{formatRValue(simResult.whatIf.expectancy_r)}</td>
+                        <td className="px-4 py-2 text-right">
+                          {simResult.delta.expectancy_r == null ? (
+                            <span className="text-gray-500">—</span>
+                          ) : (
+                            <DeltaCell value={simResult.delta.expectancy_r} suffix="R" />
+                          )}
+                        </td>
+                      </tr>
+                      <tr className="border-b border-gray-100 dark:border-gray-700/50">
                         <td className="px-4 py-2 text-gray-700 dark:text-gray-300">Winners</td>
                         <td className="px-4 py-2 text-right">{simResult.original.total_winners}</td>
                         <td className="px-4 py-2 text-right">{simResult.whatIf.total_winners}</td>
@@ -506,46 +666,29 @@ export function WhatIfPage() {
                   </table>
                 </div>
 
-                {/* Converted trades */}
-                {simResult.convertedDetails.length > 0 && (
-                  <div>
-                    <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">
-                      Converted Trades ({simResult.convertedDetails.length})
-                    </h3>
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-xs">
-                        <thead>
-                          <tr className="border-b border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                            <th className="px-3 py-1 text-left">Trade</th>
-                            <th className="px-3 py-1 text-right">Original P&L</th>
-                            <th className="px-3 py-1 text-right">New P&L</th>
-                            <th className="px-3 py-1 text-right">Change</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {simResult.convertedDetails.map((d) => (
-                            <tr key={d.trade_id} className="border-b border-gray-100 dark:border-gray-700/50">
-                              <td className="px-3 py-1">
-                                <Link to={`/trades/${d.trade_id}`} className="text-brand-600 hover:underline">
-                                  {d.trade_id.slice(-6)}
-                                </Link>
-                              </td>
-                              <td className={`px-3 py-1 text-right ${formatPnL(d.original_pnl).className}`}>
-                                {formatPnL(d.original_pnl).text}
-                              </td>
-                              <td className={`px-3 py-1 text-right ${formatPnL(d.new_pnl).className}`}>
-                                {formatPnL(d.new_pnl).text}
-                              </td>
-                              <td className="px-3 py-1 text-right">
-                                <DeltaCell value={d.new_pnl - d.original_pnl} isCurrency />
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                )}
+                <div className="space-y-3">
+                  <ResultSection
+                    title="Converted"
+                    count={simResult.convertedDetails.length}
+                    expanded={resultSectionsExpanded.converted}
+                    onToggle={() => setResultSectionsExpanded((prev) => ({ ...prev, converted: !prev.converted }))}
+                    trades={simResult.convertedDetails}
+                  />
+                  <ResultSection
+                    title="Simulated"
+                    count={simResult.simulatedDetails.length}
+                    expanded={resultSectionsExpanded.simulated}
+                    onToggle={() => setResultSectionsExpanded((prev) => ({ ...prev, simulated: !prev.simulated }))}
+                    trades={simResult.simulatedDetails}
+                  />
+                  <ResultSection
+                    title="Skipped"
+                    count={simResult.skippedDetails.length}
+                    expanded={resultSectionsExpanded.skipped}
+                    onToggle={() => setResultSectionsExpanded((prev) => ({ ...prev, skipped: !prev.skipped }))}
+                    trades={simResult.skippedDetails}
+                  />
+                </div>
               </div>
             )}
           </div>

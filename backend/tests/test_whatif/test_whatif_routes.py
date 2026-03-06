@@ -243,6 +243,7 @@ class TestSimulate:
         data = resp.get_json()
         assert data["trades_total"] == 0
         assert data["original"]["total_pnl"] == 0
+        assert data["original"]["expectancy_r"] is None
 
     def test_winner_keeps_pnl(self, client):
         """Winners keep original P&L unchanged."""
@@ -262,6 +263,13 @@ class TestSimulate:
         original = data["original"]["total_pnl"]
         whatif = data["what_if"]["total_pnl"]
         assert original == whatif  # winner unchanged
+        assert data["original"]["expectancy_r"] == 1.0
+        assert data["what_if"]["expectancy_r"] == 0.67
+        detail = data["details"][0]
+        assert detail["symbol"] == "MES"
+        assert detail["side"] == "Long"
+        assert detail["status"] == "winner"
+        assert "entry_time" in detail
 
     def test_loser_without_target_skipped(self, client):
         """Losers without target_price are skipped."""

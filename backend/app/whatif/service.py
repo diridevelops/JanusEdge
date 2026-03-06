@@ -380,6 +380,8 @@ class WhatIfService:
 
         original_pnls: List[float] = []
         whatif_pnls: List[float] = []
+        original_rs: List[float] = []
+        whatif_rs: List[float] = []
         details: List[Dict[str, Any]] = []
         converted = 0
         simulated = 0
@@ -394,19 +396,31 @@ class WhatIfService:
             qty = t.get("total_quantity", 0)
             fee = t.get("fee", 0)
             initial_risk = t.get("initial_risk", 0)
+            entry_time = t.get("entry_time")
+            widened_risk = (
+                initial_risk * (1 + r_widening)
+                if initial_risk > 0
+                else None
+            )
 
             original_pnls.append(net_pnl)
+            if initial_risk > 0:
+                original_rs.append(net_pnl / initial_risk)
 
             if net_pnl >= 0:
                 # Winner — keep P&L, widen initial risk
-                new_risk = initial_risk + (
-                    initial_risk * r_widening
-                    if initial_risk > 0
-                    else 0
-                )
                 whatif_pnls.append(net_pnl)
+                if widened_risk:
+                    whatif_rs.append(net_pnl / widened_risk)
                 details.append({
                     "trade_id": str(t["_id"]),
+                    "symbol": symbol,
+                    "side": side,
+                    "entry_time": (
+                        entry_time.isoformat()
+                        if isinstance(entry_time, datetime)
+                        else str(entry_time or "")
+                    ),
                     "original_pnl": net_pnl,
                     "new_pnl": net_pnl,
                     "converted": False,
@@ -419,9 +433,18 @@ class WhatIfService:
             if target is None:
                 # No target — keep P&L
                 whatif_pnls.append(net_pnl)
+                if widened_risk:
+                    whatif_rs.append(net_pnl / widened_risk)
                 skipped += 1
                 details.append({
                     "trade_id": str(t["_id"]),
+                    "symbol": symbol,
+                    "side": side,
+                    "entry_time": (
+                        entry_time.isoformat()
+                        if isinstance(entry_time, datetime)
+                        else str(entry_time or "")
+                    ),
                     "original_pnl": net_pnl,
                     "new_pnl": net_pnl,
                     "converted": False,
@@ -438,9 +461,18 @@ class WhatIfService:
             if price_risk == 0:
                 # Breakeven — can't compute R
                 whatif_pnls.append(net_pnl)
+                if widened_risk:
+                    whatif_rs.append(net_pnl / widened_risk)
                 skipped += 1
                 details.append({
                     "trade_id": str(t["_id"]),
+                    "symbol": symbol,
+                    "side": side,
+                    "entry_time": (
+                        entry_time.isoformat()
+                        if isinstance(entry_time, datetime)
+                        else str(entry_time or "")
+                    ),
                     "original_pnl": net_pnl,
                     "new_pnl": net_pnl,
                     "converted": False,
@@ -481,8 +513,17 @@ class WhatIfService:
                                  * qty * point_value)
                     new_pnl = round(gross - fee, 2)
                     whatif_pnls.append(new_pnl)
+                    if widened_risk:
+                        whatif_rs.append(new_pnl / widened_risk)
                     details.append({
                         "trade_id": str(t["_id"]),
+                        "symbol": symbol,
+                        "side": side,
+                        "entry_time": (
+                            entry_time.isoformat()
+                            if isinstance(entry_time, datetime)
+                            else str(entry_time or "")
+                        ),
                         "original_pnl": round(
                             net_pnl, 2
                         ),
@@ -516,9 +557,18 @@ class WhatIfService:
 
             if ohlc_interval is None:
                 whatif_pnls.append(net_pnl)
+                if widened_risk:
+                    whatif_rs.append(net_pnl / widened_risk)
                 skipped += 1
                 details.append({
                     "trade_id": str(t["_id"]),
+                    "symbol": symbol,
+                    "side": side,
+                    "entry_time": (
+                        entry_time.isoformat()
+                        if isinstance(entry_time, datetime)
+                        else str(entry_time or "")
+                    ),
                     "original_pnl": net_pnl,
                     "new_pnl": net_pnl,
                     "converted": False,
@@ -543,9 +593,18 @@ class WhatIfService:
             if new_pnl is None:
                 # Bars don't cover trade entry — skip
                 whatif_pnls.append(net_pnl)
+                if widened_risk:
+                    whatif_rs.append(net_pnl / widened_risk)
                 skipped += 1
                 details.append({
                     "trade_id": str(t["_id"]),
+                    "symbol": symbol,
+                    "side": side,
+                    "entry_time": (
+                        entry_time.isoformat()
+                        if isinstance(entry_time, datetime)
+                        else str(entry_time or "")
+                    ),
                     "original_pnl": net_pnl,
                     "new_pnl": net_pnl,
                     "converted": False,
@@ -559,8 +618,17 @@ class WhatIfService:
                 converted += 1
 
             whatif_pnls.append(new_pnl)
+            if widened_risk:
+                whatif_rs.append(new_pnl / widened_risk)
             details.append({
                 "trade_id": str(t["_id"]),
+                "symbol": symbol,
+                "side": side,
+                "entry_time": (
+                    entry_time.isoformat()
+                    if isinstance(entry_time, datetime)
+                    else str(entry_time or "")
+                ),
                 "original_pnl": round(net_pnl, 2),
                 "new_pnl": round(new_pnl, 2),
                 "converted": was_converted
@@ -570,10 +638,10 @@ class WhatIfService:
 
         result = {
             "original": self._compute_metrics(
-                original_pnls
+                original_pnls, original_rs
             ),
             "what_if": self._compute_metrics(
-                whatif_pnls
+                whatif_pnls, whatif_rs
             ),
             "trades_total": len(trades),
             "trades_converted": converted,
@@ -727,6 +795,7 @@ class WhatIfService:
     @staticmethod
     def _compute_metrics(
         pnls: List[float],
+        r_values: Optional[List[float]] = None,
     ) -> Dict[str, Any]:
         """Compute summary metrics from P&L list.
 
@@ -744,6 +813,7 @@ class WhatIfService:
                 "total_winners": 0,
                 "total_losers": 0,
                 "profit_factor": 0,
+                "expectancy_r": None,
             }
         total = sum(pnls)
         wins = [p for p in pnls if p > 0]
@@ -773,6 +843,11 @@ class WhatIfService:
             "profit_factor": (
                 round(pf, 2) if pf != float("inf")
                 else "Inf"
+            ),
+            "expectancy_r": (
+                round(sum(r_values) / len(r_values), 2)
+                if r_values
+                else None
             ),
         }
 
