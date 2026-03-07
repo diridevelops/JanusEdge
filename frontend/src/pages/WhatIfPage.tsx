@@ -137,7 +137,7 @@ function getSimulationStatusLabel(status: string) {
     case 'no_target':
       return 'Skipped: no target';
     case 'no_ohlc':
-      return 'Skipped: no OHLC';
+      return 'Skipped: no market data';
     case 'no_risk':
       return 'Skipped: no risk';
     case 'simulated':

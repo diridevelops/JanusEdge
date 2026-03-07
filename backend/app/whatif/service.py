@@ -433,7 +433,47 @@ class WhatIfService:
                 continue
 
             # Loser — try to simulate
+            raw_sym = t.get("raw_symbol")
+            yahoo = map_to_yahoo(symbol, raw_sym)
+            if isinstance(entry_time, datetime):
+                day = entry_time.date()
+            else:
+                day = datetime.fromisoformat(
+                    str(entry_time)
+                ).date()
+
+            has_market_data = any(
+                self.market_data_repo.has_cached_day(
+                    symbol=yahoo,
+                    interval=iv,
+                    cache_date=day,
+                )
+                for iv in ("1m", "5m")
+            )
+
             target = t.get("target_price")
+            if target is None and not has_market_data:
+                whatif_pnls.append(net_pnl)
+                whatif_grosses.append(gross_pnl)
+                if widened_risk:
+                    whatif_rs.append(net_pnl / widened_risk)
+                skipped += 1
+                details.append({
+                    "trade_id": str(t["_id"]),
+                    "symbol": symbol,
+                    "side": side,
+                    "entry_time": (
+                        entry_time.isoformat()
+                        if isinstance(entry_time, datetime)
+                        else str(entry_time or "")
+                    ),
+                    "original_pnl": net_pnl,
+                    "new_pnl": net_pnl,
+                    "converted": False,
+                    "status": "no_ohlc",
+                })
+                continue
+
             if target is None:
                 # No target — keep P&L
                 whatif_pnls.append(net_pnl)
@@ -544,16 +584,6 @@ class WhatIfService:
                     continue
 
             # Check OHLC data
-            raw_sym = t.get("raw_symbol")
-            yahoo = map_to_yahoo(symbol, raw_sym)
-            entry_time = t.get("entry_time")
-            if isinstance(entry_time, datetime):
-                day = entry_time.date()
-            else:
-                day = datetime.fromisoformat(
-                    str(entry_time)
-                ).date()
-
             # Pick best available OHLC interval
             ohlc_interval = None
             for iv in ("1m", "5m"):

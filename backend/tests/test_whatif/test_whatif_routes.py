@@ -287,7 +287,33 @@ class TestSimulate:
         data = resp.get_json()
         assert data["trades_skipped"] >= 1
         d = data["details"][0]
-        assert d["status"] in ("no_target", "no_risk")
+        assert d["status"] in ("no_target", "no_risk", "no_ohlc")
+
+    def test_missing_market_data_takes_priority_over_no_target(
+        self, client
+    ):
+        """Losers with no target and no cached OHLC are labeled no_ohlc."""
+        token = _register_and_login(client)
+        _create_trade(
+            client,
+            token,
+            entry_time="2026-02-04T14:30:00",
+            exit_time="2026-02-04T14:35:00",
+        )
+
+        resp = client.post(
+            "/api/whatif/simulate?symbol=MES",
+            json={"r_widening": 0.5},
+            headers=_auth(token),
+        )
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        skipped_details = [
+            detail for detail in data["details"]
+            if detail["status"] == "no_ohlc"
+        ]
+        assert skipped_details
 
     def test_profit_factor_includes_fee_only_breakeven(
         self, client, app
