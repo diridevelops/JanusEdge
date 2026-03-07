@@ -426,15 +426,6 @@ class AnalyticsService:
             else 0.0
         )
 
-        # Profit factor: sum(winners) / abs(sum(losers))
-        profit_factor = (
-            (sum_winners / abs(sum_losers))
-            if sum_losers != 0
-            else float("inf")
-            if sum_winners > 0
-            else 0.0
-        )
-
         # Expectancy: (win_rate% × avg_winner) +
         #             ((1 - win_rate%) × avg_loser)
         win_pct = win_rate / 100.0
@@ -503,6 +494,22 @@ class AnalyticsService:
                     "total_quantity": 1,
                 },
             )
+        )
+
+        pf_loss_sum = sum(
+            float(trade.get("net_pnl", 0.0))
+            for trade in trade_details
+            if float(trade.get("net_pnl", 0.0)) < 0
+        )
+
+        # Net profit factor includes fee-only breakeven trades
+        # (gross == 0, net < 0) in the losing denominator.
+        profit_factor = (
+            (sum_winners / abs(pf_loss_sum))
+            if pf_loss_sum != 0
+            else float("inf")
+            if sum_winners > 0
+            else 0.0
         )
 
         per_share_wins: List[float] = []

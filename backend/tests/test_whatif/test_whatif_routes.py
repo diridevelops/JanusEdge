@@ -289,6 +289,51 @@ class TestSimulate:
         d = data["details"][0]
         assert d["status"] in ("no_target", "no_risk")
 
+    def test_profit_factor_includes_fee_only_breakeven(
+        self, client, app
+    ):
+        """Net profit factor includes gross-zero negative-net trades."""
+        token = _register_and_login(client)
+        winner = _create_trade(
+            client, token,
+            exit_price=5010.0,
+            initial_risk=50.0,
+        )
+        loser = _create_trade(
+            client, token,
+            exit_price=4990.0,
+            initial_risk=50.0,
+        )
+        breakeven = _create_trade(
+            client, token,
+            exit_price=5000.0,
+            initial_risk=50.0,
+        )
+
+        with app.app_context():
+            from app.extensions import mongo
+
+            mongo.db.trades.update_one(
+                {"_id": ObjectId(breakeven["id"] )},
+                {"$set": {"gross_pnl": 0.0, "net_pnl": -2.0, "fee": 2.0}},
+            )
+
+        resp = client.post(
+            "/api/whatif/simulate?symbol=MES",
+            json={"r_widening": 0.5},
+            headers=_auth(token),
+        )
+        assert resp.status_code == 200
+
+        data = resp.get_json()
+        expected_pf = round(
+            winner["net_pnl"]
+            / abs(loser["net_pnl"] + (-2.0)),
+            2,
+        )
+        assert data["original"]["profit_factor"] == expected_pf
+        assert data["what_if"]["profit_factor"] == expected_pf
+
     def test_winners_are_skipped_and_converted_are_not_simulated(
         self, client, app
     ):

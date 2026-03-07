@@ -849,6 +849,7 @@ class WhatIfService:
 
         total = sum(pnls)
         wins = [p for p in pnls if p > 0]
+        pf_losses = [p for p in pnls if p < 0]
         losses = [
             pnl
             for idx, pnl in enumerate(pnls)
@@ -860,7 +861,7 @@ class WhatIfService:
             else 0
         )
         gross_profit = sum(wins)
-        gross_loss = abs(sum(losses))
+        gross_loss = abs(sum(pf_losses))
         pf = (
             gross_profit / gross_loss
             if gross_loss > 0

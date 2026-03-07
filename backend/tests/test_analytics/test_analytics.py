@@ -200,8 +200,9 @@ class TestAnalyticsSummary:
         assert data["largest_win"] == 100.0
         # largest loss = -80
         assert data["largest_loss"] == -80.0
-        # profit factor = 225 / 80 = 2.8125 -> 2.81
-        assert data["profit_factor"] == 2.81
+        # profit factor = 225 / 82 = 2.7439 -> 2.74
+        # fee-only breakeven trades are included in PF denominator
+        assert data["profit_factor"] == 2.74
         # expectancy = 0.6*75 + 0.4*(-80) = 45-32 = 13.0
         assert data["expectancy"] == 13.0
 
