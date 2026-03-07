@@ -11,12 +11,20 @@ import {
 
 import { Loader2 } from 'lucide-react';
 
+import { runMonteCarloSimulation } from '../../api/analytics.api';
 import { useAuth } from '../../hooks/useAuth';
 import { useChartColors } from '../../hooks/useChartColors';
-import type { AnalyticsSummary, TradePnl } from '../../types/analytics.types';
+import type {
+  AnalyticsSummary,
+  MonteCarloRiskMode,
+  MonteCarloSimulationMetadata,
+  MonteCarloSimulationMetrics,
+  MonteCarloSimulationMode,
+  MonteCarloSimulationPoint,
+} from '../../types/analytics.types';
+import type { FilterParams } from '../../types/common.types';
 import { formatCurrency, formatPercent } from '../../utils/formatters';
 import { InfoTooltip } from '../ui/InfoTooltip';
-import type { WorkerParams, WorkerResult } from './mc.worker';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -24,60 +32,24 @@ import type { WorkerParams, WorkerResult } from './mc.worker';
 
 interface MonteCarloSimulatorProps {
   summary: AnalyticsSummary | null;
-  /** Per-trade P&L values for bootstrap resampling. */
-  tradePnls: TradePnl[];
-}
-
-interface SimPoint {
-  trade: number;
-  avgEquity: number;
-  [key: string]: number;
-}
-
-interface SimMetrics {
-  kelly: number;
-  expectation: number;
-  biggestMaxDrawdown: number;
-  biggestMaxDrawdownPct: number;
-  avgMaxDrawdown: number;
-  avgMaxDrawdownPct: number;
-  minEquity: number;
-  maxEquity: number;
-  avgFinalEquity: number;
-  avgPerformancePct: number;
-  returnOnMaxDrawdown: number;
-  maxConsecutiveWins: number;
-  maxConsecutiveLosses: number;
-  pctProfitable: number;
-  pctRuined: number;
+  filters: FilterParams;
 }
 
 interface SimResult {
-  chartData: SimPoint[];
-  metrics: SimMetrics;
+  chartData: MonteCarloSimulationPoint[];
+  metrics: MonteCarloSimulationMetrics;
+  metadata: MonteCarloSimulationMetadata;
 }
-
-type SimMode = 'bootstrap' | 'parametric';
 
 /* ------------------------------------------------------------------ */
 /*  Constants                                                          */
 /* ------------------------------------------------------------------ */
 
-const NUM_SIMULATIONS = 50;
-/** Matches MAX_DISPLAY_LINES in the worker — only these sim lines are charted. */
-const MAX_DISPLAY_LINES = 15;
+const DEFAULT_SIMULATION_COUNT = 50;
 const DEFAULT_NUM_TRADES = 500;
 const DEFAULT_STARTING_EQUITY = 10000;
 const DEFAULT_WIN_RATE_PCT = 50;
 const DEFAULT_WIN_LOSS_RATIO_R = 2;
-
-/* ------------------------------------------------------------------ */
-/*  Web Worker helper                                                  */
-/* ------------------------------------------------------------------ */
-
-function createWorker() {
-  return new Worker(new URL('./mc.worker.ts', import.meta.url), { type: 'module' });
-}
 
 /* ------------------------------------------------------------------ */
 /*  Sub-components                                                     */
@@ -112,24 +84,24 @@ function ChartLoadingOverlay() {
 /*  Main Component                                                     */
 /* ------------------------------------------------------------------ */
 
-export function MonteCarloSimulator({ summary, tradePnls }: MonteCarloSimulatorProps) {
+export function MonteCarloSimulator({ summary, filters }: MonteCarloSimulatorProps) {
   const { user } = useAuth();
   const c = useChartColors();
-  const hasImportedTrades = tradePnls.length > 0;
+  const hasHistoricalTrades = (summary?.total_trades ?? 0) > 0;
 
   const fallbackWinRate = useMemo(() => {
-    if (!hasImportedTrades) return DEFAULT_WIN_RATE_PCT;
+    if (!hasHistoricalTrades) return DEFAULT_WIN_RATE_PCT;
     if (summary && Number.isFinite(summary.win_rate)) return summary.win_rate;
     return DEFAULT_WIN_RATE_PCT;
-  }, [hasImportedTrades, summary]);
+  }, [hasHistoricalTrades, summary]);
 
   const fallbackWinLossRatio = useMemo(() => {
-    if (!hasImportedTrades) return DEFAULT_WIN_LOSS_RATIO_R;
+    if (!hasHistoricalTrades) return DEFAULT_WIN_LOSS_RATIO_R;
     if (summary?.wl_ratio_r != null && Number.isFinite(summary.wl_ratio_r) && summary.wl_ratio_r >= 0) {
       return summary.wl_ratio_r;
     }
     return DEFAULT_WIN_LOSS_RATIO_R;
-  }, [hasImportedTrades, summary]);
+  }, [hasHistoricalTrades, summary]);
 
   // ---- Parameters (all string state for controlled inputs) ----
   const [startingEquity, setStartingEquity] = useState(String(user?.starting_equity ?? DEFAULT_STARTING_EQUITY));
@@ -143,19 +115,20 @@ export function MonteCarloSimulator({ summary, tradePnls }: MonteCarloSimulatorP
       ? Math.abs(summary.loss_per_share_avg).toFixed(0)
       : '50',
   );
-  const [riskMode, setRiskMode] = useState<'fixed' | 'percent'>('percent');
-  const [simMode, setSimMode] = useState<SimMode>(hasImportedTrades ? 'bootstrap' : 'parametric');
+  const [riskMode, setRiskMode] = useState<MonteCarloRiskMode>('percent');
+  const [simMode, setSimMode] = useState<MonteCarloSimulationMode>(hasHistoricalTrades ? 'bootstrap' : 'parametric');
 
   // Sync win rate / W:L ratio when imported-trade data changes
   useEffect(() => {
-    if (!hasImportedTrades) {
+    if (!hasHistoricalTrades) {
       setWinRate(DEFAULT_WIN_RATE_PCT.toFixed(1));
       setWinLossRatio(DEFAULT_WIN_LOSS_RATIO_R.toFixed(2));
+      setSimMode('parametric');
       return;
     }
     setWinRate(fallbackWinRate.toFixed(1));
     setWinLossRatio(fallbackWinLossRatio.toFixed(2));
-  }, [hasImportedTrades, fallbackWinRate, fallbackWinLossRatio]);
+  }, [hasHistoricalTrades, fallbackWinRate, fallbackWinLossRatio]);
 
   // Pre-fill avg risk from summary on first load
   const prefilled = useRef(false);
@@ -174,58 +147,68 @@ export function MonteCarloSimulator({ summary, tradePnls }: MonteCarloSimulatorP
   const [simLoading, setSimLoading] = useState(false);
 
   // ---- Refs ----
-  const workerRef = useRef<Worker | null>(null);
   const seedRef = useRef(42);
-  const paramsRef = useRef<WorkerParams>(null!);
+  const requestIdRef = useRef(0);
 
-  // R-multiples for bootstrap mode
-  const rMultiples = useMemo(
-    () => tradePnls.filter((t) => t.r_multiple != null).map((t) => t.r_multiple as number),
-    [tradePnls],
-  );
-
-  // Keep paramsRef up-to-date every render (cheap — just object allocation)
-  paramsRef.current = {
-    mode: simMode,
-    startingEquity: parseFloat(startingEquity) || DEFAULT_STARTING_EQUITY,
-    winRate: parseFloat(winRate) || DEFAULT_WIN_RATE_PCT,
-    winLossRatio: parseFloat(winLossRatio) || DEFAULT_WIN_LOSS_RATIO_R,
-    riskFixed: parseFloat(avgRiskFixed) || 200,
-    riskPct: parseFloat(avgRiskPct) || 1,
-    minRisk: parseFloat(minRisk) || 0,
-    riskMode,
-    rMultiples,
-    seed: seedRef.current,
-    numTrades: Math.max(10, Math.min(1000, parseInt(numTrades, 10) || DEFAULT_NUM_TRADES)),
-  };
-
-  // ---- Dispatch simulation to Web Worker ----
-  const dispatchSimulation = useCallback(() => {
+  // ---- Dispatch simulation to backend ----
+  const dispatchSimulation = useCallback(async () => {
+    const requestId = requestIdRef.current + 1;
+    requestIdRef.current = requestId;
     setSimLoading(true);
-    // Terminate any in-flight worker to avoid stale results
-    workerRef.current?.terminate();
-    const worker = createWorker();
-    workerRef.current = worker;
-    worker.onmessage = (e: MessageEvent<WorkerResult>) => {
+
+    const apiFilters = Object.fromEntries(
+      Object.entries(filters).filter(([, value]) => value !== ''),
+    );
+
+    try {
+      const response = await runMonteCarloSimulation(
+        {
+          mode: simMode,
+          startingEquity: parseFloat(startingEquity) || DEFAULT_STARTING_EQUITY,
+          winRate: parseFloat(winRate) || DEFAULT_WIN_RATE_PCT,
+          winLossRatio: parseFloat(winLossRatio) || DEFAULT_WIN_LOSS_RATIO_R,
+          riskFixed: parseFloat(avgRiskFixed) || 200,
+          riskPct: parseFloat(avgRiskPct) || 1,
+          minRisk: parseFloat(minRisk) || 0,
+          riskMode,
+          seed: seedRef.current,
+          numTrades: Math.max(10, Math.min(1000, parseInt(numTrades, 10) || DEFAULT_NUM_TRADES)),
+        },
+        apiFilters,
+      );
+
+      if (requestId !== requestIdRef.current) {
+        return;
+      }
+
       startTransition(() => {
-        setSimResult(e.data);
+        setSimResult({
+          chartData: response.chart_data,
+          metrics: response.metrics,
+          metadata: response.metadata,
+        });
+        if (response.metadata.effective_mode !== simMode) {
+          setSimMode(response.metadata.effective_mode);
+        }
         setSimLoading(false);
       });
-    };
-    worker.postMessage(paramsRef.current);
-  }, []);
+    } catch {
+      if (requestId === requestIdRef.current) {
+        setSimLoading(false);
+      }
+    }
+  }, [avgRiskFixed, avgRiskPct, filters, minRisk, numTrades, riskMode, simMode, startingEquity, winLossRatio, winRate]);
 
   // Run once automatically on mount
   useEffect(() => {
-    dispatchSimulation();
-    return () => { workerRef.current?.terminate(); workerRef.current = null; };
-  }, [dispatchSimulation]);
+    void dispatchSimulation();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Button handler — new random seed, then dispatch
   const handleNewSimulation = () => {
     seedRef.current += 1;
-    paramsRef.current = { ...paramsRef.current, seed: seedRef.current };
-    dispatchSimulation();
+    void dispatchSimulation();
   };
 
   // ---- Chart tooltip ----
@@ -255,12 +238,13 @@ export function MonteCarloSimulator({ summary, tradePnls }: MonteCarloSimulatorP
 
   // Only generate keys for the display subset (matches worker MAX_DISPLAY_LINES)
   const simKeys = useMemo(
-    () => Array.from({ length: MAX_DISPLAY_LINES }, (_, i) => `sim_${i}`),
-    [],
+    () => Object.keys(simResult?.chartData[0] ?? {}).filter((key) => key.startsWith('sim_')),
+    [simResult?.chartData],
   );
 
   const chartData = simResult?.chartData ?? [];
   const metrics = simResult?.metrics;
+  const simulationCount = simResult?.metadata.simulation_count ?? DEFAULT_SIMULATION_COUNT;
   const parsedNumTrades = Math.max(10, Math.min(1000, parseInt(numTrades, 10) || DEFAULT_NUM_TRADES));
 
   return (
@@ -279,13 +263,13 @@ export function MonteCarloSimulator({ summary, tradePnls }: MonteCarloSimulatorP
               <button
                 type="button"
                 onClick={() => startTransition(() => setSimMode('bootstrap'))}
-                disabled={rMultiples.length === 0}
+                disabled={!hasHistoricalTrades}
                 className={`flex-1 px-3 py-1.5 text-xs rounded-md border transition-colors ${
                   simMode === 'bootstrap'
                     ? 'bg-brand-600 text-white border-brand-600'
                     : 'bg-gray-100 text-gray-600 border-gray-300 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:border-gray-600 dark:hover:bg-gray-600'
                 } disabled:opacity-40 disabled:cursor-not-allowed`}
-                title={rMultiples.length === 0 ? 'No trades with R-multiples available' : 'Resample R-multiples from actual trades'}
+                title={!hasHistoricalTrades ? 'No closed trades available for bootstrap sampling' : 'Sample historical trades on the backend'}
               >
                 Sampling
               </button>
@@ -303,7 +287,7 @@ export function MonteCarloSimulator({ summary, tradePnls }: MonteCarloSimulatorP
             </div>
             <p className="mt-1 text-[10px] text-gray-400 dark:text-gray-500 leading-tight">
               {simMode === 'bootstrap'
-                ? `Picks a random R-multiple from ${rMultiples.length} real trades × risk per step.`
+                ? 'Samples filtered historical trades on the backend.'
                 : 'Uses win rate, W:L ratio and risk parameters.'}
             </p>
           </div>
@@ -452,7 +436,7 @@ export function MonteCarloSimulator({ summary, tradePnls }: MonteCarloSimulatorP
 
           {/* Info */}
           <p className="text-[10px] text-gray-400 dark:text-gray-500 leading-tight">
-            {NUM_SIMULATIONS} simulations × {parsedNumTrades.toLocaleString()} trades each.
+            {simulationCount.toLocaleString()} simulations × {parsedNumTrades.toLocaleString()} trades each.
           </p>
 
           {/* Run button */}

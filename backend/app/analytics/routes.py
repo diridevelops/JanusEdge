@@ -7,9 +7,18 @@ from flask_jwt_extended import (
 )
 
 from app.analytics import analytics_bp
+from app.analytics.monte_carlo import MonteCarloParams
 from app.analytics.service import AnalyticsService
 
 analytics_service = AnalyticsService()
+
+DEFAULT_STARTING_EQUITY = 10_000.0
+DEFAULT_WIN_RATE = 50.0
+DEFAULT_WIN_LOSS_RATIO = 2.0
+DEFAULT_NUM_TRADES = 500
+DEFAULT_RISK_FIXED = 200.0
+DEFAULT_RISK_PCT = 1.0
+DEFAULT_MIN_RISK = 50.0
 
 
 def _parse_filters() -> dict:
@@ -31,6 +40,160 @@ def _parse_filters() -> dict:
         "date_to": request.args.get("date_to"),
         "timezone": request.args.get("timezone"),
     }
+
+
+def _body_value(body: dict, *keys: str, default=None):
+    """Return the first present body value across key variants."""
+    for key in keys:
+        if key in body:
+            return body[key]
+    return default
+
+
+def _parse_float(
+    value,
+    field_name: str,
+    minimum: float | None = None,
+    maximum: float | None = None,
+) -> float:
+    """Parse and validate a float request field."""
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be a number") from exc
+
+    if minimum is not None and parsed < minimum:
+        raise ValueError(
+            f"{field_name} must be at least {minimum}"
+        )
+    if maximum is not None and parsed > maximum:
+        raise ValueError(
+            f"{field_name} must be at most {maximum}"
+        )
+    return parsed
+
+
+def _parse_int(
+    value,
+    field_name: str,
+    minimum: int | None = None,
+    maximum: int | None = None,
+) -> int:
+    """Parse and validate an integer request field."""
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field_name} must be an integer") from exc
+
+    if minimum is not None and parsed < minimum:
+        raise ValueError(
+            f"{field_name} must be at least {minimum}"
+        )
+    if maximum is not None and parsed > maximum:
+        raise ValueError(
+            f"{field_name} must be at most {maximum}"
+        )
+    return parsed
+
+
+def _parse_monte_carlo_params(body: dict) -> MonteCarloParams:
+    """Parse Monte Carlo request JSON into validated params."""
+    mode = str(
+        _body_value(body, "mode", default="parametric")
+    ).strip().lower()
+    if mode not in {"bootstrap", "parametric"}:
+        raise ValueError(
+            "mode must be 'bootstrap' or 'parametric'"
+        )
+
+    risk_mode = str(
+        _body_value(body, "riskMode", "risk_mode", default="percent")
+    ).strip().lower()
+    if risk_mode not in {"fixed", "percent"}:
+        raise ValueError(
+            "riskMode must be 'fixed' or 'percent'"
+        )
+
+    return MonteCarloParams(
+        mode=mode,
+        starting_equity=_parse_float(
+            _body_value(
+                body,
+                "startingEquity",
+                "starting_equity",
+                default=DEFAULT_STARTING_EQUITY,
+            ),
+            "startingEquity",
+            minimum=0.01,
+        ),
+        win_rate=_parse_float(
+            _body_value(
+                body,
+                "winRate",
+                "win_rate",
+                default=DEFAULT_WIN_RATE,
+            ),
+            "winRate",
+            minimum=0.0,
+            maximum=100.0,
+        ),
+        win_loss_ratio=_parse_float(
+            _body_value(
+                body,
+                "winLossRatio",
+                "win_loss_ratio",
+                default=DEFAULT_WIN_LOSS_RATIO,
+            ),
+            "winLossRatio",
+            minimum=0.0,
+        ),
+        risk_fixed=_parse_float(
+            _body_value(
+                body,
+                "riskFixed",
+                "risk_fixed",
+                default=DEFAULT_RISK_FIXED,
+            ),
+            "riskFixed",
+            minimum=0.0,
+        ),
+        risk_pct=_parse_float(
+            _body_value(
+                body,
+                "riskPct",
+                "risk_pct",
+                default=DEFAULT_RISK_PCT,
+            ),
+            "riskPct",
+            minimum=0.0,
+        ),
+        min_risk=_parse_float(
+            _body_value(
+                body,
+                "minRisk",
+                "min_risk",
+                default=DEFAULT_MIN_RISK,
+            ),
+            "minRisk",
+            minimum=0.0,
+        ),
+        risk_mode=risk_mode,
+        seed=_parse_int(
+            _body_value(body, "seed", default=42),
+            "seed",
+        ),
+        num_trades=_parse_int(
+            _body_value(
+                body,
+                "numTrades",
+                "num_trades",
+                default=DEFAULT_NUM_TRADES,
+            ),
+            "numTrades",
+            minimum=10,
+            maximum=1000,
+        ),
+    )
 
 
 @analytics_bp.route("/summary", methods=["GET"])
@@ -254,5 +417,25 @@ def get_evolution():
         filters,
         window=window,
         min_side_count=min_side_count,
+    )
+    return jsonify(data), 200
+
+
+@analytics_bp.route("/monte-carlo", methods=["POST"])
+@jwt_required()
+def get_monte_carlo():
+    """Run Monte Carlo simulations for the analytics dashboard."""
+    body = request.get_json(silent=True) or {}
+    try:
+        params = _parse_monte_carlo_params(body)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    user_id = get_jwt_identity()
+    filters = _parse_filters()
+    data = analytics_service.get_monte_carlo(
+        user_id,
+        params,
+        filters,
     )
     return jsonify(data), 200

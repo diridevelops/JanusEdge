@@ -817,6 +817,113 @@ class TestApptByTimeframe:
         assert data[1]["appt"] == 45.0
 
 
+class TestMonteCarlo:
+    """Tests for POST /api/analytics/monte-carlo."""
+
+    def test_requires_auth(self, client):
+        """Monte Carlo endpoint requires JWT."""
+        resp = client.post(
+            "/api/analytics/monte-carlo",
+            json={"mode": "parametric"},
+        )
+        assert resp.status_code == 401
+
+    def test_rejects_invalid_mode(
+        self, client, auth_headers
+    ):
+        """Monte Carlo endpoint validates the mode field."""
+        resp = client.post(
+            "/api/analytics/monte-carlo",
+            json={"mode": "invalid"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == 400
+        assert "mode" in resp.json["error"]
+
+    def test_parametric_is_deterministic(
+        self, client, auth_headers
+    ):
+        """Identical parametric requests produce identical output."""
+        payload = {
+            "mode": "parametric",
+            "startingEquity": 10000,
+            "winRate": 55,
+            "winLossRatio": 1.8,
+            "riskFixed": 200,
+            "riskPct": 1,
+            "minRisk": 50,
+            "riskMode": "fixed",
+            "seed": 42,
+            "numTrades": 25,
+        }
+
+        first = client.post(
+            "/api/analytics/monte-carlo",
+            json=payload,
+            headers=auth_headers,
+        )
+        second = client.post(
+            "/api/analytics/monte-carlo",
+            json=payload,
+            headers=auth_headers,
+        )
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert first.json == second.json
+        assert first.json["metadata"]["effective_mode"] == "parametric"
+        assert len(first.json["chart_data"]) >= 2
+
+    def test_bootstrap_uses_backend_trade_data(
+        self, app, client, auth_headers
+    ):
+        """Bootstrap mode ignores any client-sent R-multiple array."""
+        user_id = _get_user_id(app)
+        base = datetime(2025, 3, 1, 10, 0, 0)
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=200.0,
+            initial_risk=100.0,
+            exit_time=base,
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=-50.0,
+            initial_risk=50.0,
+            exit_time=base + timedelta(minutes=10),
+        )
+
+        resp = client.post(
+            "/api/analytics/monte-carlo",
+            json={
+                "mode": "bootstrap",
+                "startingEquity": 10000,
+                "winRate": 99,
+                "winLossRatio": 9,
+                "riskFixed": 100,
+                "riskPct": 1,
+                "minRisk": 10,
+                "riskMode": "fixed",
+                "seed": 7,
+                "numTrades": 20,
+                "rMultiples": [100.0, 100.0],
+            },
+            headers=auth_headers,
+        )
+
+        assert resp.status_code == 200
+        data = resp.json
+        assert data["metadata"]["requested_mode"] == "bootstrap"
+        assert data["metadata"]["effective_mode"] == "bootstrap"
+        assert data["metadata"]["bootstrap_trade_count"] == 2
+        assert data["metadata"]["bootstrap_r_multiple_count"] == 2
+        assert data["metadata"]["effective_win_rate"] == 50.0
+        assert data["metadata"]["effective_win_loss_ratio"] == 2.0
+        assert data["metrics"]["expectation"] == 0.5
+
+
 class TestAnalyticsAuth:
     """Test that analytics endpoints require auth."""
 

@@ -1,5 +1,19 @@
 /** Types for the What-if stop analysis module. */
 
+export interface ConfidenceInterval {
+  lower: number;
+  upper: number;
+}
+
+export interface StopAnalysisConfidenceIntervals {
+  mean?: ConfidenceInterval | null;
+  median?: ConfidenceInterval | null;
+  p75?: ConfidenceInterval | null;
+  p90?: ConfidenceInterval | null;
+  p95?: ConfidenceInterval | null;
+  iqr?: ConfidenceInterval | null;
+}
+
 export interface StopAnalysisDetail {
   trade_id: string;
   symbol: string;
@@ -17,8 +31,9 @@ export interface StopAnalysisResponse {
   p90: number;
   p95: number;
   iqr: number;
-  ci_lower: number;
-  ci_upper: number;
+  confidence_intervals?: StopAnalysisConfidenceIntervals | null;
+  ci_lower?: number;
+  ci_upper?: number;
   details: StopAnalysisDetail[];
 }
 

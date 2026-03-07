@@ -129,9 +129,63 @@ export interface EvolutionPoint {
   running_r_avg_loss_abs: number | null;
 }
 
-/** Per-trade P&L for bootstrap resampling. */
-export interface TradePnl {
-  net_pnl: number;
-  /** R-multiple (net_pnl / initial_risk). null when no initial risk. */
-  r_multiple: number | null;
+export type MonteCarloSimulationMode = 'bootstrap' | 'parametric';
+
+export type MonteCarloRiskMode = 'fixed' | 'percent';
+
+export interface MonteCarloSimulationRequest {
+  mode: MonteCarloSimulationMode;
+  startingEquity: number;
+  winRate: number;
+  winLossRatio: number;
+  riskFixed: number;
+  riskPct: number;
+  minRisk: number;
+  riskMode: MonteCarloRiskMode;
+  seed: number;
+  numTrades: number;
+}
+
+export interface MonteCarloSimulationPoint {
+  trade: number;
+  avgEquity: number;
+  [key: string]: number;
+}
+
+export interface MonteCarloSimulationMetrics {
+  kelly: number;
+  expectation: number;
+  biggestMaxDrawdown: number;
+  biggestMaxDrawdownPct: number;
+  avgMaxDrawdown: number;
+  avgMaxDrawdownPct: number;
+  minEquity: number;
+  maxEquity: number;
+  avgFinalEquity: number;
+  avgPerformancePct: number;
+  returnOnMaxDrawdown: number;
+  maxConsecutiveWins: number;
+  maxConsecutiveLosses: number;
+  pctProfitable: number;
+  pctRuined: number;
+}
+
+export interface MonteCarloSimulationMetadata {
+  requested_mode: MonteCarloSimulationMode;
+  effective_mode: MonteCarloSimulationMode;
+  simulation_count: number;
+  displayed_simulation_count: number;
+  chart_step: number;
+  num_trades: number;
+  seed: number;
+  bootstrap_trade_count: number;
+  bootstrap_r_multiple_count: number;
+  effective_win_rate: number;
+  effective_win_loss_ratio: number;
+}
+
+export interface MonteCarloSimulationResponse {
+  chart_data: MonteCarloSimulationPoint[];
+  metrics: MonteCarloSimulationMetrics;
+  metadata: MonteCarloSimulationMetadata;
 }

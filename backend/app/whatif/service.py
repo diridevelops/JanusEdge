@@ -18,6 +18,10 @@ from app.repositories.market_data_repo import (
 from app.repositories.tag_repo import TagRepository
 from app.repositories.trade_repo import TradeRepository
 from app.whatif.cache import _CACHE_TTL, _sim_cache
+from app.whatif.bootstrap import (
+    build_confidence_intervals,
+    empty_confidence_intervals,
+)
 
 
 def _parse_date_from(value: str) -> datetime:
@@ -58,36 +62,6 @@ def _percentile(
     hi = min(lo + 1, len(s) - 1)
     w = rank - lo
     return float(s[lo]) + (float(s[hi]) - float(s[lo])) * w
-
-
-def _bootstrap_ci(
-    values: List[float],
-    n_boot: int = 10_000,
-    ci: float = 95.0,
-) -> Tuple[float, float]:
-    """Compute bootstrap confidence interval for the mean.
-
-    Parameters:
-        values: Sample data.
-        n_boot: Number of bootstrap resamples.
-        ci: Confidence level percentage.
-
-    Returns:
-        Tuple of (lower_bound, upper_bound).
-    """
-    if len(values) < 2:
-        m = float(values[0]) if values else 0.0
-        return (m, m)
-    arr = np.array(values, dtype=np.float64)
-    rng = np.random.default_rng(42)
-    means = np.empty(n_boot, dtype=np.float64)
-    for i in range(n_boot):
-        sample = rng.choice(arr, size=len(arr))
-        means[i] = sample.mean()
-    alpha = (100.0 - ci) / 2.0
-    lo = float(np.percentile(means, alpha))
-    hi = float(np.percentile(means, 100.0 - alpha))
-    return (lo, hi)
 
 
 def _build_match(
@@ -223,9 +197,12 @@ class WhatIfService:
         if not overshoot_rs:
             return self._empty_analysis()
 
-        ci_lo, ci_hi = _bootstrap_ci(overshoot_rs)
         q25 = _percentile(overshoot_rs, 25)
         q75 = _percentile(overshoot_rs, 75)
+        confidence_intervals = build_confidence_intervals(
+            overshoot_rs
+        )
+        mean_interval = confidence_intervals["mean"]
 
         return {
             "count": len(overshoot_rs),
@@ -245,8 +222,15 @@ class WhatIfService:
                 _percentile(overshoot_rs, 95), 4
             ),
             "iqr": round(q75 - q25, 4),
-            "ci_lower": round(ci_lo, 4),
-            "ci_upper": round(ci_hi, 4),
+            "ci_lower": round(mean_interval["lower"], 4),
+            "ci_upper": round(mean_interval["upper"], 4),
+            "confidence_intervals": {
+                key: {
+                    "lower": round(interval["lower"], 4),
+                    "upper": round(interval["upper"], 4),
+                }
+                for key, interval in confidence_intervals.items()
+            },
             "details": details,
         }
 
@@ -931,5 +915,6 @@ class WhatIfService:
             "iqr": 0,
             "ci_lower": 0,
             "ci_upper": 0,
+            "confidence_intervals": empty_confidence_intervals(),
             "details": [],
         }

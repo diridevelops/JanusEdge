@@ -102,6 +102,14 @@ class TestStopAnalysis:
         assert resp.status_code == 200
         data = resp.get_json()
         assert data["count"] == 0
+        assert data["confidence_intervals"] == {
+            "mean": {"lower": 0.0, "upper": 0.0},
+            "median": {"lower": 0.0, "upper": 0.0},
+            "p75": {"lower": 0.0, "upper": 0.0},
+            "p90": {"lower": 0.0, "upper": 0.0},
+            "p95": {"lower": 0.0, "upper": 0.0},
+            "iqr": {"lower": 0.0, "upper": 0.0},
+        }
 
     def test_analysis_with_wicked_out_trade(self, client):
         """Computes R-normalized overshoot correctly."""
@@ -122,6 +130,16 @@ class TestStopAnalysis:
         # overshoot_R = |4990-4985| / |5000-4990| = 5/10 = 0.5
         assert data["mean"] == 0.5
         assert data["median"] == 0.5
+        assert data["ci_lower"] == 0.5
+        assert data["ci_upper"] == 0.5
+        assert data["confidence_intervals"] == {
+            "mean": {"lower": 0.5, "upper": 0.5},
+            "median": {"lower": 0.5, "upper": 0.5},
+            "p75": {"lower": 0.5, "upper": 0.5},
+            "p90": {"lower": 0.5, "upper": 0.5},
+            "p95": {"lower": 0.5, "upper": 0.5},
+            "iqr": {"lower": 0.0, "upper": 0.0},
+        }
         assert len(data["details"]) == 1
 
     def test_excludes_breakeven_trades(self, client):

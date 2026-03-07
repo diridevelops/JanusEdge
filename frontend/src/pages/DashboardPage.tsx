@@ -3,13 +3,12 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import {
-    getApptByDayOfWeek,
-    getApptByTimeframe,
-    getByTag,
-    getDrawdown,
-    getEquityCurve,
-    getSummary,
-    getTradePnls,
+  getApptByDayOfWeek,
+  getApptByTimeframe,
+  getByTag,
+  getDrawdown,
+  getEquityCurve,
+  getSummary,
 } from '../api/analytics.api';
 import { EvolutionTab } from '../components/analytics/EvolutionTab';
 import { MonteCarloSimulator } from '../components/analytics/MonteCarloSimulator';
@@ -23,13 +22,12 @@ import { FilterBar } from '../components/filters/FilterBar';
 import { Spinner } from '../components/ui/Spinner';
 import { useAuth } from '../hooks/useAuth';
 import type {
-    AnalyticsSummary,
-    ApptByDayOfWeekEntry,
-    ApptByTimeframeEntry,
-    DrawdownPoint,
-    EquityCurvePoint,
-    TagAnalytics,
-    TradePnl,
+  AnalyticsSummary,
+  ApptByDayOfWeekEntry,
+  ApptByTimeframeEntry,
+  DrawdownPoint,
+  EquityCurvePoint,
+  TagAnalytics,
 } from '../types/analytics.types';
 import { formatCurrency, formatPercent } from '../utils/formatters';
 
@@ -54,7 +52,6 @@ export function DashboardPage() {
   const [apptByDayOfWeek, setApptByDayOfWeek] = useState<ApptByDayOfWeekEntry[]>([]);
   const [apptByTimeframe, setApptByTimeframe] = useState<ApptByTimeframeEntry[]>([]);
   const [tagAnalytics, setTagAnalytics] = useState<TagAnalytics[]>([]);
-  const [tradePnls, setTradePnls] = useState<TradePnl[]>([]);
   const [activeTab, setActiveTab] = useState<DashboardTab>('overview');
 
   type Filters = typeof filters;
@@ -72,7 +69,6 @@ export function DashboardPage() {
         dayOfWeekRes,
         timeframeRes,
         tagRes,
-        tradePnlsRes,
       ] = await Promise.all([
         getSummary(apiFilters),
         getEquityCurve(apiFilters),
@@ -80,7 +76,6 @@ export function DashboardPage() {
         getApptByDayOfWeek(apiFilters, displayTimezone),
         getApptByTimeframe(apiFilters, displayTimezone),
         getByTag(apiFilters),
-        getTradePnls(apiFilters),
       ]);
 
       setSummary(summaryRes);
@@ -89,7 +84,6 @@ export function DashboardPage() {
       setApptByDayOfWeek(dayOfWeekRes);
       setApptByTimeframe(timeframeRes);
       setTagAnalytics(tagRes);
-      setTradePnls(tradePnlsRes);
     } catch {
       // Toast handled by Axios interceptor for 401
     } finally {
@@ -342,7 +336,7 @@ export function DashboardPage() {
       )}
 
       {activeTab === 'simulator' && (
-        <MonteCarloSimulator summary={summary} tradePnls={tradePnls} />
+        <MonteCarloSimulator summary={summary} filters={filters} />
       )}
     </div>
   );

@@ -7,6 +7,10 @@ from typing import Any, Dict, List, Optional
 
 from bson import ObjectId
 
+from app.analytics.monte_carlo import (
+    MonteCarloParams,
+    run_monte_carlo_simulation,
+)
 from app.extensions import mongo
 
 
@@ -702,6 +706,45 @@ class AnalyticsService:
                 {"net_pnl": pnl, "r_multiple": r_mul}
             )
         return results
+
+    def get_monte_carlo(
+        self,
+        user_id: str,
+        params: MonteCarloParams,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Run Monte Carlo simulation for dashboard analytics."""
+        if filters is None:
+            filters = {}
+
+        r_multiples: List[float] = []
+        bootstrap_trade_count = 0
+
+        if params.mode == "bootstrap":
+            match = _build_base_match(user_id, filters)
+            trades = list(
+                mongo.db.trades.find(
+                    match,
+                    {
+                        "net_pnl": 1,
+                        "initial_risk": 1,
+                        "_id": 0,
+                    },
+                )
+            )
+            bootstrap_trade_count = len(trades)
+            for trade in trades:
+                risk = trade.get("initial_risk")
+                if risk and risk > 0:
+                    r_multiples.append(
+                        float(trade["net_pnl"]) / float(risk)
+                    )
+
+        return run_monte_carlo_simulation(
+            params,
+            r_multiples,
+            bootstrap_trade_count=bootstrap_trade_count,
+        )
 
     def get_equity_curve(
         self,

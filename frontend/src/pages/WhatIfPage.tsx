@@ -5,33 +5,15 @@ import { Link } from 'react-router-dom';
 import { getStopAnalysis, getWickedOutTrades, runSimulation } from '../api/whatif.api';
 import { FilterBar } from '../components/filters/FilterBar';
 import { InfoTooltip } from '../components/ui/InfoTooltip';
-import type {
-  StopAnalysisWorkerOutput,
-} from '../components/whatif/stopAnalysis.worker';
-import type { WorkerInput, WorkerOutput } from '../components/whatif/whatif.worker';
 import { useToast } from '../hooks/useToast';
 import type {
+  ConfidenceInterval,
   SimulationDetail,
+  SimulationResponse,
   StopAnalysisResponse,
   WickedOutTrade,
 } from '../types/whatif.types';
 import { formatCurrency, formatPnL } from '../utils/formatters';
-
-const STOP_ANALYSIS_BOOTSTRAP_SAMPLES = 10000;
-
-function createSimulationWorker() {
-  return new Worker(
-    new URL('../components/whatif/whatif.worker.ts', import.meta.url),
-    { type: 'module' },
-  );
-}
-
-function createStopAnalysisWorker() {
-  return new Worker(
-    new URL('../components/whatif/stopAnalysis.worker.ts', import.meta.url),
-    { type: 'module' },
-  );
-}
 
 /* ------------------------------------------------------------------ */
 /*  Sub-components                                                     */
@@ -42,13 +24,11 @@ function MetricCard({
   value,
   descriptionTooltip,
   ciTooltip,
-  ciTooltipLoading = false,
 }: {
   label: string;
   value: string;
   descriptionTooltip?: string;
   ciTooltip?: string;
-  ciTooltipLoading?: boolean;
 }) {
   return (
     <div className="flex flex-col">
@@ -60,9 +40,7 @@ function MetricCard({
       </span>
       <span className="text-sm font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-1">
         {value}
-        {ciTooltipLoading ? (
-          <Loader2 className="h-3 w-3 animate-spin text-gray-400 dark:text-gray-500" />
-        ) : ciTooltip ? (
+        {ciTooltip ? (
           <InfoTooltip
             text={ciTooltip}
             ariaLabel={`Confidence interval for ${label}`}
@@ -76,9 +54,9 @@ function MetricCard({
   );
 }
 
-function formatBcaTooltip(ci: { lower: number; upper: number } | null) {
+function formatBcaTooltip(ci: ConfidenceInterval | null | undefined) {
   if (!ci) return undefined;
-  return `95% BCa bootstrap CI: = [${ci.lower.toFixed(2)}, ${ci.upper.toFixed(2)}]`;
+  return `95% bootstrap CI: [${ci.lower.toFixed(2)}, ${ci.upper.toFixed(2)}]`;
 }
 
 function getStopMetricTooltip(label: string) {
@@ -130,6 +108,95 @@ function DeltaCell({
 
 function formatRValue(value: number | null) {
   return value == null ? '—' : `${value.toFixed(2)}R`;
+}
+
+function CardLoadingOverlay({ label }: { label: string }) {
+  return (
+    <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-white/70 dark:bg-gray-900/70">
+      <div className="flex items-center gap-2 rounded-md border border-gray-200 bg-white/90 px-3 py-2 text-xs text-gray-600 shadow-sm dark:border-gray-700 dark:bg-gray-800/90 dark:text-gray-300">
+        <Loader2 className="h-4 w-4 animate-spin text-brand-600" />
+        <span>{label}</span>
+      </div>
+    </div>
+  );
+}
+
+function parseProfitFactor(value: number | string): number | null {
+  if (typeof value === 'number') {
+    return value;
+  }
+  if (value === 'Inf') {
+    return Number.POSITIVE_INFINITY;
+  }
+  return null;
+}
+
+function buildSimulationViewModel(response: SimulationResponse) {
+  const originalProfitFactor = parseProfitFactor(response.original.profit_factor);
+  const whatIfProfitFactor = parseProfitFactor(response.what_if.profit_factor);
+  const profitFactorDelta =
+    originalProfitFactor === null || whatIfProfitFactor === null
+      ? null
+      : Number.isFinite(originalProfitFactor) && Number.isFinite(whatIfProfitFactor)
+        ? whatIfProfitFactor - originalProfitFactor
+        : originalProfitFactor === whatIfProfitFactor
+          ? 0
+          : whatIfProfitFactor - originalProfitFactor;
+
+  const convertedDetails = response.details.filter((detail) => detail.converted);
+  const simulatedDetails = response.details.filter(
+    (detail) => detail.status === 'simulated' && !detail.converted,
+  );
+  const skippedDetails = response.details.filter(
+    (detail) => detail.status !== 'simulated' && !detail.converted,
+  );
+
+  return {
+    original: response.original,
+    whatIf: response.what_if,
+    delta: {
+      total_pnl: response.what_if.total_pnl - response.original.total_pnl,
+      avg_pnl: response.what_if.avg_pnl - response.original.avg_pnl,
+      win_rate: response.what_if.win_rate - response.original.win_rate,
+      expectancy_r:
+        response.original.expectancy_r !== null && response.what_if.expectancy_r !== null
+          ? response.what_if.expectancy_r - response.original.expectancy_r
+          : null,
+      winners_change: response.what_if.total_winners - response.original.total_winners,
+      losers_change: response.what_if.total_losers - response.original.total_losers,
+      profit_factor: profitFactorDelta,
+    },
+    tradesTotal: response.trades_total,
+    tradesConverted: response.trades_converted,
+    tradesSimulated: response.trades_simulated,
+    tradesSkipped: response.trades_skipped,
+    convertedDetails,
+    simulatedDetails,
+    skippedDetails,
+  };
+}
+
+function getAnalysisConfidenceInterval(
+  analysis: StopAnalysisResponse | null,
+  metric: 'mean' | 'median' | 'p75' | 'p90' | 'p95' | 'iqr',
+): ConfidenceInterval | null {
+  if (!analysis) {
+    return null;
+  }
+
+  const interval = analysis.confidence_intervals?.[metric] ?? null;
+  if (interval) {
+    return interval;
+  }
+
+  if (metric === 'mean' && analysis.ci_lower != null && analysis.ci_upper != null) {
+    return {
+      lower: analysis.ci_lower,
+      upper: analysis.ci_upper,
+    };
+  }
+
+  return null;
 }
 
 function getSimulationStatusLabel(status: string) {
@@ -281,8 +348,6 @@ export function WhatIfPage() {
   // ---- Stop Analysis ----
   const [analysis, setAnalysis] = useState<StopAnalysisResponse | null>(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
-  const [analysisCis, setAnalysisCis] = useState<StopAnalysisWorkerOutput | null>(null);
-  const [analysisCiLoading, setAnalysisCiLoading] = useState(false);
 
   // ---- Wicked-out trades ----
   const [woTrades, setWoTrades] = useState<WickedOutTrade[]>([]);
@@ -292,18 +357,20 @@ export function WhatIfPage() {
   // ---- Simulation ----
   const [rWidening, setRWidening] = useState('0.5');
   const [simLoading, setSimLoading] = useState(false);
-  const [simResult, setSimResult] = useState<WorkerOutput | null>(null);
+  const [simResult, setSimResult] = useState<ReturnType<typeof buildSimulationViewModel> | null>(null);
   const [resultSectionsExpanded, setResultSectionsExpanded] = useState({
     converted: true,
     simulated: false,
     skipped: false,
   });
-  const simCache = useRef<Map<string, WorkerOutput>>(new Map());
-  const simulationWorkerRef = useRef<Worker | null>(null);
-  const stopAnalysisWorkerRef = useRef<Worker | null>(null);
+  const simCache = useRef<Map<string, ReturnType<typeof buildSimulationViewModel>>>(new Map());
+  const dataRequestIdRef = useRef(0);
+  const simulationRequestIdRef = useRef(0);
 
   // Fetch analysis + wicked-out trades on filter change
   const fetchData = useCallback(async (f: Record<string, string>) => {
+    const requestId = dataRequestIdRef.current + 1;
+    dataRequestIdRef.current = requestId;
     setAnalysisLoading(true);
     setWoLoading(true);
     try {
@@ -311,14 +378,18 @@ export function WhatIfPage() {
         getStopAnalysis(f),
         getWickedOutTrades(f),
       ]);
+      if (requestId !== dataRequestIdRef.current) {
+        return;
+      }
       setAnalysis(analysisRes);
-      setAnalysisCis(null);
       setWoTrades(woRes.trades);
     } catch {
       // Silenced — 401 handled by interceptor
     } finally {
-      setAnalysisLoading(false);
-      setWoLoading(false);
+      if (requestId === dataRequestIdRef.current) {
+        setAnalysisLoading(false);
+        setWoLoading(false);
+      }
     }
   }, []);
 
@@ -327,48 +398,13 @@ export function WhatIfPage() {
       void fetchData(apiFilters);
     } else {
       setAnalysis(null);
-      setAnalysisCis(null);
       setWoTrades([]);
     }
     // Reset simulation results on filter change
     setSimResult(null);
     simCache.current.clear();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters.symbol, filters.side, filters.account, filters.date_from, filters.date_to]);
-
-  useEffect(() => {
-    const overshoots = (analysis?.details ?? []).map((detail) => detail.overshoot_r);
-
-    stopAnalysisWorkerRef.current?.terminate();
-    stopAnalysisWorkerRef.current = null;
-
-    if (overshoots.length === 0) {
-      setAnalysisCis(null);
-      setAnalysisCiLoading(false);
-      return;
-    }
-
-    setAnalysisCiLoading(true);
-    const worker = createStopAnalysisWorker();
-    stopAnalysisWorkerRef.current = worker;
-    worker.onmessage = (event: MessageEvent<StopAnalysisWorkerOutput>) => {
-      startTransition(() => {
-        setAnalysisCis(event.data);
-        setAnalysisCiLoading(false);
-      });
-    };
-    worker.postMessage({
-      overshoots,
-      bootstrapSamples: STOP_ANALYSIS_BOOTSTRAP_SAMPLES,
-    });
-
-    return () => {
-      worker.terminate();
-      if (stopAnalysisWorkerRef.current === worker) {
-        stopAnalysisWorkerRef.current = null;
-      }
-    };
-  }, [analysis]);
+  }, [filters.symbol, filters.side, filters.account, filters.tag, filters.date_from, filters.date_to]);
 
   // Simulation handler
   async function handleSimulate() {
@@ -385,50 +421,32 @@ export function WhatIfPage() {
       return;
     }
 
+    const requestId = simulationRequestIdRef.current + 1;
+    simulationRequestIdRef.current = requestId;
     setSimLoading(true);
     try {
       const response = await runSimulation(rVal, apiFilters);
-
-      // Pass to web worker for delta computation
-      simulationWorkerRef.current?.terminate();
-      const worker = createSimulationWorker();
-      simulationWorkerRef.current = worker;
-      worker.onmessage = (e: MessageEvent<WorkerOutput>) => {
-        startTransition(() => {
-          setSimResult(e.data);
-          setResultSectionsExpanded({
-            converted: true,
-            simulated: false,
-            skipped: false,
-          });
-          simCache.current.set(cacheKey, e.data);
-          setSimLoading(false);
+      if (requestId !== simulationRequestIdRef.current) {
+        return;
+      }
+      const viewModel = buildSimulationViewModel(response);
+      startTransition(() => {
+        setSimResult(viewModel);
+        setResultSectionsExpanded({
+          converted: true,
+          simulated: false,
+          skipped: false,
         });
-      };
-      worker.postMessage({
-        original: response.original,
-        what_if: response.what_if,
-        details: response.details,
-        trades_total: response.trades_total,
-        trades_converted: response.trades_converted,
-        trades_simulated: response.trades_simulated,
-        trades_skipped: response.trades_skipped,
-      } as WorkerInput);
+        simCache.current.set(cacheKey, viewModel);
+        setSimLoading(false);
+      });
     } catch {
       addToast('error', 'Simulation failed');
-      setSimLoading(false);
+      if (requestId === simulationRequestIdRef.current) {
+        setSimLoading(false);
+      }
     }
   }
-
-  // Cleanup worker on unmount
-  useEffect(() => {
-    return () => {
-      simulationWorkerRef.current?.terminate();
-      simulationWorkerRef.current = null;
-      stopAnalysisWorkerRef.current?.terminate();
-      stopAnalysisWorkerRef.current = null;
-    };
-  }, []);
 
   // Wicked-out summary counts
   const woWithData = woTrades.filter((t) => t.has_ohlc_data).length;
@@ -467,7 +485,8 @@ export function WhatIfPage() {
       {filters.symbol && (
         <>
           {/* ---- Wicked-Out Trades ---- */}
-          <div className="card overflow-hidden">
+          <div className="card relative overflow-hidden">
+            {woLoading && woTrades.length > 0 ? <CardLoadingOverlay label="Updating wicked-out trades…" /> : null}
             <button
               type="button"
               onClick={() => setWoExpanded((p) => !p)}
@@ -577,7 +596,8 @@ export function WhatIfPage() {
           </div>
 
           {/* ---- Stop Management ---- */}
-          <div className="card p-6">
+          <div className="card relative p-6">
+            {analysisLoading && analysis ? <CardLoadingOverlay label="Updating stop analysis…" /> : null}
             <div className="flex items-center gap-1 mb-4">
               <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
                 Stop Management — Overshoot in R
@@ -611,43 +631,37 @@ export function WhatIfPage() {
                     label="Mean"
                     value={`${analysis.mean.toFixed(2)}R`}
                     descriptionTooltip={getStopMetricTooltip('Mean')}
-                    ciTooltip={formatBcaTooltip(analysisCis?.mean ?? null)}
-                    ciTooltipLoading={analysisCiLoading}
+                    ciTooltip={formatBcaTooltip(getAnalysisConfidenceInterval(analysis, 'mean'))}
                   />
                   <MetricCard
                     label="Median"
                     value={`${analysis.median.toFixed(2)}R`}
                     descriptionTooltip={getStopMetricTooltip('Median')}
-                    ciTooltip={formatBcaTooltip(analysisCis?.median ?? null)}
-                    ciTooltipLoading={analysisCiLoading}
+                    ciTooltip={formatBcaTooltip(getAnalysisConfidenceInterval(analysis, 'median'))}
                   />
                   <MetricCard
                     label="P75"
                     value={`${analysis.p75.toFixed(2)}R`}
                     descriptionTooltip={getStopMetricTooltip('P75')}
-                    ciTooltip={formatBcaTooltip(analysisCis?.p75 ?? null)}
-                    ciTooltipLoading={analysisCiLoading}
+                    ciTooltip={formatBcaTooltip(getAnalysisConfidenceInterval(analysis, 'p75'))}
                   />
                   <MetricCard
                     label="P90"
                     value={`${analysis.p90.toFixed(2)}R`}
                     descriptionTooltip={getStopMetricTooltip('P90')}
-                    ciTooltip={formatBcaTooltip(analysisCis?.p90 ?? null)}
-                    ciTooltipLoading={analysisCiLoading}
+                    ciTooltip={formatBcaTooltip(getAnalysisConfidenceInterval(analysis, 'p90'))}
                   />
                   <MetricCard
                     label="P95"
                     value={`${analysis.p95.toFixed(2)}R`}
                     descriptionTooltip={getStopMetricTooltip('P95')}
-                    ciTooltip={formatBcaTooltip(analysisCis?.p95 ?? null)}
-                    ciTooltipLoading={analysisCiLoading}
+                    ciTooltip={formatBcaTooltip(getAnalysisConfidenceInterval(analysis, 'p95'))}
                   />
                   <MetricCard
                     label="IQR"
                     value={`${analysis.iqr.toFixed(2)}R`}
                     descriptionTooltip={getStopMetricTooltip('IQR')}
-                    ciTooltip={formatBcaTooltip(analysisCis?.iqr ?? null)}
-                    ciTooltipLoading={analysisCiLoading}
+                    ciTooltip={formatBcaTooltip(getAnalysisConfidenceInterval(analysis, 'iqr'))}
                   />
                 </div>
               </>
@@ -703,8 +717,16 @@ export function WhatIfPage() {
               </button>
             </div>
 
-            {simResult && (
-              <div className="space-y-4">
+            {(simResult || simLoading) && (
+              <div className="relative space-y-4">
+                {simLoading && simResult ? <CardLoadingOverlay label="Running simulation…" /> : null}
+                {simLoading && !simResult ? (
+                  <div className="flex justify-center py-10">
+                    <Loader2 className="h-6 w-6 animate-spin text-brand-600" />
+                  </div>
+                ) : null}
+                {simResult ? (
+                <>
                 {/* Summary line */}
                 <p className="text-xs text-gray-500 dark:text-gray-400">
                   {simResult.tradesTotal} trades: {simResult.tradesConverted} converted to winners, {simResult.tradesSimulated} simulated, {simResult.tradesSkipped} skipped
@@ -809,6 +831,8 @@ export function WhatIfPage() {
                     trades={simResult.skippedDetails}
                   />
                 </div>
+                </>
+                ) : null}
               </div>
             )}
           </div>

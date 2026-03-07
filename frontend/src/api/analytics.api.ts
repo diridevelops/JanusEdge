@@ -10,7 +10,8 @@ import type {
   ApptByDayOfWeekEntry,
   ApptByTimeframeEntry,
   EvolutionPoint,
-  TradePnl,
+  MonteCarloSimulationRequest,
+  MonteCarloSimulationResponse,
 } from '../types/analytics.types';
 import type { FilterParams } from '../types/common.types';
 
@@ -20,17 +21,6 @@ export async function getSummary(
 ): Promise<AnalyticsSummary> {
   const res = await apiClient.get<AnalyticsSummary>(
     '/analytics/summary',
-    { params: filters }
-  );
-  return res.data;
-}
-
-/** Get per-trade P&L values for bootstrap resampling. */
-export async function getTradePnls(
-  filters?: FilterParams
-): Promise<TradePnl[]> {
-  const res = await apiClient.get<TradePnl[]>(
-    '/analytics/trade-pnls',
     { params: filters }
   );
   return res.data;
@@ -142,6 +132,19 @@ export async function getEvolution(
         min_side_count: minSideCount,
       },
     }
+  );
+  return res.data;
+}
+
+/** Run a Monte Carlo simulation on the backend. */
+export async function runMonteCarloSimulation(
+  payload: MonteCarloSimulationRequest,
+  filters?: FilterParams,
+): Promise<MonteCarloSimulationResponse> {
+  const res = await apiClient.post<MonteCarloSimulationResponse>(
+    '/analytics/monte-carlo',
+    payload,
+    { params: filters },
   );
   return res.data;
 }
