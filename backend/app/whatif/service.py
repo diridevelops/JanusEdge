@@ -202,7 +202,6 @@ class WhatIfService:
         confidence_intervals = build_confidence_intervals(
             overshoot_rs
         )
-        mean_interval = confidence_intervals["mean"]
 
         return {
             "count": len(overshoot_rs),
@@ -222,8 +221,6 @@ class WhatIfService:
                 _percentile(overshoot_rs, 95), 4
             ),
             "iqr": round(q75 - q25, 4),
-            "ci_lower": round(mean_interval["lower"], 4),
-            "ci_upper": round(mean_interval["upper"], 4),
             "confidence_intervals": {
                 key: {
                     "lower": round(interval["lower"], 4),
@@ -518,54 +515,6 @@ class WhatIfService:
                 new_stop = exit_p - widening_pts
             else:
                 new_stop = exit_p + widening_pts
-
-            # Wicked-out guard: if the trade has a
-            # wish_stop_price, the user asserts the price
-            # reached that level.  When the new stop is
-            # between exit and wish_stop the price
-            # definitely hit it → compute loss at new_stop
-            # (bigger loss) without bar replay.
-            wish_stop = t.get("wish_stop_price")
-            if wish_stop is not None:
-                stop_definitely_hit = (
-                    (side == "Long"
-                     and new_stop >= wish_stop)
-                    or (side == "Short"
-                        and new_stop <= wish_stop)
-                )
-                if stop_definitely_hit:
-                    if side == "Long":
-                        gross = ((new_stop - entry)
-                                 * qty * point_value)
-                    else:
-                        gross = ((entry - new_stop)
-                                 * qty * point_value)
-                    new_pnl = round(gross - fee, 2)
-                    if new_pnl > 0:
-                        converted += 1
-                    else:
-                        simulated += 1
-                    whatif_pnls.append(new_pnl)
-                    whatif_grosses.append(round(new_pnl + fee, 2))
-                    if widened_risk:
-                        whatif_rs.append(new_pnl / widened_risk)
-                    details.append({
-                        "trade_id": str(t["_id"]),
-                        "symbol": symbol,
-                        "side": side,
-                        "entry_time": (
-                            entry_time.isoformat()
-                            if isinstance(entry_time, datetime)
-                            else str(entry_time or "")
-                        ),
-                        "original_pnl": round(
-                            net_pnl, 2
-                        ),
-                        "new_pnl": new_pnl,
-                        "converted": new_pnl > 0,
-                        "status": "simulated",
-                    })
-                    continue
 
             # Check OHLC data
             # Pick best available OHLC interval
@@ -913,8 +862,6 @@ class WhatIfService:
             "p90": 0,
             "p95": 0,
             "iqr": 0,
-            "ci_lower": 0,
-            "ci_upper": 0,
             "confidence_intervals": empty_confidence_intervals(),
             "details": [],
         }

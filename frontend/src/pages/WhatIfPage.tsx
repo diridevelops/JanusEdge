@@ -184,19 +184,7 @@ function getAnalysisConfidenceInterval(
     return null;
   }
 
-  const interval = analysis.confidence_intervals?.[metric] ?? null;
-  if (interval) {
-    return interval;
-  }
-
-  if (metric === 'mean' && analysis.ci_lower != null && analysis.ci_upper != null) {
-    return {
-      lower: analysis.ci_lower,
-      upper: analysis.ci_upper,
-    };
-  }
-
-  return null;
+  return analysis.confidence_intervals?.[metric] ?? null;
 }
 
 function getSimulationStatusLabel(status: string) {

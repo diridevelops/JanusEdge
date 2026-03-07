@@ -32,8 +32,6 @@ export interface StopAnalysisResponse {
   p95: number;
   iqr: number;
   confidence_intervals?: StopAnalysisConfidenceIntervals | null;
-  ci_lower?: number;
-  ci_upper?: number;
   details: StopAnalysisDetail[];
 }
 

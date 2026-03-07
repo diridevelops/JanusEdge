@@ -110,6 +110,8 @@ class TestStopAnalysis:
             "p95": {"lower": 0.0, "upper": 0.0},
             "iqr": {"lower": 0.0, "upper": 0.0},
         }
+        assert "ci_lower" not in data
+        assert "ci_upper" not in data
 
     def test_analysis_with_wicked_out_trade(self, client):
         """Computes R-normalized overshoot correctly."""
@@ -130,8 +132,6 @@ class TestStopAnalysis:
         # overshoot_R = |4990-4985| / |5000-4990| = 5/10 = 0.5
         assert data["mean"] == 0.5
         assert data["median"] == 0.5
-        assert data["ci_lower"] == 0.5
-        assert data["ci_upper"] == 0.5
         assert data["confidence_intervals"] == {
             "mean": {"lower": 0.5, "upper": 0.5},
             "median": {"lower": 0.5, "upper": 0.5},
@@ -140,6 +140,8 @@ class TestStopAnalysis:
             "p95": {"lower": 0.5, "upper": 0.5},
             "iqr": {"lower": 0.0, "upper": 0.0},
         }
+        assert "ci_lower" not in data
+        assert "ci_upper" not in data
         assert len(data["details"]) == 1
 
     def test_excludes_breakeven_trades(self, client):
@@ -449,6 +451,68 @@ class TestSimulate:
         )
         assert winner_detail["converted"] is False
         assert converted_detail["converted"] is True
+
+    def test_market_replay_can_convert_with_smaller_widening_than_wish_stop(
+        self, client, app
+    ):
+        """Conversion must be based on OHLC replay, not wish-stop alone."""
+        token = _register_and_login(client)
+        loser = _create_trade(client, token)
+
+        update_resp = client.put(
+            f"/api/trades/{loser['id']}",
+            json={
+                "wish_stop_price": 4985.0,
+                "target_price": 5005.0,
+            },
+            headers=_auth(token),
+        )
+        assert update_resp.status_code == 200
+
+        with app.app_context():
+            from app.extensions import mongo
+
+            mongo.db.market_data_cache.insert_one({
+                "symbol": "MES=F",
+                "interval": "1m",
+                "date": datetime(2026, 1, 5),
+                "ohlc": [
+                    {
+                        "time": int(
+                            datetime(
+                                2026,
+                                1,
+                                5,
+                                10,
+                                0,
+                                tzinfo=timezone.utc,
+                            ).timestamp()
+                        ),
+                        "open": 5000.0,
+                        "high": 5006.0,
+                        "low": 4986.5,
+                        "close": 5004.0,
+                    }
+                ],
+                "bar_count": 1,
+                "fetched_at": datetime(2026, 1, 5),
+                "source": "test",
+            })
+
+        resp = client.post(
+            "/api/whatif/simulate?symbol=MES",
+            json={"r_widening": 0.4},
+            headers=_auth(token),
+        )
+        assert resp.status_code == 200
+
+        data = resp.get_json()
+        assert data["trades_converted"] == 1
+        assert data["trades_simulated"] == 0
+        detail = data["details"][0]
+        assert detail["trade_id"] == loser["id"]
+        assert detail["converted"] is True
+        assert detail["new_pnl"] > 0
 
     def test_simulate_filters_by_tag(self, client, app):
         """Simulation respects the selected tag filter."""
