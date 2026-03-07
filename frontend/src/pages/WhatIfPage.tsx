@@ -457,7 +457,7 @@ export function WhatIfPage() {
           <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">What-if</h1>
         </div>
         <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-          Analyse stop placement in R-multiples and simulate wider stops across losing trades.
+          Analyse stop placement in R-multiples and simulate wider stops across trades.
         </p>
       </div>
 
