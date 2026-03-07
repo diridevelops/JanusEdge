@@ -10,6 +10,8 @@ interface InfoTooltipProps {
   iconSize?: string;
   /** Tailwind width class for the tooltip bubble (defaults to "w-56"). */
   widthClass?: string;
+  /** Alternate trigger style for compact inline tooltips. */
+  iconVariant?: 'info' | 'question';
 }
 
 /**
@@ -21,6 +23,7 @@ export function InfoTooltip({
   ariaLabel = 'More info',
   iconSize = 'w-3.5 h-3.5',
   widthClass = 'w-56',
+  iconVariant = 'info',
 }: InfoTooltipProps) {
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState({ top: 0, left: 0 });
@@ -59,7 +62,16 @@ export function InfoTooltip({
         onBlur={() => setOpen(false)}
         aria-label={ariaLabel}
       >
-        <Info className={iconSize} strokeWidth={2.25} />
+        {iconVariant === 'question' ? (
+          <span
+            className={`${iconSize} inline-flex items-center justify-center text-[11px] font-semibold leading-none`}
+            aria-hidden="true"
+          >
+            ±
+          </span>
+        ) : (
+          <Info className={iconSize} strokeWidth={2.25} />
+        )}
       </button>
       {open && (
         <div

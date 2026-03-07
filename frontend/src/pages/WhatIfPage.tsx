@@ -5,6 +5,9 @@ import { Link } from 'react-router-dom';
 import { getStopAnalysis, getWickedOutTrades, runSimulation } from '../api/whatif.api';
 import { FilterBar } from '../components/filters/FilterBar';
 import { InfoTooltip } from '../components/ui/InfoTooltip';
+import type {
+  StopAnalysisWorkerOutput,
+} from '../components/whatif/stopAnalysis.worker';
 import type { WorkerInput, WorkerOutput } from '../components/whatif/whatif.worker';
 import { useToast } from '../hooks/useToast';
 import type {
@@ -14,9 +17,18 @@ import type {
 } from '../types/whatif.types';
 import { formatCurrency, formatPnL } from '../utils/formatters';
 
-function createWorker() {
+const STOP_ANALYSIS_BOOTSTRAP_SAMPLES = 10000;
+
+function createSimulationWorker() {
   return new Worker(
     new URL('../components/whatif/whatif.worker.ts', import.meta.url),
+    { type: 'module' },
+  );
+}
+
+function createStopAnalysisWorker() {
+  return new Worker(
+    new URL('../components/whatif/stopAnalysis.worker.ts', import.meta.url),
     { type: 'module' },
   );
 }
@@ -25,16 +37,67 @@ function createWorker() {
 /*  Sub-components                                                     */
 /* ------------------------------------------------------------------ */
 
-function MetricCard({ label, value, tooltip }: { label: string; value: string; tooltip?: string }) {
+function MetricCard({
+  label,
+  value,
+  descriptionTooltip,
+  ciTooltip,
+  ciTooltipLoading = false,
+}: {
+  label: string;
+  value: string;
+  descriptionTooltip?: string;
+  ciTooltip?: string;
+  ciTooltipLoading?: boolean;
+}) {
   return (
     <div className="flex flex-col">
       <span className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap flex items-center gap-1">
         {label}
-        {tooltip && <InfoTooltip text={tooltip} ariaLabel={`Info about ${label}`} iconSize="w-3 h-3" />}
+        {descriptionTooltip ? (
+          <InfoTooltip text={descriptionTooltip} ariaLabel={`Info about ${label}`} iconSize="w-3 h-3" />
+        ) : null}
       </span>
-      <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">{value}</span>
+      <span className="text-sm font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-1">
+        {value}
+        {ciTooltipLoading ? (
+          <Loader2 className="h-3 w-3 animate-spin text-gray-400 dark:text-gray-500" />
+        ) : ciTooltip ? (
+          <InfoTooltip
+            text={ciTooltip}
+            ariaLabel={`Confidence interval for ${label}`}
+            iconSize="w-2.5 h-2.5"
+            widthClass="w-72"
+            iconVariant="question"
+          />
+        ) : null}
+      </span>
     </div>
   );
+}
+
+function formatBcaTooltip(ci: { lower: number; upper: number } | null) {
+  if (!ci) return undefined;
+  return `95% BCa bootstrap CI: = [${ci.lower.toFixed(2)}, ${ci.upper.toFixed(2)}]`;
+}
+
+function getStopMetricTooltip(label: string) {
+  switch (label) {
+    case 'Mean':
+      return 'Average overshoot in R-multiples across all wicked-out trades.\nFormula: mean(overshoot_R)';
+    case 'Median':
+      return 'Middle overshoot value when all overshoots are sorted. If you widen the stop by this amount, about 50% of wicked-out trades would be expected to become winners.\nFormula: P50(overshoot_R)';
+    case 'P75':
+      return '75th percentile of overshoot in R. If you widen the stop by this amount, about 75% of wicked-out trades would be expected to become winners.\nFormula: P75(overshoot_R)';
+    case 'P90':
+      return '90th percentile of overshoot in R. If you widen the stop by this amount, about 90% of wicked-out trades would be expected to become winners.\nFormula: P90(overshoot_R)';
+    case 'P95':
+      return '95th percentile of overshoot in R. If you widen the stop by this amount, about 95% of wicked-out trades would be expected to become winners.\nFormula: P95(overshoot_R)';
+    case 'IQR':
+      return 'Spread of the middle 50% of overshoots.\nFormula: P75(overshoot_R) - P25(overshoot_R)';
+    default:
+      return undefined;
+  }
 }
 
 function DeltaCell({
@@ -218,6 +281,8 @@ export function WhatIfPage() {
   // ---- Stop Analysis ----
   const [analysis, setAnalysis] = useState<StopAnalysisResponse | null>(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
+  const [analysisCis, setAnalysisCis] = useState<StopAnalysisWorkerOutput | null>(null);
+  const [analysisCiLoading, setAnalysisCiLoading] = useState(false);
 
   // ---- Wicked-out trades ----
   const [woTrades, setWoTrades] = useState<WickedOutTrade[]>([]);
@@ -234,7 +299,8 @@ export function WhatIfPage() {
     skipped: false,
   });
   const simCache = useRef<Map<string, WorkerOutput>>(new Map());
-  const workerRef = useRef<Worker | null>(null);
+  const simulationWorkerRef = useRef<Worker | null>(null);
+  const stopAnalysisWorkerRef = useRef<Worker | null>(null);
 
   // Fetch analysis + wicked-out trades on filter change
   const fetchData = useCallback(async (f: Record<string, string>) => {
@@ -246,6 +312,7 @@ export function WhatIfPage() {
         getWickedOutTrades(f),
       ]);
       setAnalysis(analysisRes);
+      setAnalysisCis(null);
       setWoTrades(woRes.trades);
     } catch {
       // Silenced — 401 handled by interceptor
@@ -260,6 +327,7 @@ export function WhatIfPage() {
       void fetchData(apiFilters);
     } else {
       setAnalysis(null);
+      setAnalysisCis(null);
       setWoTrades([]);
     }
     // Reset simulation results on filter change
@@ -267,6 +335,40 @@ export function WhatIfPage() {
     simCache.current.clear();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters.symbol, filters.side, filters.account, filters.date_from, filters.date_to]);
+
+  useEffect(() => {
+    const overshoots = (analysis?.details ?? []).map((detail) => detail.overshoot_r);
+
+    stopAnalysisWorkerRef.current?.terminate();
+    stopAnalysisWorkerRef.current = null;
+
+    if (overshoots.length === 0) {
+      setAnalysisCis(null);
+      setAnalysisCiLoading(false);
+      return;
+    }
+
+    setAnalysisCiLoading(true);
+    const worker = createStopAnalysisWorker();
+    stopAnalysisWorkerRef.current = worker;
+    worker.onmessage = (event: MessageEvent<StopAnalysisWorkerOutput>) => {
+      startTransition(() => {
+        setAnalysisCis(event.data);
+        setAnalysisCiLoading(false);
+      });
+    };
+    worker.postMessage({
+      overshoots,
+      bootstrapSamples: STOP_ANALYSIS_BOOTSTRAP_SAMPLES,
+    });
+
+    return () => {
+      worker.terminate();
+      if (stopAnalysisWorkerRef.current === worker) {
+        stopAnalysisWorkerRef.current = null;
+      }
+    };
+  }, [analysis]);
 
   // Simulation handler
   async function handleSimulate() {
@@ -288,9 +390,9 @@ export function WhatIfPage() {
       const response = await runSimulation(rVal, apiFilters);
 
       // Pass to web worker for delta computation
-      workerRef.current?.terminate();
-      const worker = createWorker();
-      workerRef.current = worker;
+      simulationWorkerRef.current?.terminate();
+      const worker = createSimulationWorker();
+      simulationWorkerRef.current = worker;
       worker.onmessage = (e: MessageEvent<WorkerOutput>) => {
         startTransition(() => {
           setSimResult(e.data);
@@ -321,8 +423,10 @@ export function WhatIfPage() {
   // Cleanup worker on unmount
   useEffect(() => {
     return () => {
-      workerRef.current?.terminate();
-      workerRef.current = null;
+      simulationWorkerRef.current?.terminate();
+      simulationWorkerRef.current = null;
+      stopAnalysisWorkerRef.current?.terminate();
+      stopAnalysisWorkerRef.current = null;
     };
   }, []);
 
@@ -506,37 +610,44 @@ export function WhatIfPage() {
                   <MetricCard
                     label="Mean"
                     value={`${analysis.mean.toFixed(2)}R`}
-                    tooltip="Average overshoot in R-multiples across all wicked-out trades."
+                    descriptionTooltip={getStopMetricTooltip('Mean')}
+                    ciTooltip={formatBcaTooltip(analysisCis?.mean ?? null)}
+                    ciTooltipLoading={analysisCiLoading}
                   />
                   <MetricCard
                     label="Median"
                     value={`${analysis.median.toFixed(2)}R`}
-                    tooltip="Middle value — half of overshoots are below this."
+                    descriptionTooltip={getStopMetricTooltip('Median')}
+                    ciTooltip={formatBcaTooltip(analysisCis?.median ?? null)}
+                    ciTooltipLoading={analysisCiLoading}
                   />
                   <MetricCard
                     label="P75"
                     value={`${analysis.p75.toFixed(2)}R`}
-                    tooltip="75th percentile — 75% of overshoots are below this."
+                    descriptionTooltip={getStopMetricTooltip('P75')}
+                    ciTooltip={formatBcaTooltip(analysisCis?.p75 ?? null)}
+                    ciTooltipLoading={analysisCiLoading}
                   />
                   <MetricCard
                     label="P90"
                     value={`${analysis.p90.toFixed(2)}R`}
-                    tooltip="90th percentile — 90% of overshoots are below this."
+                    descriptionTooltip={getStopMetricTooltip('P90')}
+                    ciTooltip={formatBcaTooltip(analysisCis?.p90 ?? null)}
+                    ciTooltipLoading={analysisCiLoading}
                   />
                   <MetricCard
                     label="P95"
                     value={`${analysis.p95.toFixed(2)}R`}
-                    tooltip="95th percentile — 95% of overshoots are below this."
+                    descriptionTooltip={getStopMetricTooltip('P95')}
+                    ciTooltip={formatBcaTooltip(analysisCis?.p95 ?? null)}
+                    ciTooltipLoading={analysisCiLoading}
                   />
                   <MetricCard
                     label="IQR"
                     value={`${analysis.iqr.toFixed(2)}R`}
-                    tooltip="Interquartile range (P75 − P25). Shows the spread of the middle 50% of overshoots."
-                  />
-                  <MetricCard
-                    label="95% CI"
-                    value={`${analysis.ci_lower.toFixed(2)}R – ${analysis.ci_upper.toFixed(2)}R`}
-                    tooltip="Bootstrap 95% confidence interval for the mean overshoot. 10,000 resamples."
+                    descriptionTooltip={getStopMetricTooltip('IQR')}
+                    ciTooltip={formatBcaTooltip(analysisCis?.iqr ?? null)}
+                    ciTooltipLoading={analysisCiLoading}
                   />
                 </div>
               </>
@@ -551,7 +662,7 @@ export function WhatIfPage() {
               </h2>
               <InfoTooltip
                 text={
-                  'Simulate widening your stop by xR across all losing trades:\n' +
+                  'Simulate widening your stop across all trades:\n' +
                   '- Winners keep their P&L.\n' +
                   '- Losers with a target price and 1-min OHLC data ' +
                   'are replayed with the wider stop to check if they would have reached the target.'
