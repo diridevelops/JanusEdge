@@ -1,17 +1,16 @@
 import {
-    addDays,
-    addMonths,
-    endOfMonth,
-    endOfWeek,
-    format,
-    isSameMonth,
-    parseISO,
-    startOfMonth,
-    startOfWeek,
-    subMonths,
+  addDays,
+  addMonths,
+  endOfMonth,
+  endOfWeek,
+  format,
+  isSameMonth,
+  startOfMonth,
+  startOfWeek,
+  subMonths,
 } from 'date-fns';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from '../../hooks/useTheme';
 import type { CalendarDay } from '../../types/analytics.types';
@@ -19,10 +18,17 @@ import type { CalendarDay } from '../../types/analytics.types';
 interface CalendarHeatmapProps {
   data: CalendarDay[];
   isLoading: boolean;
+  visibleMonth: Date;
+  onVisibleMonthChange: React.Dispatch<React.SetStateAction<Date>>;
 }
 
 /** Calendar heatmap showing daily P&L. */
-export function CalendarHeatmap({ data, isLoading }: CalendarHeatmapProps) {
+export function CalendarHeatmap({
+  data,
+  isLoading,
+  visibleMonth,
+  onVisibleMonthChange,
+}: CalendarHeatmapProps) {
   const navigate = useNavigate();
   const { isDark } = useTheme();
 
@@ -33,20 +39,6 @@ export function CalendarHeatmap({ data, isLoading }: CalendarHeatmapProps) {
     });
     return map;
   }, [data]);
-
-  const initialMonth = useMemo(() => {
-    if (data.length === 0) {
-      return startOfMonth(new Date());
-    }
-    const sortedDates = [...data].sort((a, b) => a.date.localeCompare(b.date));
-    const latestDay = sortedDates[sortedDates.length - 1];
-    if (!latestDay) {
-      return startOfMonth(new Date());
-    }
-    return startOfMonth(parseISO(latestDay.date));
-  }, [data]);
-
-  const [visibleMonth, setVisibleMonth] = useState<Date>(initialMonth);
 
   const maxAbsPnl = useMemo(() => {
     const maxValue = data.reduce(
@@ -60,14 +52,6 @@ export function CalendarHeatmap({ data, isLoading }: CalendarHeatmapProps) {
     return (
       <div className="h-48 flex items-center justify-center bg-gray-50 dark:bg-gray-800 rounded-lg animate-pulse">
         <div className="h-4 w-32 bg-gray-200 dark:bg-gray-700 rounded" />
-      </div>
-    );
-  }
-
-  if (data.length === 0) {
-    return (
-      <div className="h-48 flex items-center justify-center text-gray-400 dark:text-gray-500 text-sm">
-        No calendar data
       </div>
     );
   }
@@ -113,7 +97,7 @@ export function CalendarHeatmap({ data, isLoading }: CalendarHeatmapProps) {
       <div className="flex items-center justify-between">
         <button
           type="button"
-          onClick={() => setVisibleMonth((prev) => subMonths(prev, 1))}
+          onClick={() => onVisibleMonthChange((prev) => subMonths(prev, 1))}
           className="inline-flex items-center justify-center rounded border border-gray-200 dark:border-gray-700 p-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700"
           aria-label="Previous month"
         >
@@ -126,7 +110,7 @@ export function CalendarHeatmap({ data, isLoading }: CalendarHeatmapProps) {
 
         <button
           type="button"
-          onClick={() => setVisibleMonth((prev) => addMonths(prev, 1))}
+          onClick={() => onVisibleMonthChange((prev) => addMonths(prev, 1))}
           className="inline-flex items-center justify-center rounded border border-gray-200 dark:border-gray-700 p-1.5 text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-700"
           aria-label="Next month"
         >
@@ -150,6 +134,9 @@ export function CalendarHeatmap({ data, isLoading }: CalendarHeatmapProps) {
           const pnl = dayData?.net_pnl ?? 0;
           const roundedPnl = Math.round(pnl);
           const inVisibleMonth = isSameMonth(day, visibleMonth);
+          const title = inVisibleMonth
+            ? `${dayKey} • ${tradeCount} trades • ${roundedPnl >= 0 ? '+' : ''}${roundedPnl}`
+            : undefined;
 
           return (
             <button
@@ -159,13 +146,21 @@ export function CalendarHeatmap({ data, isLoading }: CalendarHeatmapProps) {
               className={`min-h-24 rounded border p-2 text-left transition hover:ring-1 hover:ring-blue-300 ${getColorClass(pnl)} ${
                 inVisibleMonth ? 'border-gray-200 dark:border-gray-600' : 'border-transparent opacity-45'
               }`}
-              title={`${dayKey} • ${tradeCount} trades • ${roundedPnl >= 0 ? '+' : ''}${roundedPnl}`}
+              title={title}
             >
-              <div className="text-xs font-semibold">{format(day, 'd')}</div>
-              <div className="mt-2 text-[11px] leading-4">Trades: {tradeCount}</div>
-              <div className="text-[11px] leading-4">
-                P&L: {roundedPnl >= 0 ? '+' : ''}
-                {roundedPnl}
+              <div className="flex h-full flex-col">
+                <div className="text-xs font-semibold">{format(day, 'd')}</div>
+                <div className="mt-2 text-[11px] leading-4">
+                  {inVisibleMonth ? (
+                    <>
+                      <div>Trades: {tradeCount}</div>
+                      <div>
+                        P&L: {roundedPnl >= 0 ? '+' : ''}
+                        {roundedPnl}
+                      </div>
+                    </>
+                  ) : null}
+                </div>
               </div>
             </button>
           );

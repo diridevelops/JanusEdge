@@ -21,10 +21,18 @@ interface FilterBarProps {
   onClearFilters: () => void;
   /** When true, a symbol must be selected (no "All" option). */
   requireSymbol?: boolean;
+  /** When false, hides the date range inputs while preserving shared filter shape. */
+  showDateFilters?: boolean;
 }
 
 /** Global filter toolbar for trade list and analytics pages. */
-export function FilterBar({ filters, onFilterChange, onClearFilters, requireSymbol = false }: FilterBarProps) {
+export function FilterBar({
+  filters,
+  onFilterChange,
+  onClearFilters,
+  requireSymbol = false,
+  showDateFilters = true,
+}: FilterBarProps) {
   const [accounts, setAccounts] = useState<TradeAccount[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
   const [symbols, setSymbols] = useState<string[]>([]);
@@ -128,33 +136,37 @@ export function FilterBar({ filters, onFilterChange, onClearFilters, requireSymb
         </select>
       </div>
 
-      {/* Date from */}
-      <div>
-        <label htmlFor="filter-date-from" className="block text-xs font-medium text-gray-500 mb-1 dark:text-gray-400">
-          From
-        </label>
-        <input
-          id="filter-date-from"
-          type="date"
-          value={filters.date_from}
-          onChange={(e) => onFilterChange('date_from', e.target.value)}
-          className="input-field w-36 text-sm"
-        />
-      </div>
+      {showDateFilters && (
+        <>
+          {/* Date from */}
+          <div>
+            <label htmlFor="filter-date-from" className="block text-xs font-medium text-gray-500 mb-1 dark:text-gray-400">
+              From
+            </label>
+            <input
+              id="filter-date-from"
+              type="date"
+              value={filters.date_from}
+              onChange={(e) => onFilterChange('date_from', e.target.value)}
+              className="input-field w-36 text-sm"
+            />
+          </div>
 
-      {/* Date to */}
-      <div>
-        <label htmlFor="filter-date-to" className="block text-xs font-medium text-gray-500 mb-1 dark:text-gray-400">
-          To
-        </label>
-        <input
-          id="filter-date-to"
-          type="date"
-          value={filters.date_to}
-          onChange={(e) => onFilterChange('date_to', e.target.value)}
-          className="input-field w-36 text-sm"
-        />
-      </div>
+          {/* Date to */}
+          <div>
+            <label htmlFor="filter-date-to" className="block text-xs font-medium text-gray-500 mb-1 dark:text-gray-400">
+              To
+            </label>
+            <input
+              id="filter-date-to"
+              type="date"
+              value={filters.date_to}
+              onChange={(e) => onFilterChange('date_to', e.target.value)}
+              className="input-field w-36 text-sm"
+            />
+          </div>
+        </>
+      )}
 
       {/* Clear */}
       {hasActiveFilters && (
