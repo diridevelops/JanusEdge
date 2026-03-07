@@ -248,7 +248,7 @@ def _compute_metrics(
     ) * 100.0
     avg_final_equity = sum(final_equities) / len(final_equities)
     avg_performance_pct = (
-        (avg_final_equity / starting_equity) * 100.0
+        ((avg_final_equity / starting_equity) - 1.0) * 100.0
         if starting_equity > 0
         else 0.0
     )

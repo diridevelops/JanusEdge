@@ -80,6 +80,11 @@ function ChartLoadingOverlay() {
   );
 }
 
+function formatSignedPercent(value: number, decimals = 1) {
+  const prefix = value > 0 ? '+' : '';
+  return `${prefix}${value.toFixed(decimals)}%`;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Main Component                                                     */
 /* ------------------------------------------------------------------ */
@@ -552,9 +557,9 @@ export function MonteCarloSimulator({ summary, filters }: MonteCarloSimulatorPro
               />
               <MetricCard
                 label="Avg Performance"
-                value={`${formatPercent(metrics.avgPerformancePct, 1)} (${formatCurrency(metrics.avgFinalEquity)})`}
-                color={metrics.avgFinalEquity >= (parseFloat(startingEquity) || 0) ? 'pnl-positive' : 'pnl-negative'}
-                tooltip={"Average final equity as % of starting equity, with dollar value.\nFormula: Avg Final Equity / Starting Equity × 100"}
+                value={`${formatSignedPercent(metrics.avgPerformancePct, 1)} (${formatCurrency(metrics.avgFinalEquity)})`}
+                color={metrics.avgPerformancePct >= 0 ? 'pnl-positive' : 'pnl-negative'}
+                tooltip={"Average return relative to starting equity, with dollar value.\nFormula: (Avg Final Equity / Starting Equity) × 100 − 100"}
               />
               <MetricCard
                 label="Return / Max DD"
