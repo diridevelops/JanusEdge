@@ -368,6 +368,67 @@ class WhatIfService:
         simulated = 0
         skipped = 0
 
+        def build_widened_net_risk(
+            initial_risk_value: float,
+            fee_value: float,
+        ) -> Optional[float]:
+            """Compute widened net risk while keeping fees unscaled."""
+            if initial_risk_value <= 0:
+                return None
+            widened_value = (
+                initial_risk_value
+                + (initial_risk_value - fee_value) * r_widening
+            )
+            return (
+                widened_value
+                if widened_value > 0
+                else None
+            )
+
+        def build_detail(
+            trade_doc: Dict[str, Any],
+            original_pnl: float,
+            new_pnl: float,
+            converted_flag: bool,
+            status: str,
+            original_risk: float,
+            widened_risk_value: Optional[float],
+        ) -> Dict[str, Any]:
+            """Build simulation detail with P&L and R-multiple deltas."""
+            original_r = (
+                round(original_pnl / original_risk, 2)
+                if original_risk > 0
+                else None
+            )
+            new_r = (
+                round(new_pnl / widened_risk_value, 2)
+                if widened_risk_value and widened_risk_value > 0
+                else None
+            )
+            change_r = (
+                round(new_r - original_r, 2)
+                if original_r is not None and new_r is not None
+                else None
+            )
+            detail_entry = {
+                "trade_id": str(trade_doc["_id"]),
+                "symbol": trade_doc.get("symbol", ""),
+                "side": trade_doc.get("side", ""),
+                "entry_time": (
+                    entry_time.isoformat()
+                    if isinstance(entry_time, datetime)
+                    else str(entry_time or "")
+                ),
+                "original_pnl": round(original_pnl, 2),
+                "new_pnl": round(new_pnl, 2),
+                "original_r": original_r,
+                "new_r": new_r,
+                "change_r": change_r,
+                "converted": converted_flag,
+                "status": status,
+            }
+            return detail_entry
+
         for t in trades:
             net_pnl = t.get("net_pnl", 0)
             entry = t.get("avg_entry_price", 0)
@@ -379,10 +440,9 @@ class WhatIfService:
             gross_pnl = t.get("gross_pnl", net_pnl + fee)
             initial_risk = t.get("initial_risk", 0)
             entry_time = t.get("entry_time")
-            widened_risk = (
-                initial_risk * (1 + r_widening)
-                if initial_risk > 0
-                else None
+            widened_risk = build_widened_net_risk(
+                initial_risk,
+                fee,
             )
 
             original_pnls.append(net_pnl)
@@ -397,20 +457,17 @@ class WhatIfService:
                 if widened_risk:
                     whatif_rs.append(net_pnl / widened_risk)
                 skipped += 1
-                details.append({
-                    "trade_id": str(t["_id"]),
-                    "symbol": symbol,
-                    "side": side,
-                    "entry_time": (
-                        entry_time.isoformat()
-                        if isinstance(entry_time, datetime)
-                        else str(entry_time or "")
-                    ),
-                    "original_pnl": net_pnl,
-                    "new_pnl": net_pnl,
-                    "converted": False,
-                    "status": "winner",
-                })
+                details.append(
+                    build_detail(
+                        t,
+                        net_pnl,
+                        net_pnl,
+                        False,
+                        "winner",
+                        initial_risk,
+                        widened_risk,
+                    )
+                )
                 continue
 
             # Loser — try to simulate
@@ -439,20 +496,17 @@ class WhatIfService:
                 if widened_risk:
                     whatif_rs.append(net_pnl / widened_risk)
                 skipped += 1
-                details.append({
-                    "trade_id": str(t["_id"]),
-                    "symbol": symbol,
-                    "side": side,
-                    "entry_time": (
-                        entry_time.isoformat()
-                        if isinstance(entry_time, datetime)
-                        else str(entry_time or "")
-                    ),
-                    "original_pnl": net_pnl,
-                    "new_pnl": net_pnl,
-                    "converted": False,
-                    "status": "no_ohlc",
-                })
+                details.append(
+                    build_detail(
+                        t,
+                        net_pnl,
+                        net_pnl,
+                        False,
+                        "no_ohlc",
+                        initial_risk,
+                        widened_risk,
+                    )
+                )
                 continue
 
             if target is None:
@@ -462,20 +516,17 @@ class WhatIfService:
                 if widened_risk:
                     whatif_rs.append(net_pnl / widened_risk)
                 skipped += 1
-                details.append({
-                    "trade_id": str(t["_id"]),
-                    "symbol": symbol,
-                    "side": side,
-                    "entry_time": (
-                        entry_time.isoformat()
-                        if isinstance(entry_time, datetime)
-                        else str(entry_time or "")
-                    ),
-                    "original_pnl": net_pnl,
-                    "new_pnl": net_pnl,
-                    "converted": False,
-                    "status": "no_target",
-                })
+                details.append(
+                    build_detail(
+                        t,
+                        net_pnl,
+                        net_pnl,
+                        False,
+                        "no_target",
+                        initial_risk,
+                        widened_risk,
+                    )
+                )
                 continue
 
             # Calculate wider stop price
@@ -491,20 +542,17 @@ class WhatIfService:
                 if widened_risk:
                     whatif_rs.append(net_pnl / widened_risk)
                 skipped += 1
-                details.append({
-                    "trade_id": str(t["_id"]),
-                    "symbol": symbol,
-                    "side": side,
-                    "entry_time": (
-                        entry_time.isoformat()
-                        if isinstance(entry_time, datetime)
-                        else str(entry_time or "")
-                    ),
-                    "original_pnl": net_pnl,
-                    "new_pnl": net_pnl,
-                    "converted": False,
-                    "status": "no_risk",
-                })
+                details.append(
+                    build_detail(
+                        t,
+                        net_pnl,
+                        net_pnl,
+                        False,
+                        "no_risk",
+                        initial_risk,
+                        widened_risk,
+                    )
+                )
                 continue
 
             widening_pts = price_risk * r_widening
@@ -534,20 +582,17 @@ class WhatIfService:
                 if widened_risk:
                     whatif_rs.append(net_pnl / widened_risk)
                 skipped += 1
-                details.append({
-                    "trade_id": str(t["_id"]),
-                    "symbol": symbol,
-                    "side": side,
-                    "entry_time": (
-                        entry_time.isoformat()
-                        if isinstance(entry_time, datetime)
-                        else str(entry_time or "")
-                    ),
-                    "original_pnl": net_pnl,
-                    "new_pnl": net_pnl,
-                    "converted": False,
-                    "status": "no_ohlc",
-                })
+                details.append(
+                    build_detail(
+                        t,
+                        net_pnl,
+                        net_pnl,
+                        False,
+                        "no_ohlc",
+                        initial_risk,
+                        widened_risk,
+                    )
+                )
                 continue
 
             # Replay OHLC bars
@@ -571,20 +616,17 @@ class WhatIfService:
                 if widened_risk:
                     whatif_rs.append(net_pnl / widened_risk)
                 skipped += 1
-                details.append({
-                    "trade_id": str(t["_id"]),
-                    "symbol": symbol,
-                    "side": side,
-                    "entry_time": (
-                        entry_time.isoformat()
-                        if isinstance(entry_time, datetime)
-                        else str(entry_time or "")
-                    ),
-                    "original_pnl": net_pnl,
-                    "new_pnl": net_pnl,
-                    "converted": False,
-                    "status": "no_ohlc",
-                })
+                details.append(
+                    build_detail(
+                        t,
+                        net_pnl,
+                        net_pnl,
+                        False,
+                        "no_ohlc",
+                        initial_risk,
+                        widened_risk,
+                    )
+                )
                 continue
 
             was_converted = new_pnl > net_pnl
@@ -597,21 +639,17 @@ class WhatIfService:
             whatif_grosses.append(round(new_pnl + fee, 2))
             if widened_risk:
                 whatif_rs.append(new_pnl / widened_risk)
-            details.append({
-                "trade_id": str(t["_id"]),
-                "symbol": symbol,
-                "side": side,
-                "entry_time": (
-                    entry_time.isoformat()
-                    if isinstance(entry_time, datetime)
-                    else str(entry_time or "")
-                ),
-                "original_pnl": round(net_pnl, 2),
-                "new_pnl": round(new_pnl, 2),
-                "converted": was_converted
-                and new_pnl > 0,
-                "status": "simulated",
-            })
+            details.append(
+                build_detail(
+                    t,
+                    net_pnl,
+                    new_pnl,
+                    was_converted and new_pnl > 0,
+                    "simulated",
+                    initial_risk,
+                    widened_risk,
+                )
+            )
 
         result = {
             "original": self._compute_metrics(

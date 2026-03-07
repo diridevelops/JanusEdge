@@ -1,5 +1,5 @@
 import { ArrowLeft, RefreshCw, Trash2 } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { listExecutions } from '../api/executions.api';
 import { getOHLC } from '../api/marketData.api';
@@ -42,32 +42,15 @@ export function TradeDetailPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isChartLoading, setIsChartLoading] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const chartRequestIdRef = useRef(0);
 
-  const fetchTrade = useCallback(async () => {
-    if (!id) return;
-    setIsLoading(true);
-    try {
-      const [tradeData, execData] = await Promise.all([
-        getTrade(id),
-        listExecutions({ trade_id: id }),
-      ]);
-      setTrade(tradeData.trade);
-      setExecutions(execData.executions ?? execData.items);
-    } catch {
-      addToast('error', 'Failed to load trade');
-      navigate('/trades');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [id, addToast, navigate]);
-
-  const fetchAllCharts = useCallback(async (forceRefresh: boolean = false) => {
-    if (!trade) return false;
+  const fetchAllCharts = useCallback(async (tradeToLoad: Trade, forceRefresh: boolean = false) => {
+    const requestId = chartRequestIdRef.current + 1;
+    chartRequestIdRef.current = requestId;
     setIsChartLoading(true);
-    let succeeded = true;
     try {
-      const entryDate = new Date(trade.entry_time);
-      const exitDate = new Date(trade.exit_time);
+      const entryDate = new Date(tradeToLoad.entry_time);
+      const exitDate = new Date(tradeToLoad.exit_time);
 
       const first = entryDate <= exitDate ? entryDate : exitDate;
       const last = entryDate <= exitDate ? exitDate : entryDate;
@@ -94,7 +77,7 @@ export function TradeDetailPage() {
         ALL_INTERVALS.map(async (iv) => {
           try {
             const data = await getOHLC({
-              symbol: trade.symbol,
+              symbol: tradeToLoad.symbol,
               interval: iv,
               start: dayStart.toISOString(),
               end: dayEnd.toISOString(),
@@ -111,21 +94,60 @@ export function TradeDetailPage() {
       for (const [iv, data] of results) {
         map[iv] = data;
       }
+      if (requestId !== chartRequestIdRef.current) {
+        return null;
+      }
       setOhlcMap(map);
     } catch {
-      succeeded = false;
-      setOhlcMap({});
+      if (requestId !== chartRequestIdRef.current) {
+        return null;
+      }
+      if (requestId === chartRequestIdRef.current) {
+        setOhlcMap({});
+      }
+      return false;
     } finally {
+      if (requestId === chartRequestIdRef.current) {
+        setIsChartLoading(false);
+        setIsLoading(false);
+      }
+    }
+    return true;
+  }, []);
+
+  const fetchTrade = useCallback(async () => {
+    if (!id) return;
+    setIsLoading(true);
+    setTrade(null);
+    setExecutions([]);
+    setOhlcMap({});
+    try {
+      const [tradeData, execData] = await Promise.all([
+        getTrade(id),
+        listExecutions({ trade_id: id }),
+      ]);
+      const loadedTrade = tradeData.trade;
+      setTrade(loadedTrade);
+      setExecutions(execData.executions ?? execData.items);
+      setInterval(bestInterval(loadedTrade.holding_time_seconds));
+      const ok = await fetchAllCharts(loadedTrade);
+      if (ok === false) {
+        addToast('error', 'Failed to load chart data');
+      }
+    } catch {
+      addToast('error', 'Failed to load trade');
+      navigate('/trades');
+      setIsLoading(false);
       setIsChartLoading(false);
     }
-    return succeeded;
-  }, [trade]);
+  }, [id, addToast, navigate, fetchAllCharts]);
 
   async function handleRefreshChartData() {
-    const ok = await fetchAllCharts(true);
-    if (ok) {
+    if (!trade) return;
+    const ok = await fetchAllCharts(trade, true);
+    if (ok === true) {
       addToast('success', 'Market data refreshed');
-    } else {
+    } else if (ok === false) {
       addToast('error', 'Failed to refresh market data');
     }
   }
@@ -133,13 +155,6 @@ export function TradeDetailPage() {
   useEffect(() => {
     fetchTrade();
   }, [fetchTrade]);
-
-  useEffect(() => {
-    if (trade) {
-      setInterval(bestInterval(trade.holding_time_seconds));
-      fetchAllCharts();
-    }
-  }, [trade, fetchAllCharts]);
 
   async function handleDelete() {
     if (!id || !confirm('Delete this trade permanently?')) return;

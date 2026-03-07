@@ -68,6 +68,9 @@ export interface SimulationDetail {
   entry_time: string;
   original_pnl: number;
   new_pnl: number;
+  original_r: number | null;
+  new_r: number | null;
+  change_r: number | null;
   converted: boolean;
   status: string;
 }

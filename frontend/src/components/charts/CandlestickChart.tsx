@@ -200,7 +200,12 @@ export function CandlestickChart({
 
   // Update data when ohlcData changes
   useEffect(() => {
-    if (!seriesRef.current || !ohlcData.length) return;
+    if (!seriesRef.current) return;
+
+    for (const line of priceLinesRef.current) {
+      seriesRef.current.removePriceLine(line);
+    }
+    priceLinesRef.current = [];
 
     const data = ohlcData.map((d) => ({
       time: shiftTime(d.time) as unknown as import('lightweight-charts').Time,
@@ -214,15 +219,9 @@ export function CandlestickChart({
 
     // Set markers
     const markers = buildMarkers();
-    if (markers.length > 0) {
-      seriesRef.current.setMarkers(markers);
-    }
+    seriesRef.current.setMarkers(markers);
 
-    // Remove previous price lines
-    for (const line of priceLinesRef.current) {
-      seriesRef.current.removePriceLine(line);
-    }
-    priceLinesRef.current = [];
+    if (!ohlcData.length) return;
 
     // Add price lines
     if (avgEntryPrice) {

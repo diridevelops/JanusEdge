@@ -62,15 +62,15 @@ function formatBcaTooltip(ci: ConfidenceInterval | null | undefined) {
 function getStopMetricTooltip(label: string) {
   switch (label) {
     case 'Mean':
-      return 'Average overshoot in R-multiples across all wicked-out trades.\nFormula: mean(overshoot_R)';
+      return 'Average overshoot in R-multiples across all wicked-out trades.';
     case 'Median':
-      return 'Middle overshoot value when all overshoots are sorted. If you widen the stop by this amount, about 50% of wicked-out trades would be expected to become winners.\nFormula: P50(overshoot_R)';
+      return 'Middle overshoot value when all overshoots are sorted. If you widen the stop by this amount, about 50% of wicked-out trades would be expected to become winners.';
     case 'P75':
-      return '75th percentile of overshoot in R. If you widen the stop by this amount, about 75% of wicked-out trades would be expected to become winners.\nFormula: P75(overshoot_R)';
+      return '75th percentile of overshoot in R. If you widen the stop by this amount, about 75% of wicked-out trades would be expected to become winners.';
     case 'P90':
-      return '90th percentile of overshoot in R. If you widen the stop by this amount, about 90% of wicked-out trades would be expected to become winners.\nFormula: P90(overshoot_R)';
+      return '90th percentile of overshoot in R. If you widen the stop by this amount, about 90% of wicked-out trades would be expected to become winners.';
     case 'P95':
-      return '95th percentile of overshoot in R. If you widen the stop by this amount, about 95% of wicked-out trades would be expected to become winners.\nFormula: P95(overshoot_R)';
+      return '95th percentile of overshoot in R. If you widen the stop by this amount, about 95% of wicked-out trades would be expected to become winners.';
     case 'IQR':
       return 'Spread of the middle 50% of overshoots.\nFormula: P75(overshoot_R) - P25(overshoot_R)';
     default:
@@ -243,13 +243,14 @@ function ResultSection({
             <div className="overflow-x-auto">
               <table className="w-full min-w-[920px] table-fixed text-sm">
                 <colgroup>
-                  <col className="w-[20%]" />
+                  <col className="w-[12%]" />
                   <col className="w-[12%]" />
                   <col className="w-[10%]" />
-                  <col className="w-[14%]" />
-                  <col className="w-[14%]" />
                   <col className="w-[12%]" />
-                  <col className="w-[20%]" />
+                  <col className="w-[12%]" />
+                  <col className="w-[12%]" />
+                  <col className="w-[12%]" />
+                  <col className="w-[18%]" />
                 </colgroup>
                 <thead>
                   <tr className="border-b border-gray-200 dark:border-gray-700 text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider">
@@ -259,6 +260,7 @@ function ResultSection({
                     <th className="px-4 py-2 text-left">Original P&L</th>
                     <th className="px-4 py-2 text-left">New P&L</th>
                     <th className="px-4 py-2 text-left">Change</th>
+                    <th className="px-4 py-2 text-left">Change R</th>
                     <th className="px-4 py-2 text-left">Status</th>
                   </tr>
                 </thead>
@@ -287,6 +289,9 @@ function ResultSection({
                         <td className={`px-4 py-2 text-left ${next.className}`}>{next.text}</td>
                         <td className="px-4 py-2 text-left">
                           <DeltaCell value={trade.new_pnl - trade.original_pnl} isCurrency />
+                        </td>
+                        <td className="px-4 py-2 text-left">
+                          <DeltaCell value={trade.change_r} suffix="R" />
                         </td>
                         <td className="px-4 py-2 text-gray-600 dark:text-gray-300">
                           {trade.converted ? 'Converted to winner' : getSimulationStatusLabel(trade.status)}

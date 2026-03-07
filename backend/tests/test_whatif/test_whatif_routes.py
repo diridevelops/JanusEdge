@@ -292,6 +292,9 @@ class TestSimulate:
         assert detail["symbol"] == "MES"
         assert detail["side"] == "Long"
         assert detail["status"] == "winner"
+        assert detail["original_r"] == 1.0
+        assert detail["new_r"] == 0.67
+        assert detail["change_r"] == -0.33
         assert "entry_time" in detail
 
     def test_loser_without_target_skipped(self, client):
@@ -308,6 +311,10 @@ class TestSimulate:
         assert data["trades_skipped"] >= 1
         d = data["details"][0]
         assert d["status"] in ("no_target", "no_risk", "no_ohlc")
+        assert d["original_pnl"] == d["new_pnl"]
+        assert d["original_r"] == -1.0
+        assert d["new_r"] == -0.67
+        assert d["change_r"] == 0.33
 
     def test_missing_market_data_takes_priority_over_no_target(
         self, client
