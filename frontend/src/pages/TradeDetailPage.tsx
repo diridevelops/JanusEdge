@@ -1,7 +1,6 @@
 import { ArrowLeft, RefreshCw, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { listExecutions } from '../api/executions.api';
 import { getOHLC } from '../api/marketData.api';
 import { deleteTrade, getTrade } from '../api/trades.api';
 import { CandlestickChart } from '../components/charts/CandlestickChart';
@@ -10,7 +9,6 @@ import { StopAnalysisFields } from '../components/trade/StopAnalysisFields';
 import { TagSelector } from '../components/trade/TagSelector';
 import { TradeMedia } from '../components/trade/TradeMedia';
 import { TradeNotes } from '../components/trade/TradeNotes';
-import { Spinner } from '../components/ui/Spinner';
 import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
 import type { Execution } from '../types/execution.types';
@@ -29,6 +27,105 @@ function bestInterval(holdingSeconds: number): ChartInterval {
   return '1h';
 }
 
+function SkeletonBlock({ className }: { className: string }) {
+  return <div className={`animate-pulse rounded bg-gray-200 dark:bg-gray-700 ${className}`} />;
+}
+
+function TradeDetailPageSkeleton() {
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <SkeletonBlock className="h-5 w-5 rounded-full" />
+          <div className="space-y-2">
+            <SkeletonBlock className="h-8 w-40" />
+            <SkeletonBlock className="h-4 w-64" />
+          </div>
+        </div>
+        <SkeletonBlock className="h-10 w-28" />
+      </div>
+
+      <div className="card p-4">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-9">
+          {Array.from({ length: 9 }).map((_, index) => (
+            <div key={index} className="space-y-2">
+              <SkeletonBlock className="h-3 w-16" />
+              <SkeletonBlock className="h-5 w-20" />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-6 lg:flex-row">
+        <div className="card flex-1 min-w-0 p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <SkeletonBlock className="h-4 w-24" />
+            <SkeletonBlock className="h-4 w-24" />
+          </div>
+          <div className="space-y-2">
+            <div className="flex items-center gap-1">
+              {Array.from({ length: 4 }).map((_, index) => (
+                <SkeletonBlock key={index} className="h-8 w-11 rounded-md" />
+              ))}
+            </div>
+            <SkeletonBlock className="h-[402px] w-full rounded-lg" />
+          </div>
+        </div>
+
+        <div className="card flex w-full min-h-[220px] flex-col lg:w-28">
+          <div className="space-y-3 p-4">
+            <SkeletonBlock className="h-4 w-12" />
+            {Array.from({ length: 3 }).map((_, index) => (
+              <SkeletonBlock key={index} className="h-16 w-full rounded-lg" />
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="card p-4">
+        <div className="grid gap-4 sm:grid-cols-2">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <div key={index} className="space-y-2">
+              <SkeletonBlock className="h-4 w-24" />
+              <SkeletonBlock className="h-10 w-full rounded-lg" />
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div className="card p-4">
+          <SkeletonBlock className="mb-3 h-4 w-28" />
+          <div className="space-y-3">
+            {Array.from({ length: 4 }).map((_, index) => (
+              <SkeletonBlock key={index} className="h-16 w-full rounded-lg" />
+            ))}
+          </div>
+        </div>
+
+        <div className="space-y-6">
+          <div className="card p-4">
+            <SkeletonBlock className="mb-3 h-4 w-20" />
+            <div className="flex flex-wrap gap-2">
+              {Array.from({ length: 5 }).map((_, index) => (
+                <SkeletonBlock key={index} className="h-8 w-20 rounded-full" />
+              ))}
+            </div>
+          </div>
+
+          <div className="card p-4">
+            <SkeletonBlock className="mb-3 h-4 w-24" />
+            <div className="space-y-3">
+              <SkeletonBlock className="h-24 w-full rounded-lg" />
+              <SkeletonBlock className="h-24 w-full rounded-lg" />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Trade detail page — chart, executions, notes, tags. */
 export function TradeDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -40,9 +137,10 @@ export function TradeDetailPage() {
   const [executions, setExecutions] = useState<Execution[]>([]);
   const [ohlcMap, setOhlcMap] = useState<Record<string, OHLCDataPoint[]>>({});
   const [interval, setInterval] = useState<ChartInterval>('5m');
-  const [isLoading, setIsLoading] = useState(true);
+  const [isTradeLoading, setIsTradeLoading] = useState(true);
   const [isChartLoading, setIsChartLoading] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const tradeRequestIdRef = useRef(0);
   const chartRequestIdRef = useRef(0);
 
   const fetchAllCharts = useCallback(async (tradeToLoad: Trade, forceRefresh: boolean = false) => {
@@ -110,38 +208,67 @@ export function TradeDetailPage() {
     } finally {
       if (requestId === chartRequestIdRef.current) {
         setIsChartLoading(false);
-        setIsLoading(false);
       }
     }
     return true;
   }, []);
 
-  const fetchTrade = useCallback(async () => {
-    if (!id) return;
-    setIsLoading(true);
-    setTrade(null);
-    setExecutions([]);
-    setOhlcMap({});
+  const fetchTrade = useCallback(async (preserveExisting = false) => {
+    if (!id) {
+      setIsTradeLoading(false);
+      return;
+    }
+
+    const requestId = tradeRequestIdRef.current + 1;
+    tradeRequestIdRef.current = requestId;
+    chartRequestIdRef.current += 1;
+    setIsTradeLoading(true);
+    setIsChartLoading(false);
+
+    if (!preserveExisting) {
+      setTrade(null);
+      setExecutions([]);
+      setOhlcMap({});
+    }
+
     try {
-      const [tradeData, execData] = await Promise.all([
-        getTrade(id),
-        listExecutions({ trade_id: id }),
-      ]);
-      const loadedTrade = tradeData.trade;
-      setTrade(loadedTrade);
-      setExecutions(execData.executions ?? execData.items);
-      setInterval(bestInterval(loadedTrade.holding_time_seconds));
-      const ok = await fetchAllCharts(loadedTrade);
-      if (ok === false) {
-        addToast('error', 'Failed to load chart data');
+      const tradeData = await getTrade(id);
+      if (requestId !== tradeRequestIdRef.current) {
+        return;
       }
+
+      const loadedTrade = tradeData.trade;
+      const loadedExecutions = Array.isArray(tradeData.executions)
+        ? tradeData.executions as Execution[]
+        : [];
+
+      setTrade(loadedTrade);
+      setExecutions(loadedExecutions);
+      setInterval(bestInterval(loadedTrade.holding_time_seconds));
+      if (!preserveExisting) {
+        setOhlcMap({});
+      }
+      setIsTradeLoading(false);
+
+      void fetchAllCharts(loadedTrade).then((ok) => {
+        if (ok === false) {
+          addToast('error', 'Failed to load chart data');
+        }
+      });
     } catch {
+      if (requestId !== tradeRequestIdRef.current) {
+        return;
+      }
       addToast('error', 'Failed to load trade');
       navigate('/trades');
-      setIsLoading(false);
+      setIsTradeLoading(false);
       setIsChartLoading(false);
     }
   }, [id, addToast, navigate, fetchAllCharts]);
+
+  const handleTradeRefresh = useCallback(() => {
+    void fetchTrade(true);
+  }, [fetchTrade]);
 
   async function handleRefreshChartData() {
     if (!trade) return;
@@ -154,7 +281,7 @@ export function TradeDetailPage() {
   }
 
   useEffect(() => {
-    fetchTrade();
+    void fetchTrade();
   }, [fetchTrade]);
 
   async function handleDelete() {
@@ -171,12 +298,8 @@ export function TradeDetailPage() {
     }
   }
 
-  if (isLoading) {
-    return (
-      <div className="flex justify-center py-24">
-        <Spinner size="lg" />
-      </div>
-    );
+  if (isTradeLoading && !trade) {
+    return <TradeDetailPageSkeleton />;
   }
 
   if (!trade) {
@@ -332,7 +455,7 @@ export function TradeDetailPage() {
         <StopAnalysisFields
           tradeId={trade.id}
           trade={trade}
-          onSaved={fetchTrade}
+          onSaved={handleTradeRefresh}
         />
       </div>
 
@@ -352,7 +475,7 @@ export function TradeDetailPage() {
             <TagSelector
               tradeId={trade.id}
               tagIds={trade.tag_ids}
-              onChanged={fetchTrade}
+              onChanged={handleTradeRefresh}
             />
           </div>
           <div className="card p-4">
@@ -360,7 +483,7 @@ export function TradeDetailPage() {
               tradeId={trade.id}
               preTradeNotes={trade.pre_trade_notes}
               postTradeNotes={trade.post_trade_notes}
-              onSaved={fetchTrade}
+              onSaved={handleTradeRefresh}
             />
           </div>
         </div>
