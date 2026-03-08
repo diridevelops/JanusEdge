@@ -1,12 +1,13 @@
 import axios from 'axios';
+import { Download, Upload } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import {
-    changePassword,
-    exportBackup,
-    restoreBackup,
-    updateDisplayTimezone,
-    updateStartingEquity,
-    updateTimezone,
+  changePassword,
+  exportBackup,
+  restoreBackup,
+  updateDisplayTimezone,
+  updateStartingEquity,
+  updateTimezone,
 } from '../api/auth.api';
 import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
@@ -264,46 +265,108 @@ export function SettingsPage() {
         </div>
       </div>
 
+      {/* Trading Timezone */}
       <div className="card p-4">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-          <div className="space-y-2">
-            <div>
-              <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
-                Portable Backup
-              </h2>
-              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                Export a ZIP backup of your TradeLogs data or restore one into your current account.
-              </p>
-            </div>
-            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
-              Restore merges data into the current account. Existing accounts, tags, and import batches are reused when possible, and duplicate trades are skipped by a stable trade fingerprint.
-            </div>
+        <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">
+          Trading Timezone
+        </h2>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+          Used to interpret timestamps from platforms that don't include timezone info (e.g. NinjaTrader).
+        </p>
+        <form onSubmit={handleUpdateTimezone} className="space-y-4">
+          <div>
+            <label htmlFor="timezone" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+              Timezone
+            </label>
+            <select
+              id="timezone"
+              className="input-field mt-1"
+              value={timezone}
+              onChange={(e) => setTimezone(e.target.value)}
+            >
+              {TIMEZONES.map((tz) => (
+                <option key={tz} value={tz}>{tz}</option>
+              ))}
+            </select>
           </div>
+          <button type="submit" className="btn-primary" disabled={tzLoading}>
+            {tzLoading ? 'Saving…' : 'Update Trading Timezone'}
+          </button>
+        </form>
+      </div>
 
-          <div className="flex shrink-0 flex-col gap-2 sm:items-end">
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={handleExportBackup}
-              disabled={exportLoading || restoreLoading}
+      {/* Display Timezone */}
+      <div className="card p-4">
+        <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">
+          Display Timezone
+        </h2>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+          Used to display times throughout the app, including chart time axes and trade timestamps.
+        </p>
+        <form onSubmit={handleUpdateDisplayTimezone} className="space-y-4">
+          <div>
+            <label htmlFor="displayTimezone" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+              Timezone
+            </label>
+            <select
+              id="displayTimezone"
+              className="input-field mt-1"
+              value={displayTimezone}
+              onChange={(e) => setDisplayTimezone(e.target.value)}
             >
-              {exportLoading ? 'Exporting…' : 'Export Backup'}
-            </button>
-            <button
-              type="button"
-              className="btn-primary"
-              onClick={handleOpenRestorePicker}
-              disabled={restoreLoading || exportLoading}
-            >
-              {restoreLoading ? 'Restoring…' : 'Restore Backup'}
-            </button>
+              {TIMEZONES.map((tz) => (
+                <option key={tz} value={tz}>{tz}</option>
+              ))}
+            </select>
+          </div>
+          <button type="submit" className="btn-primary" disabled={dtzLoading}>
+            {dtzLoading ? 'Saving…' : 'Update Display Timezone'}
+          </button>
+        </form>
+      </div>
+
+      {/* Starting Equity */}
+      <div className="card p-4">
+        <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">
+          Simulation Starting Equity
+        </h2>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+          Default starting account equity used to prefill Monte Carlo simulations.
+        </p>
+        <form onSubmit={handleUpdateStartingEquity} className="space-y-4">
+          <div>
+            <label htmlFor="startingEquity" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+              Equity ($)
+            </label>
             <input
-              ref={restoreInputRef}
-              type="file"
-              accept=".zip,application/zip"
-              className="hidden"
-              onChange={handleRestoreFileChange}
+              id="startingEquity"
+              type="number"
+              min="0"
+              step="any"
+              className="input-field mt-1"
+              value={startingEquity}
+              onChange={(e) => setStartingEquity(e.target.value)}
             />
+          </div>
+          <button type="submit" className="btn-primary" disabled={seLoading}>
+            {seLoading ? 'Saving…' : 'Update Starting Equity'}
+          </button>
+        </form>
+      </div>
+      
+      {/* Backup */}
+      <div className="card p-4">
+        <div className="space-y-2">
+          <div>
+            <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">
+              Backup
+            </h2>
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              Export a ZIP backup of your TradeLogs data or restore one into your current account.
+            </p>
+          </div>
+          <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
+            Restore merges data into the current account. Existing accounts, tags, and import batches are reused when possible, and duplicate trades are skipped.
           </div>
         </div>
 
@@ -379,6 +442,34 @@ export function SettingsPage() {
             </div>
           </div>
         ) : null}
+
+        <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-gray-200 pt-4 dark:border-gray-700">
+          <button
+            type="button"
+            className="btn-primary gap-2"
+            onClick={handleExportBackup}
+            disabled={exportLoading || restoreLoading}
+          >
+            <Download className="h-4 w-4" aria-hidden="true" />
+            <span>{exportLoading ? 'Exporting…' : 'Export Backup'}</span>
+          </button>
+          <button
+            type="button"
+            className="btn-secondary gap-2"
+            onClick={handleOpenRestorePicker}
+            disabled={restoreLoading || exportLoading}
+          >
+            <Upload className="h-4 w-4" aria-hidden="true" />
+            <span>{restoreLoading ? 'Restoring…' : 'Restore Backup'}</span>
+          </button>
+          <input
+            ref={restoreInputRef}
+            type="file"
+            accept=".zip,application/zip"
+            className="hidden"
+            onChange={handleRestoreFileChange}
+          />
+        </div>
       </div>
 
       {/* Change password */}
@@ -430,95 +521,6 @@ export function SettingsPage() {
           </div>
           <button type="submit" className="btn-primary" disabled={pwLoading}>
             {pwLoading ? 'Changing…' : 'Change Password'}
-          </button>
-        </form>
-      </div>
-
-      {/* Trading Timezone */}
-      <div className="card p-4">
-        <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">
-          Trading Timezone
-        </h2>
-        <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-          Used to interpret timestamps from platforms that don't include timezone info (e.g. NinjaTrader).
-        </p>
-        <form onSubmit={handleUpdateTimezone} className="space-y-4">
-          <div>
-            <label htmlFor="timezone" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-              Timezone
-            </label>
-            <select
-              id="timezone"
-              className="input-field mt-1"
-              value={timezone}
-              onChange={(e) => setTimezone(e.target.value)}
-            >
-              {TIMEZONES.map((tz) => (
-                <option key={tz} value={tz}>{tz}</option>
-              ))}
-            </select>
-          </div>
-          <button type="submit" className="btn-primary" disabled={tzLoading}>
-            {tzLoading ? 'Saving…' : 'Update Trading Timezone'}
-          </button>
-        </form>
-      </div>
-
-      {/* Display Timezone */}
-      <div className="card p-4">
-        <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">
-          Display Timezone
-        </h2>
-        <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-          Used to display times throughout the app, including chart time axes and trade timestamps.
-        </p>
-        <form onSubmit={handleUpdateDisplayTimezone} className="space-y-4">
-          <div>
-            <label htmlFor="displayTimezone" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-              Timezone
-            </label>
-            <select
-              id="displayTimezone"
-              className="input-field mt-1"
-              value={displayTimezone}
-              onChange={(e) => setDisplayTimezone(e.target.value)}
-            >
-              {TIMEZONES.map((tz) => (
-                <option key={tz} value={tz}>{tz}</option>
-              ))}
-            </select>
-          </div>
-          <button type="submit" className="btn-primary" disabled={dtzLoading}>
-            {dtzLoading ? 'Saving…' : 'Update Display Timezone'}
-          </button>
-        </form>
-      </div>
-
-      {/* Starting Equity */}
-      <div className="card p-4">
-        <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">
-          Starting Equity
-        </h2>
-        <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-          Default starting account equity used to prefill Monte Carlo simulations.
-        </p>
-        <form onSubmit={handleUpdateStartingEquity} className="space-y-4">
-          <div>
-            <label htmlFor="startingEquity" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-              Equity ($)
-            </label>
-            <input
-              id="startingEquity"
-              type="number"
-              min="0"
-              step="any"
-              className="input-field mt-1"
-              value={startingEquity}
-              onChange={(e) => setStartingEquity(e.target.value)}
-            />
-          </div>
-          <button type="submit" className="btn-primary" disabled={seLoading}>
-            {seLoading ? 'Saving…' : 'Update Starting Equity'}
           </button>
         </form>
       </div>
