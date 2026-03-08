@@ -1,10 +1,13 @@
 """Trade repository for database operations."""
 
-from typing import Dict, List, Optional
+from typing import List
 
 from bson import ObjectId
 
 from app.repositories.base import BaseRepository
+from app.utils.trade_fingerprint import (
+    build_trade_fingerprint,
+)
 from app.utils.datetime_utils import utc_now
 
 
@@ -138,3 +141,39 @@ class TradeRepository(BaseRepository):
             },
         )
         return sorted(symbols)
+
+    def find_exportable_by_user(
+        self, user_id: str
+    ) -> List[dict]:
+        """Return all active trades for user export."""
+        return self.find_many(
+            {
+                "user_id": ObjectId(user_id),
+                "status": {"$ne": "deleted"},
+            },
+            sort=[("entry_time", 1)],
+        )
+
+    def find_active_fingerprints(
+        self, user_id: str
+    ) -> List[str]:
+        """Return stable fingerprints for active trades."""
+        trades = self.find_many(
+            {
+                "user_id": ObjectId(user_id),
+                "status": {"$ne": "deleted"},
+            },
+            projection={
+                "source": 1,
+                "symbol": 1,
+                "side": 1,
+                "entry_time": 1,
+                "exit_time": 1,
+                "total_quantity": 1,
+                "avg_entry_price": 1,
+                "avg_exit_price": 1,
+            },
+        )
+        return [
+            build_trade_fingerprint(trade) for trade in trades
+        ]

@@ -83,3 +83,14 @@ class MediaRepository(BaseRepository):
                 "trade_id": ObjectId(trade_id),
             }
         )
+
+    def find_by_trade_ids(
+        self, trade_ids: List[ObjectId]
+    ) -> List[Dict]:
+        """Return all media docs for a set of trades."""
+        if not trade_ids:
+            return []
+        return self.find_many(
+            {"trade_id": {"$in": list(trade_ids)}},
+            sort=[("created_at", 1)],
+        )

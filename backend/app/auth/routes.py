@@ -1,6 +1,6 @@
 """Authentication API routes."""
 
-from flask import jsonify, request
+from flask import jsonify, request, send_file
 from flask_jwt_extended import (
     get_jwt_identity,
     jwt_required,
@@ -11,6 +11,7 @@ from app.auth import auth_bp
 from app.auth.schemas import (
     LoginSchema,
     RegisterSchema,
+    RestoreArchiveSchema,
     ChangePasswordSchema,
     UpdateTimezoneSchema,
     UpdateDisplayTimezoneSchema,
@@ -26,6 +27,7 @@ change_password_schema = ChangePasswordSchema()
 update_timezone_schema = UpdateTimezoneSchema()
 update_display_timezone_schema = UpdateDisplayTimezoneSchema()
 update_starting_equity_schema = UpdateStartingEquitySchema()
+restore_archive_schema = RestoreArchiveSchema()
 
 
 @auth_bp.route("/health", methods=["GET"])
@@ -227,3 +229,43 @@ def update_starting_equity():
         starting_equity=validated["starting_equity"],
     )
     return jsonify(profile), 200
+
+
+@auth_bp.route("/export", methods=["GET"])
+@jwt_required()
+def export_backup():
+    """Export the authenticated user's portable backup archive."""
+    user_id = get_jwt_identity()
+    archive_buffer, filename = auth_service.export_backup(
+        user_id
+    )
+    return send_file(
+        archive_buffer,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=filename,
+    )
+
+
+@auth_bp.route("/restore", methods=["POST"])
+@jwt_required()
+def restore_backup():
+    """Restore a portable backup archive into the current user."""
+    archive_file = request.files.get("file")
+    if archive_file is None:
+        raise ValidationError("Backup archive file is required.")
+
+    try:
+        restore_archive_schema.load(
+            {"filename": archive_file.filename or ""}
+        )
+    except MarshmallowError as e:
+        raise ValidationError(
+            "Validation failed.", details=e.messages
+        )
+
+    user_id = get_jwt_identity()
+    result = auth_service.restore_backup(
+        user_id, archive_file
+    )
+    return jsonify(result), 200

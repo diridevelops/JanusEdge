@@ -1,6 +1,6 @@
 """Import batch repository for database operations."""
 
-from typing import List, Optional
+from typing import Iterable, List, Optional
 
 from bson import ObjectId
 
@@ -38,3 +38,15 @@ class ImportBatchRepository(BaseRepository):
             "user_id": ObjectId(user_id),
             "file_hash": file_hash,
         })
+
+    def find_by_ids(
+        self, batch_ids: Iterable[ObjectId]
+    ) -> List[dict]:
+        """Return import batches for a set of ObjectIds."""
+        batch_ids = list(batch_ids)
+        if not batch_ids:
+            return []
+        return self.find_many(
+            {"_id": {"$in": batch_ids}},
+            sort=[("imported_at", 1)],
+        )

@@ -62,3 +62,36 @@ class UpdateStartingEquitySchema(Schema):
         required=True,
         validate=validate.Range(min=0),
     )
+
+
+class RestoreArchiveSchema(Schema):
+    """Schema for restore archive upload metadata."""
+
+    filename = fields.Str(
+        required=True,
+        validate=validate.Length(min=1, max=255),
+    )
+
+
+class BackupManifestSchema(Schema):
+    """Schema for portable backup archive manifests."""
+
+    archive_type = fields.Str(
+        required=True,
+        validate=validate.OneOf(
+            ["tradelogs-portable-backup"]
+        ),
+    )
+    version = fields.Str(
+        required=True,
+        validate=validate.OneOf(["1.0"]),
+    )
+    created_at = fields.Str(
+        required=True,
+        validate=validate.Length(min=1, max=64),
+    )
+    counts = fields.Dict(
+        keys=fields.Str(),
+        values=fields.Int(validate=validate.Range(min=0)),
+        required=True,
+    )

@@ -1,7 +1,16 @@
-import { useState } from 'react';
-import { changePassword, updateDisplayTimezone, updateStartingEquity, updateTimezone } from '../api/auth.api';
+import axios from 'axios';
+import { useEffect, useRef, useState } from 'react';
+import {
+  changePassword,
+  exportBackup,
+  restoreBackup,
+  updateDisplayTimezone,
+  updateStartingEquity,
+  updateTimezone,
+} from '../api/auth.api';
 import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
+import type { RestoreSummary } from '../types/auth.types';
 
 const TIMEZONES = [
   'America/New_York',
@@ -21,10 +30,38 @@ const TIMEZONES = [
   'UTC',
 ];
 
+const RESTORE_SUMMARY_ITEMS: Array<{
+  key: keyof Omit<RestoreSummary, 'market_data_cache' | 'settings'>;
+  label: string;
+}> = [
+  { key: 'accounts', label: 'Accounts' },
+  { key: 'tags', label: 'Tags' },
+  { key: 'import_batches', label: 'Import Batches' },
+  { key: 'trades', label: 'Trades' },
+  { key: 'executions', label: 'Executions' },
+  { key: 'media', label: 'Media' },
+];
+
+function getErrorMessage(error: unknown, fallbackMessage: string): string {
+  if (axios.isAxiosError(error)) {
+    const apiMessage = error.response?.data?.message;
+    if (typeof apiMessage === 'string' && apiMessage.trim()) {
+      return apiMessage;
+    }
+  }
+
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+
+  return fallbackMessage;
+}
+
 /** Settings page — password change and timezone update. */
 export function SettingsPage() {
   const { user, refreshProfile } = useAuth();
   const { addToast } = useToast();
+  const restoreInputRef = useRef<HTMLInputElement | null>(null);
 
   // Password change
   const [currentPassword, setCurrentPassword] = useState('');
@@ -48,6 +85,20 @@ export function SettingsPage() {
   );
   const [seLoading, setSeLoading] = useState(false);
 
+  // Backup / restore
+  const [exportLoading, setExportLoading] = useState(false);
+  const [restoreLoading, setRestoreLoading] = useState(false);
+  const [restoreSummary, setRestoreSummary] = useState<RestoreSummary | null>(null);
+  const [restoredFilename, setRestoredFilename] = useState<string>('');
+
+  useEffect(() => {
+    setTimezone(user?.timezone ?? 'America/New_York');
+    setDisplayTimezone(
+      user?.display_timezone ?? user?.timezone ?? 'America/New_York'
+    );
+    setStartingEquity(String(user?.starting_equity ?? 10000));
+  }, [user?.display_timezone, user?.starting_equity, user?.timezone]);
+
   async function handleChangePassword(e: React.FormEvent) {
     e.preventDefault();
     if (newPassword !== confirmPassword) {
@@ -66,8 +117,7 @@ export function SettingsPage() {
       setNewPassword('');
       setConfirmPassword('');
     } catch (err: unknown) {
-      const message =
-        err instanceof Error ? err.message : 'Failed to change password.';
+      const message = getErrorMessage(err, 'Failed to change password.');
       addToast('error', message);
     } finally {
       setPwLoading(false);
@@ -80,10 +130,9 @@ export function SettingsPage() {
     try {
       await updateTimezone(timezone);
       addToast('success', 'Trading timezone updated successfully.');
-      refreshProfile();
+      await refreshProfile();
     } catch (err: unknown) {
-      const message =
-        err instanceof Error ? err.message : 'Failed to update timezone.';
+      const message = getErrorMessage(err, 'Failed to update timezone.');
       addToast('error', message);
     } finally {
       setTzLoading(false);
@@ -96,10 +145,12 @@ export function SettingsPage() {
     try {
       await updateDisplayTimezone(displayTimezone);
       addToast('success', 'Display timezone updated successfully.');
-      refreshProfile();
+      await refreshProfile();
     } catch (err: unknown) {
-      const message =
-        err instanceof Error ? err.message : 'Failed to update display timezone.';
+      const message = getErrorMessage(
+        err,
+        'Failed to update display timezone.'
+      );
       addToast('error', message);
     } finally {
       setDtzLoading(false);
@@ -117,13 +168,71 @@ export function SettingsPage() {
     try {
       await updateStartingEquity(value);
       addToast('success', 'Starting equity updated successfully.');
-      refreshProfile();
+      await refreshProfile();
     } catch (err: unknown) {
-      const message =
-        err instanceof Error ? err.message : 'Failed to update starting equity.';
+      const message = getErrorMessage(err, 'Failed to update starting equity.');
       addToast('error', message);
     } finally {
       setSeLoading(false);
+    }
+  }
+
+  async function handleExportBackup() {
+    setExportLoading(true);
+
+    try {
+      const { blob, filename } = await exportBackup();
+      const objectUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+
+      link.href = objectUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(objectUrl);
+
+      addToast('success', 'Portable backup downloaded successfully.');
+    } catch (err: unknown) {
+      addToast('error', getErrorMessage(err, 'Failed to export backup.'));
+    } finally {
+      setExportLoading(false);
+    }
+  }
+
+  function handleOpenRestorePicker() {
+    if (restoreLoading) {
+      return;
+    }
+
+    restoreInputRef.current?.click();
+  }
+
+  async function handleRestoreFileChange(
+    event: React.ChangeEvent<HTMLInputElement>
+  ) {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+
+    if (!file) {
+      return;
+    }
+
+    setRestoreLoading(true);
+
+    try {
+      const result = await restoreBackup(file);
+      setRestoreSummary(result.summary);
+      setRestoredFilename(file.name);
+      await refreshProfile();
+      addToast(
+        'success',
+        `${result.message} Imported ${result.summary.trades.created} trades and skipped ${result.summary.trades.skipped} duplicate trades.`
+      );
+    } catch (err: unknown) {
+      addToast('error', getErrorMessage(err, 'Failed to restore backup.'));
+    } finally {
+      setRestoreLoading(false);
     }
   }
 
@@ -153,6 +262,123 @@ export function SettingsPage() {
             <p className="font-medium text-gray-900 dark:text-gray-100">{user?.display_timezone ?? '—'}</p>
           </div>
         </div>
+      </div>
+
+      <div className="card p-4">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="space-y-2">
+            <div>
+              <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+                Portable Backup
+              </h2>
+              <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                Export a ZIP backup of your TradeLogs data or restore one into your current account.
+              </p>
+            </div>
+            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
+              Restore merges data into the current account. Existing accounts, tags, and import batches are reused when possible, and duplicate trades are skipped by a stable trade fingerprint.
+            </div>
+          </div>
+
+          <div className="flex shrink-0 flex-col gap-2 sm:items-end">
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={handleExportBackup}
+              disabled={exportLoading || restoreLoading}
+            >
+              {exportLoading ? 'Exporting…' : 'Export Backup'}
+            </button>
+            <button
+              type="button"
+              className="btn-primary"
+              onClick={handleOpenRestorePicker}
+              disabled={restoreLoading || exportLoading}
+            >
+              {restoreLoading ? 'Restoring…' : 'Restore Backup'}
+            </button>
+            <input
+              ref={restoreInputRef}
+              type="file"
+              accept=".zip,application/zip"
+              className="hidden"
+              onChange={handleRestoreFileChange}
+            />
+          </div>
+        </div>
+
+        <div className="mt-4 text-xs text-gray-500 dark:text-gray-400">
+          Choose a TradeLogs backup ZIP. Duplicate trades are detected by source, symbol, side, entry and exit times, quantity, and average prices, then skipped during restore.
+        </div>
+
+        {restoreSummary ? (
+          <div className="mt-4 rounded-md border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-900/40">
+            <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+              <h3 className="text-sm font-semibold text-gray-800 dark:text-gray-200">
+                Last Restore Summary
+              </h3>
+              <span className="text-xs text-gray-500 dark:text-gray-400">
+                {restoredFilename || 'Uploaded backup'}
+              </span>
+            </div>
+
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              {RESTORE_SUMMARY_ITEMS.map(({ key, label }) => {
+                const item = restoreSummary[key];
+                const secondaryLabel = 'reused' in item ? 'Reused' : 'Skipped';
+                const secondaryValue = 'reused' in item ? item.reused : item.skipped;
+
+                return (
+                  <div
+                    key={key}
+                    className="rounded-md border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-800"
+                  >
+                    <div className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                      {label}
+                    </div>
+                    <div className="mt-2 flex items-center justify-between text-sm text-gray-700 dark:text-gray-300">
+                      <span>Created</span>
+                      <span className="font-semibold text-gray-900 dark:text-gray-100">
+                        {item.created}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex items-center justify-between text-sm text-gray-700 dark:text-gray-300">
+                      <span>{secondaryLabel}</span>
+                      <span className="font-semibold text-gray-900 dark:text-gray-100">
+                        {secondaryValue}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <div className="rounded-md border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-800">
+                <div className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                  Market Data Cache
+                </div>
+                <div className="mt-2 flex items-center justify-between text-sm text-gray-700 dark:text-gray-300">
+                  <span>Upserted</span>
+                  <span className="font-semibold text-gray-900 dark:text-gray-100">
+                    {restoreSummary.market_data_cache.upserted}
+                  </span>
+                </div>
+              </div>
+
+              <div className="rounded-md border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-800">
+                <div className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                  Settings Updated
+                </div>
+                <div className="mt-2 text-sm text-gray-700 dark:text-gray-300">
+                  {restoreSummary.settings.updated.length > 0
+                    ? restoreSummary.settings.updated.join(', ')
+                    : 'No settings changed'}
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {/* Change password */}

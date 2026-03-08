@@ -3,6 +3,7 @@
 import bcrypt
 from flask_jwt_extended import create_access_token
 
+from app.auth.backup_service import PortableBackupService
 from app.models.user import create_user_doc
 from app.repositories.user_repo import UserRepository
 from app.utils.errors import (
@@ -19,6 +20,7 @@ class AuthService:
 
     def __init__(self):
         self.user_repo = UserRepository()
+        self.backup_service = PortableBackupService()
 
     def register(
         self,
@@ -314,3 +316,17 @@ class AuthService:
             ),
             "starting_equity": starting_equity,
         }
+
+    def export_backup(
+        self, user_id: str
+    ) -> tuple[object, str]:
+        """Create a portable backup archive for a user."""
+        return self.backup_service.export_backup(user_id)
+
+    def restore_backup(
+        self, user_id: str, archive_file
+    ) -> dict:
+        """Restore a portable backup archive into a user."""
+        return self.backup_service.restore_backup(
+            user_id, archive_file
+        )

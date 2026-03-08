@@ -58,6 +58,20 @@ def init_db(db: Database) -> None:
         [("user_id", 1), ("side", 1), ("entry_time", -1)]
     )
     db.trades.create_index("import_batch_id")
+    db.trades.create_index(
+        [
+            ("user_id", 1),
+            ("status", 1),
+            ("source", 1),
+            ("symbol", 1),
+            ("side", 1),
+            ("entry_time", 1),
+            ("exit_time", 1),
+            ("total_quantity", 1),
+            ("avg_entry_price", 1),
+            ("avg_exit_price", 1),
+        ]
+    )
 
     # Tags
     db.tags.create_index(

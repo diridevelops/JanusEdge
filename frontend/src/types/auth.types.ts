@@ -26,3 +26,49 @@ export interface AuthResponse {
   token: string;
   user: User;
 }
+
+/** Downloadable export payload metadata. */
+export interface ExportBackupFile {
+  blob: Blob;
+  filename: string;
+}
+
+/** Entity restore counts returned after a backup restore. */
+export interface RestoreCountSummary {
+  created: number;
+  reused: number;
+}
+
+/** Trade and execution duplicate-aware restore counts. */
+export interface RestoreDuplicateSummary {
+  created: number;
+  skipped: number;
+}
+
+/** Market data cache restore summary. */
+export interface RestoreMarketDataSummary {
+  upserted: number;
+}
+
+/** User settings updated during restore. */
+export interface RestoreSettingsSummary {
+  updated: string[];
+}
+
+/** Aggregate restore summary returned by the backend. */
+export interface RestoreSummary {
+  accounts: RestoreCountSummary;
+  tags: RestoreCountSummary;
+  import_batches: RestoreCountSummary;
+  trades: RestoreDuplicateSummary;
+  executions: RestoreDuplicateSummary;
+  media: RestoreDuplicateSummary;
+  market_data_cache: RestoreMarketDataSummary;
+  settings: RestoreSettingsSummary;
+}
+
+/** Restore response payload from the portable backup API. */
+export interface RestoreBackupResponse {
+  message: string;
+  summary: RestoreSummary;
+}

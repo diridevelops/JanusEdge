@@ -1,6 +1,6 @@
 """Market data cache repository."""
 
-from typing import List, Optional
+from typing import Iterable, List
 from datetime import date, datetime
 
 from app.repositories.base import BaseRepository
@@ -142,3 +142,40 @@ class MarketDataRepository(BaseRepository):
             }
         )
         return result.deleted_count
+
+    def find_by_symbols_and_dates(
+        self,
+        symbols: Iterable[str],
+        cache_dates: Iterable[date],
+    ) -> List[dict]:
+        """Return cached slices for the given symbols and dates."""
+        symbols = list(symbols)
+        cache_dates = [self._to_datetime(day) for day in cache_dates]
+        if not symbols or not cache_dates:
+            return []
+        return self.find_many(
+            {
+                "symbol": {"$in": symbols},
+                "date": {"$in": cache_dates},
+            },
+            sort=[("symbol", 1), ("interval", 1), ("date", 1)],
+        )
+
+    def upsert_document(self, document: dict) -> None:
+        """Upsert a full cache document by its natural key."""
+        self.collection.update_one(
+            {
+                "symbol": document["symbol"],
+                "interval": document["interval"],
+                "date": self._to_datetime(document["date"]),
+            },
+            {
+                "$set": {
+                    "ohlc": document.get("ohlc", []),
+                    "bar_count": document.get("bar_count", 0),
+                    "fetched_at": document.get("fetched_at"),
+                    "source": document.get("source", "yfinance"),
+                }
+            },
+            upsert=True,
+        )

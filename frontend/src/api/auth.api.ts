@@ -1,10 +1,30 @@
 import apiClient from './client';
 import type {
   AuthResponse,
+  ExportBackupFile,
   LoginRequest,
   RegisterRequest,
+  RestoreBackupResponse,
   User,
 } from '../types/auth.types';
+
+function getDownloadFilename(contentDisposition?: string): string {
+  if (!contentDisposition) {
+    return 'tradelogs-backup.zip';
+  }
+
+  const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match?.[1]) {
+    return decodeURIComponent(utf8Match[1]);
+  }
+
+  const filenameMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
+  if (filenameMatch?.[1]) {
+    return filenameMatch[1];
+  }
+
+  return 'tradelogs-backup.zip';
+}
 
 /** Register a new user account. */
 export async function register(
@@ -76,5 +96,37 @@ export async function updateStartingEquity(
   const res = await apiClient.put<User>('/auth/starting-equity', {
     starting_equity: startingEquity,
   });
+  return res.data;
+}
+
+/** Download a portable backup ZIP for the current user. */
+export async function exportBackup(): Promise<ExportBackupFile> {
+  const res = await apiClient.get<Blob>('/auth/export', {
+    responseType: 'blob',
+  });
+
+  return {
+    blob: res.data,
+    filename: getDownloadFilename(res.headers['content-disposition']),
+  };
+}
+
+/** Restore a portable backup ZIP into the current user account. */
+export async function restoreBackup(
+  file: File
+): Promise<RestoreBackupResponse> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const res = await apiClient.post<RestoreBackupResponse>(
+    '/auth/restore',
+    formData,
+    {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    }
+  );
+
   return res.data;
 }

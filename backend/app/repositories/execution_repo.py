@@ -106,3 +106,14 @@ class ExecutionRepository(BaseRepository):
             {"$set": {"trade_id": ObjectId(trade_id)}},
         )
         return result.modified_count
+
+    def find_by_trade_ids(
+        self, trade_ids: List[ObjectId]
+    ) -> List[dict]:
+        """Find all executions for a set of trades."""
+        if not trade_ids:
+            return []
+        return self.find_many(
+            {"trade_id": {"$in": list(trade_ids)}},
+            sort=[("timestamp", 1)],
+        )

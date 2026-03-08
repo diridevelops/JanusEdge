@@ -123,3 +123,25 @@ class UserRepository(BaseRepository):
                 }
             },
         )
+
+    def update_portable_settings(
+        self,
+        user_id: str,
+        timezone: str,
+        display_timezone: str,
+        starting_equity: float,
+    ) -> bool:
+        """Update all portable user settings in one write."""
+        from app.utils.datetime_utils import utc_now
+
+        return self.update_one(
+            user_id,
+            {
+                "$set": {
+                    "timezone": timezone,
+                    "display_timezone": display_timezone,
+                    "starting_equity": starting_equity,
+                    "updated_at": utc_now(),
+                }
+            },
+        )
