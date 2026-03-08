@@ -1,12 +1,12 @@
 import axios from 'axios';
 import { useEffect, useRef, useState } from 'react';
 import {
-  changePassword,
-  exportBackup,
-  restoreBackup,
-  updateDisplayTimezone,
-  updateStartingEquity,
-  updateTimezone,
+    changePassword,
+    exportBackup,
+    restoreBackup,
+    updateDisplayTimezone,
+    updateStartingEquity,
+    updateTimezone,
 } from '../api/auth.api';
 import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
