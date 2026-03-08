@@ -17,6 +17,7 @@ import type { Execution } from '../types/execution.types';
 import type { ChartInterval, OHLCDataPoint } from '../types/marketData.types';
 import type { Trade } from '../types/trade.types';
 import { formatCurrency, formatDateTime, formatDuration } from '../utils/formatters';
+import { getTradeRMultiple } from '../utils/tradeMetrics';
 
 const ALL_INTERVALS: ChartInterval[] = ['1m', '5m', '15m', '1h'];
 
@@ -258,7 +259,7 @@ export function TradeDetailPage() {
             </p>
           </div>
           <div>
-            <p className="text-xs text-gray-500 uppercase dark:text-gray-400">Initial Risk</p>
+            <p className="text-xs text-gray-500 uppercase dark:text-gray-400">Initial Risk (No Fees)</p>
             <p className="font-semibold text-gray-900 dark:text-gray-100">
               {trade.initial_risk > 0
                 ? formatCurrency(trade.initial_risk)
@@ -268,9 +269,16 @@ export function TradeDetailPage() {
           <div>
             <p className="text-xs text-gray-500 uppercase dark:text-gray-400">R-multiple</p>
             <p className={`font-semibold ${trade.net_pnl >= 0 ? 'text-profit' : 'text-loss'}`}>
-              {trade.initial_risk > 0
-                ? `${(trade.net_pnl / trade.initial_risk).toFixed(2)}R`
-                : '—'}
+              {(() => {
+                const rMultiple = getTradeRMultiple(
+                  trade.net_pnl,
+                  trade.initial_risk,
+                  trade.fee
+                );
+                return rMultiple !== null
+                  ? `${rMultiple.toFixed(2)}R`
+                  : '—';
+              })()}
             </p>
           </div>
           <div>

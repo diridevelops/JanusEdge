@@ -297,6 +297,32 @@ class TestSimulate:
         assert detail["change_r"] == -0.33
         assert "entry_time" in detail
 
+    def test_winner_r_multiple_includes_fees(self, client):
+        """Winner R uses initial risk plus fees before and after widening."""
+        token = _register_and_login(client)
+        _create_trade(
+            client,
+            token,
+            exit_price=5024.0,
+            initial_risk=100.0,
+            fee=10.0,
+        )
+
+        resp = client.post(
+            "/api/whatif/simulate",
+            json={"r_widening": 0.5},
+            headers=_auth(token),
+        )
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["original"]["expectancy_r"] == 1.0
+        assert data["what_if"]["expectancy_r"] == 0.69
+        detail = data["details"][0]
+        assert detail["original_r"] == 1.0
+        assert detail["new_r"] == 0.69
+        assert detail["change_r"] == -0.31
+
     def test_loser_without_target_skipped(self, client):
         """Losers without target_price are skipped."""
         token = _register_and_login(client)
@@ -315,6 +341,31 @@ class TestSimulate:
         assert d["original_r"] == -1.0
         assert d["new_r"] == -0.67
         assert d["change_r"] == 0.33
+
+    def test_loser_without_target_r_multiple_includes_fees(
+        self, client
+    ):
+        """Skipped losers still report fee-inclusive R values."""
+        token = _register_and_login(client)
+        _create_trade(
+            client,
+            token,
+            initial_risk=100.0,
+            fee=10.0,
+        )
+
+        resp = client.post(
+            "/api/whatif/simulate",
+            json={"r_widening": 0.5},
+            headers=_auth(token),
+        )
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        detail = data["details"][0]
+        assert detail["original_r"] == -0.55
+        assert detail["new_r"] == -0.38
+        assert detail["change_r"] == 0.17
 
     def test_missing_market_data_takes_priority_over_no_target(
         self, client

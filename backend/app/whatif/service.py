@@ -17,6 +17,10 @@ from app.repositories.market_data_repo import (
 )
 from app.repositories.tag_repo import TagRepository
 from app.repositories.trade_repo import TradeRepository
+from app.utils.trade_metrics import (
+    calculate_r_multiple,
+    calculate_widened_effective_risk,
+)
 from app.whatif.cache import _CACHE_TTL, _sim_cache
 from app.whatif.bootstrap import (
     build_confidence_intervals,
@@ -368,23 +372,6 @@ class WhatIfService:
         simulated = 0
         skipped = 0
 
-        def build_widened_net_risk(
-            initial_risk_value: float,
-            fee_value: float,
-        ) -> Optional[float]:
-            """Compute widened net risk while keeping fees unscaled."""
-            if initial_risk_value <= 0:
-                return None
-            widened_value = (
-                initial_risk_value
-                + (initial_risk_value - fee_value) * r_widening
-            )
-            return (
-                widened_value
-                if widened_value > 0
-                else None
-            )
-
         def build_detail(
             trade_doc: Dict[str, Any],
             original_pnl: float,
@@ -392,12 +379,18 @@ class WhatIfService:
             converted_flag: bool,
             status: str,
             original_risk: float,
+            fee_value: float,
             widened_risk_value: Optional[float],
         ) -> Dict[str, Any]:
             """Build simulation detail with P&L and R-multiple deltas."""
+            original_r_value = calculate_r_multiple(
+                original_pnl,
+                original_risk,
+                fee_value,
+            )
             original_r = (
-                round(original_pnl / original_risk, 2)
-                if original_risk > 0
+                round(original_r_value, 2)
+                if original_r_value is not None
                 else None
             )
             new_r = (
@@ -440,15 +433,21 @@ class WhatIfService:
             gross_pnl = t.get("gross_pnl", net_pnl + fee)
             initial_risk = t.get("initial_risk", 0)
             entry_time = t.get("entry_time")
-            widened_risk = build_widened_net_risk(
+            widened_risk = calculate_widened_effective_risk(
                 initial_risk,
                 fee,
+                r_widening,
             )
 
             original_pnls.append(net_pnl)
             original_grosses.append(gross_pnl)
-            if initial_risk > 0:
-                original_rs.append(net_pnl / initial_risk)
+            original_r = calculate_r_multiple(
+                float(net_pnl),
+                float(initial_risk),
+                float(fee),
+            )
+            if original_r is not None:
+                original_rs.append(original_r)
 
             if net_pnl >= 0:
                 # Winner — keep P&L, widen initial risk
@@ -465,6 +464,7 @@ class WhatIfService:
                         False,
                         "winner",
                         initial_risk,
+                        fee,
                         widened_risk,
                     )
                 )
@@ -504,6 +504,7 @@ class WhatIfService:
                         False,
                         "no_ohlc",
                         initial_risk,
+                        fee,
                         widened_risk,
                     )
                 )
@@ -524,6 +525,7 @@ class WhatIfService:
                         False,
                         "no_target",
                         initial_risk,
+                        fee,
                         widened_risk,
                     )
                 )
@@ -550,6 +552,7 @@ class WhatIfService:
                         False,
                         "no_risk",
                         initial_risk,
+                        fee,
                         widened_risk,
                     )
                 )
@@ -590,6 +593,7 @@ class WhatIfService:
                         False,
                         "no_ohlc",
                         initial_risk,
+                        fee,
                         widened_risk,
                     )
                 )
@@ -647,6 +651,7 @@ class WhatIfService:
                     was_converted and new_pnl > 0,
                     "simulated",
                     initial_risk,
+                    fee,
                     widened_risk,
                 )
             )

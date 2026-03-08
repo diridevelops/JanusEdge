@@ -1,6 +1,6 @@
 import type {
-  AnalyticsSummary,
-  DrawdownPoint,
+    AnalyticsSummary,
+    DrawdownPoint,
 } from '../../types/analytics.types';
 import { formatCurrency, formatPercent } from '../../utils/formatters';
 import { InfoTooltip } from '../ui/InfoTooltip';
@@ -226,7 +226,7 @@ export function StatsGrid({
           tooltip="Largest peak-to-trough decline observed across the entire equity curve."
         />
         <StatsCard
-          label="Avg Initial Risk ($)"
+          label="Avg Initial Risk (No Fees) ($)"
           value={formatCurrency(summary.avg_initial_risk)}
           tooltip="Average initial risk per trade.\nOnly trades with initial risk > 0 are included."
         />

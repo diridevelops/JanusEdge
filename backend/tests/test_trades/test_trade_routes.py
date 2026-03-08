@@ -103,7 +103,8 @@ def test_create_manual_trade_loser_sets_initial_risk(client):
     assert resp.status_code == 201
     trade = resp.get_json()["trade"]
     assert trade["net_pnl"] < 0
-    assert trade["initial_risk"] == abs(trade["net_pnl"])
+    assert trade["gross_pnl"] < 0
+    assert trade["initial_risk"] == abs(trade["gross_pnl"])
 
 
 def test_list_trades_empty(client):

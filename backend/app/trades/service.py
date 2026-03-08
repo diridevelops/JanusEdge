@@ -24,6 +24,9 @@ from app.imports.reconstructor import get_point_value
 from app.market_data.symbol_mapper import map_to_yahoo
 from app.utils.datetime_utils import utc_now
 from app.utils.errors import NotFoundError
+from app.utils.trade_metrics import (
+    calculate_initial_risk_no_fees,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -302,7 +305,9 @@ class TradeService:
             data.get("initial_risk", 0.0)
         )
         if net_pnl < 0 and requested_initial_risk <= 0:
-            initial_risk = abs(net_pnl)
+            initial_risk = calculate_initial_risk_no_fees(
+                gross_pnl
+            )
         else:
             initial_risk = requested_initial_risk
 

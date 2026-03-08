@@ -328,6 +328,46 @@ class TestAnalyticsSummary:
         # expectancy_r=0.5*2.0 - 0.5*0.5 = 0.75
         assert data["expectancy_r"] == 0.75
 
+    def test_summary_expectancy_r_includes_fees_in_risk(
+        self, app, client, auth_headers
+    ):
+        """Expectancy (R) uses initial risk plus fees as denominator."""
+        user_id = _get_user_id(app)
+        base = datetime(2025, 1, 21, 12, 0, 0)
+
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=110.0,
+            fee=10.0,
+            initial_risk=100.0,
+            exit_time=base,
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=-60.0,
+            fee=15.0,
+            initial_risk=45.0,
+            exit_time=base + timedelta(hours=1),
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=120.0,
+            initial_risk=0.0,
+            exit_time=base + timedelta(hours=2),
+        )
+
+        resp = client.get(
+            "/api/analytics/summary",
+            headers=auth_headers,
+        )
+
+        assert resp.status_code == 200
+        data = resp.json
+        assert data["expectancy_r"] == 0.0
+
     def test_summary_filter_by_symbol(
         self, app, client, auth_headers
     ):
@@ -923,6 +963,53 @@ class TestMonteCarlo:
         assert data["metadata"]["effective_win_loss_ratio"] == 2.0
         assert data["metrics"]["expectation"] == 0.5
 
+    def test_bootstrap_r_multiples_include_fees_in_risk(
+        self, app, client, auth_headers
+    ):
+        """Bootstrap derives R-multiples from fee-inclusive risk."""
+        user_id = _get_user_id(app)
+        base = datetime(2025, 3, 2, 10, 0, 0)
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=110.0,
+            fee=10.0,
+            initial_risk=100.0,
+            exit_time=base,
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=-60.0,
+            fee=15.0,
+            initial_risk=45.0,
+            exit_time=base + timedelta(minutes=10),
+        )
+
+        resp = client.post(
+            "/api/analytics/monte-carlo",
+            json={
+                "mode": "bootstrap",
+                "startingEquity": 10000,
+                "winRate": 99,
+                "winLossRatio": 9,
+                "riskFixed": 100,
+                "riskPct": 1,
+                "minRisk": 10,
+                "riskMode": "fixed",
+                "seed": 7,
+                "numTrades": 20,
+                "rMultiples": [100.0, 100.0],
+            },
+            headers=auth_headers,
+        )
+
+        assert resp.status_code == 200
+        data = resp.json
+        assert data["metadata"]["effective_win_rate"] == 50.0
+        assert data["metadata"]["effective_win_loss_ratio"] == 1.0
+        assert data["metrics"]["expectation"] == 0.0
+
 
 class TestAnalyticsAuth:
     """Test that analytics endpoints require auth."""
@@ -1029,6 +1116,57 @@ class TestEvolution:
         assert fourth["running_mean_r"] == 1.0
         # Rolling R over last 3 defined-R trades = (2 + -1 + 2) / 3 = 1
         assert fourth["rolling_mean_r"] == 1.0
+
+    def test_evolution_r_multiple_includes_fees_in_risk(
+        self, app, client, auth_headers
+    ):
+        """Evolution R values use initial risk plus fees."""
+        user_id = _get_user_id(app)
+        base = datetime(2025, 2, 2, 10, 0, 0)
+
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=110.0,
+            fee=10.0,
+            initial_risk=100.0,
+            exit_time=base,
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=-60.0,
+            fee=15.0,
+            initial_risk=45.0,
+            exit_time=base + timedelta(minutes=10),
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=25.0,
+            initial_risk=0.0,
+            exit_time=base + timedelta(minutes=20),
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=72.0,
+            fee=8.0,
+            initial_risk=28.0,
+            exit_time=base + timedelta(minutes=30),
+        )
+
+        resp = client.get(
+            "/api/analytics/evolution?window=3&min_side_count=1",
+            headers=auth_headers,
+        )
+
+        assert resp.status_code == 200
+        data = resp.json
+        assert data[0]["r_multiple"] == 1.0
+        assert data[1]["r_multiple"] == -1.0
+        assert data[2]["r_multiple"] is None
+        assert data[3]["r_multiple"] == 2.0
 
     def test_evolution_pl_ratio_guardrail(
         self, app, client, auth_headers

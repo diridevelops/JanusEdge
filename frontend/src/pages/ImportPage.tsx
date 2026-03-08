@@ -174,11 +174,11 @@ export function ImportPage() {
         {wizard.step === 'fees' && (
           <div className="space-y-4">
             <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
-              Assign Fees & Initial Risk
+              Assign Fees & Initial Risk (No Fees)
             </h2>
             <p className="text-sm text-gray-500 dark:text-gray-400">
               {wizard.trades.length} {wizard.trades.length === 1 ? 'trade' : 'trades'}{' '}
-              reconstructed. Enter fees and initial risk for each trade or use bulk entry.
+              reconstructed. Enter fees and initial risk (no fees) for each trade or use bulk entry.
             </p>
 
             <FeeEntryTable

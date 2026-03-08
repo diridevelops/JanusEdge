@@ -5,6 +5,7 @@ import type {
   ReconstructedTrade,
 } from '../types/import.types';
 import { uploadCSV, reconstructTrades, finalizeImport } from '../api/imports.api';
+import { getInitialRiskNoFees } from '../utils/tradeMetrics';
 
 interface ApiErrorPayload {
   error?: string | { message?: string };
@@ -249,11 +250,9 @@ export function useImport() {
       allTrades.forEach((trade, idx) => {
         const initialFee = trade.fee ?? 0;
         initialFees[idx] = initialFee;
-        const initialNetPnl = trade.gross_pnl - initialFee;
-        initialRisks[idx] =
-          initialNetPnl < 0
-            ? Math.abs(initialNetPnl)
-            : 0;
+        initialRisks[idx] = getInitialRiskNoFees(
+          trade.gross_pnl
+        );
       });
 
       setState((prev) => ({

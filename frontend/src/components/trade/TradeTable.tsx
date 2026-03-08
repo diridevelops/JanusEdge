@@ -6,6 +6,7 @@ import { useAuth } from '../../hooks/useAuth';
 import type { Tag } from '../../types/marketData.types';
 import type { Trade } from '../../types/trade.types';
 import { formatCurrency, formatDateTime, formatDuration } from '../../utils/formatters';
+import { getTradeRMultiple } from '../../utils/tradeMetrics';
 
 interface TradeTableProps {
   /** Array of trades to display. */
@@ -166,9 +167,16 @@ export function TradeTable({ trades, sortBy, sortDir, onSortChange }: TradeTable
                 {formatCurrency(trade.net_pnl)}
               </td>
               <td className="px-4 py-2.5 text-right font-medium text-gray-900 dark:text-gray-100">
-                {trade.initial_risk > 0
-                  ? `${(trade.net_pnl / trade.initial_risk).toFixed(2)}R`
-                  : '—'}
+                {(() => {
+                  const rMultiple = getTradeRMultiple(
+                    trade.net_pnl,
+                    trade.initial_risk,
+                    trade.fee
+                  );
+                  return rMultiple !== null
+                    ? `${rMultiple.toFixed(2)}R`
+                    : '—';
+                })()}
               </td>
               <td className="px-4 py-2.5 text-gray-500 dark:text-gray-400 whitespace-nowrap">
                 {formatDuration(trade.holding_time_seconds)}

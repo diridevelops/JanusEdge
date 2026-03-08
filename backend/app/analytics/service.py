@@ -12,6 +12,7 @@ from app.analytics.monte_carlo import (
     run_monte_carlo_simulation,
 )
 from app.extensions import mongo
+from app.utils.trade_metrics import calculate_r_multiple
 
 
 def _parse_date_from(value: str) -> datetime:
@@ -114,6 +115,16 @@ def _percentile(values: List[float], pct: float) -> float:
     return low_val + (high_val - low_val) * weight
 
 
+def _mongo_effective_risk_expr() -> Dict[str, Any]:
+    """Build MongoDB expression for fee-inclusive risk."""
+    return {
+        "$add": [
+            "$initial_risk",
+            {"$ifNull": ["$fee", 0]},
+        ]
+    }
+
+
 class AnalyticsService:
     """
     Service for computing trade analytics and metrics.
@@ -179,7 +190,7 @@ class AnalyticsService:
                             "then": {
                                 "$divide": [
                                     "$net_pnl",
-                                    "$initial_risk",
+                                    _mongo_effective_risk_expr(),
                                 ]
                             },
                             "else": None,
@@ -495,6 +506,7 @@ class AnalyticsService:
                 {
                     "net_pnl": 1,
                     "initial_risk": 1,
+                    "fee": 1,
                     "total_quantity": 1,
                 },
             )
@@ -547,8 +559,16 @@ class AnalyticsService:
 
         if r_trades:
             r_values = [
-                t["net_pnl"] / t["initial_risk"]
+                calculate_r_multiple(
+                    float(t["net_pnl"]),
+                    float(t["initial_risk"]),
+                    float(t.get("fee", 0.0)),
+                )
                 for t in r_trades
+            ]
+            r_values = [
+                value for value in r_values
+                if value is not None
             ]
             win_r_values = [r for r in r_values if r > 0]
             loss_r_values = [r for r in r_values if r < 0]
@@ -690,16 +710,25 @@ class AnalyticsService:
 
         trades = mongo.db.trades.find(
             match,
-            {"net_pnl": 1, "initial_risk": 1, "_id": 0},
+            {
+                "net_pnl": 1,
+                "initial_risk": 1,
+                "fee": 1,
+                "_id": 0,
+            },
         ).sort("exit_time", 1)
 
         results: List[Dict[str, Any]] = []
         for t in trades:
             pnl = round(t["net_pnl"], 2)
-            risk = t.get("initial_risk")
+            r_value = calculate_r_multiple(
+                pnl,
+                float(t.get("initial_risk", 0.0)),
+                float(t.get("fee", 0.0)),
+            )
             r_mul = (
-                round(pnl / risk, 4)
-                if risk and risk != 0
+                round(r_value, 4)
+                if r_value is not None
                 else None
             )
             results.append(
@@ -728,17 +757,20 @@ class AnalyticsService:
                     {
                         "net_pnl": 1,
                         "initial_risk": 1,
+                        "fee": 1,
                         "_id": 0,
                     },
                 )
             )
             bootstrap_trade_count = len(trades)
             for trade in trades:
-                risk = trade.get("initial_risk")
-                if risk and risk > 0:
-                    r_multiples.append(
-                        float(trade["net_pnl"]) / float(risk)
-                    )
+                r_value = calculate_r_multiple(
+                    float(trade["net_pnl"]),
+                    float(trade.get("initial_risk", 0.0)),
+                    float(trade.get("fee", 0.0)),
+                )
+                if r_value is not None:
+                    r_multiples.append(r_value)
 
         return run_monte_carlo_simulation(
             params,
@@ -1439,6 +1471,7 @@ class AnalyticsService:
                 {
                     "net_pnl": 1,
                     "initial_risk": 1,
+                    "fee": 1,
                     "entry_time": 1,
                     "exit_time": 1,
                 },
@@ -1490,9 +1523,11 @@ class AnalyticsService:
             initial_risk = float(
                 trade.get("initial_risk", 0.0)
             )
-            r_multiple = None
-            if initial_risk > 0:
-                r_multiple = net_pnl / initial_risk
+            r_multiple = calculate_r_multiple(
+                net_pnl,
+                initial_risk,
+                float(trade.get("fee", 0.0)),
+            )
 
             cumulative_net_pnl += net_pnl
             appt_running = cumulative_net_pnl / trade_count

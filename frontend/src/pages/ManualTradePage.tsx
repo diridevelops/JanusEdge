@@ -201,7 +201,7 @@ export function ManualTradePage() {
           </div>
           <div>
             <label htmlFor="initial_risk" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-              Initial Risk
+              Initial Risk (No Fees)
             </label>
             <input
               id="initial_risk"

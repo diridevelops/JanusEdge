@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { ReconstructedTrade } from '../../types/import.types';
 import { formatCurrency } from '../../utils/formatters';
+import { getInitialRiskNoFees } from '../../utils/tradeMetrics';
 
 interface FeeEntryTableProps {
   /** Reconstructed trades from the reconstruct step. */
@@ -94,7 +95,7 @@ export function FeeEntryTable({
             htmlFor="bulkInitialRisk"
             className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1"
           >
-            Apply initial risk to all trades
+            Apply initial risk (no fees) to all trades
           </label>
           <input
             id="bulkInitialRisk"
@@ -150,7 +151,7 @@ export function FeeEntryTable({
                 Fee
               </th>
               <th className="px-4 py-2.5 text-right font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs">
-                Initial Risk
+                Initial Risk (No Fees)
               </th>
               <th className="px-4 py-2.5 text-right font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider text-xs">
                 Net P&L
@@ -162,9 +163,7 @@ export function FeeEntryTable({
               const fee = fees[idx] ?? 0;
               const initialRisk =
                 initialRisks[idx] ??
-                (trade.gross_pnl - fee < 0
-                  ? Math.abs(trade.gross_pnl - fee)
-                  : 0);
+                getInitialRiskNoFees(trade.gross_pnl);
               const netPnl = trade.gross_pnl - fee;
               return (
                 <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-gray-700">
@@ -233,7 +232,7 @@ export function FeeEntryTable({
                         );
                       }}
                       className="w-24 text-right text-sm border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-gray-100 rounded px-2 py-1 focus:ring-1 focus:ring-brand-500 focus:border-brand-500"
-                      aria-label={`Initial risk for trade ${idx + 1}`}
+                      aria-label={`Initial risk (no fees) for trade ${idx + 1}`}
                     />
                   </td>
                   <td
