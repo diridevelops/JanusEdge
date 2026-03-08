@@ -32,6 +32,12 @@ class TestNinjaTraderParser:
         )
         assert self.parser.detect(content) is True
 
+    def test_detect_new_grid_format(self):
+        content = self._load_csv(
+            "NinjaTrader Grid example3.csv"
+        )
+        assert self.parser.detect(content) is True
+
     def test_detect_invalid_file(self):
         content = "col1,col2\na,b\n"
         assert self.parser.detect(content) is False
@@ -98,6 +104,36 @@ class TestNinjaTraderParser:
         assert len(result.executions) > 0
         assert len(result.errors) == 0
 
+    def test_parse_example3_returns_executions(self):
+        """Parse the newer comma-delimited NinjaTrader export."""
+        content = self._load_csv(
+            "NinjaTrader Grid example3.csv"
+        )
+        result = self.parser.parse(
+            content, "America/New_York"
+        )
+        assert result.platform == "ninjatrader"
+        assert len(result.executions) == 8
+        assert len(result.errors) == 0
+
+    def test_parse_example3_execution_fields(self):
+        """The new format keeps the same semantic fields."""
+        content = self._load_csv(
+            "NinjaTrader Grid example3.csv"
+        )
+        result = self.parser.parse(
+            content, "America/New_York"
+        )
+        ex = result.executions[0]
+
+        assert ex.symbol == "MES"
+        assert ex.raw_symbol == "MES 03-26"
+        assert ex.side == "Buy"
+        assert ex.quantity == 1
+        assert ex.price == 6734.00
+        assert ex.commission == 0.39
+        assert ex.account == "FNFTCH"
+
     def test_parse_decimal_comma_to_dot(self):
         content = self._load_csv(
             "NinjaTrader Grid example1.csv"
@@ -117,6 +153,17 @@ class TestNinjaTraderParser:
             content, "America/New_York"
         )
         # Commission format: "0,39 $"
+        ex = result.executions[0]
+        assert ex.commission == 0.39
+
+    def test_parse_compact_commission_format(self):
+        """A leading zero without a separator means a decimal fee."""
+        content = self._load_csv(
+            "NinjaTrader Grid example3.csv"
+        )
+        result = self.parser.parse(
+            content, "America/New_York"
+        )
         ex = result.executions[0]
         assert ex.commission == 0.39
 

@@ -182,3 +182,38 @@ def test_reimport_after_deleting_all_imported_trades(client):
         "NinjaTrader Grid example1.csv",
     )
     assert second["trades_imported"] == first["trades_imported"]
+
+
+def test_upload_new_ninjatrader_format(client):
+    """The upload endpoint accepts the newer NinjaTrader CSV export."""
+    token = _register_and_login(client)
+    filename = "NinjaTrader Grid example3.csv"
+    content = _load_example_bytes(filename)
+
+    response = client.post(
+        "/api/imports/upload",
+        data={"file": (BytesIO(content), filename)},
+        headers=_auth(token),
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["platform"] == "ninjatrader"
+    assert len(payload["executions"]) == 8
+    assert payload["errors"] == []
+    assert payload["executions"][0]["commission"] == 0.39
+
+
+def test_finalize_new_ninjatrader_format(client):
+    """The full import flow works for the newer NinjaTrader export."""
+    token = _register_and_login(client)
+
+    result = _upload_reconstruct_finalize(
+        client,
+        token,
+        "NinjaTrader Grid example3.csv",
+    )
+
+    assert result["trades_imported"] == 4
+    assert result["executions_imported"] == 8

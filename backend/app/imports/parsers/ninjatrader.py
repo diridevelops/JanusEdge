@@ -4,6 +4,7 @@ import csv
 import io
 import re
 from datetime import datetime, timezone
+from typing import Iterable, List, Tuple
 
 from app.imports.parsers.base import (
     BaseParser,
@@ -17,11 +18,11 @@ class NinjaTraderParser(BaseParser):
     """
     Parser for NinjaTrader execution CSV files.
 
-    Format: semicolon delimited, comma decimal separator,
-    DD/MM/YYYY HH:mm:ss timestamps (no timezone).
+    Supports both legacy semicolon-delimited exports with
+    comma decimals and newer comma-delimited exports with
+    dot decimals. Timestamps use DD/MM/YYYY HH:mm:ss.
     """
 
-    DELIMITER = ";"
     EXPECTED_HEADERS = [
         "Instrument", "Action", "Quantity", "Price",
         "Time", "ID", "E/X",
@@ -37,11 +38,17 @@ class NinjaTraderParser(BaseParser):
         Returns:
             True if headers match NinjaTrader format.
         """
-        first_line = content.split("\n")[0].strip()
+        first_line = content.splitlines()[0].strip() if content else ""
+        if not first_line:
+            return False
+
         return all(
             h in first_line
             for h in self.EXPECTED_HEADERS
-        ) and ";" in first_line
+        ) and any(
+            delimiter in first_line
+            for delimiter in (";", ",")
+        )
 
     def parse(
         self, content: str, user_timezone: str = None
@@ -61,7 +68,11 @@ class NinjaTraderParser(BaseParser):
         errors = []
         warnings = []
 
-        lines = content.strip().split("\n")
+        lines = [
+            line.rstrip()
+            for line in content.splitlines()
+            if line.strip()
+        ]
         if not lines:
             return ParseResult(
                 platform="ninjatrader",
@@ -71,14 +82,11 @@ class NinjaTraderParser(BaseParser):
                 row_count=0,
             )
 
-        # Parse header
-        header_line = lines[0].strip().rstrip(";")
-        headers = [
-            h.strip() for h in header_line.split(";")
-        ]
+        delimiter = self._detect_delimiter(lines[0])
+        headers, rows = self._parse_rows(lines, delimiter)
 
         column_mapping = {h: h for h in headers}
-        row_count = len(lines) - 1
+        row_count = len(rows)
 
         # Get timezone info for conversions
         tz_info = None
@@ -91,27 +99,19 @@ class NinjaTraderParser(BaseParser):
                     f"Invalid timezone: {user_timezone}"
                 )
 
-        for row_num, line in enumerate(
-            lines[1:], start=2
-        ):
-            line = line.strip()
-            if not line or line == ";":
-                continue
-
-            # Strip trailing semicolons
-            line = line.rstrip(";")
-            fields = line.split(";")
+        for row_num, fields in enumerate(rows, start=2):
+            raw_row = delimiter.join(fields)
 
             if len(fields) < len(headers):
                 errors.append(ParseError(
                     row_number=row_num,
                     field="",
                     message="Insufficient columns",
-                    raw_value=line,
+                    raw_value=raw_row,
                 ))
                 continue
 
-            row = dict(zip(headers, fields))
+            row = dict(zip(headers, fields[:len(headers)]))
 
             try:
                 execution = self._parse_row(
@@ -123,7 +123,7 @@ class NinjaTraderParser(BaseParser):
                     row_number=row_num,
                     field="",
                     message=str(e),
-                    raw_value=line,
+                    raw_value=raw_row,
                 ))
 
         return ParseResult(
@@ -198,12 +198,88 @@ class NinjaTraderParser(BaseParser):
             raw_data=dict(row),
         )
 
-    def _parse_decimal(self, raw: str) -> float:
+    def _detect_delimiter(self, header_line: str) -> str:
         """
-        Parse European-format decimal (comma separator).
+        Determine the CSV delimiter from the header row.
 
         Parameters:
-            raw: String like '6925,50'.
+            header_line: First non-empty line of the CSV.
+
+        Returns:
+            The detected delimiter.
+        """
+        comma_count = header_line.count(",")
+        semicolon_count = header_line.count(";")
+        if semicolon_count > comma_count:
+            return ";"
+        return ","
+
+    def _parse_rows(
+        self, lines: List[str], delimiter: str
+    ) -> Tuple[List[str], List[List[str]]]:
+        """
+        Parse CSV lines into a header and data rows.
+
+        Parameters:
+            lines: Non-empty CSV lines.
+            delimiter: Detected CSV delimiter.
+
+        Returns:
+            Tuple of headers and row fields.
+        """
+        normalized_lines = [
+            self._strip_trailing_delimiter(line, delimiter)
+            for line in lines
+        ]
+        reader = csv.reader(
+            io.StringIO("\n".join(normalized_lines)),
+            delimiter=delimiter,
+        )
+        rows = list(reader)
+        headers = [cell.strip() for cell in rows[0]]
+        data_rows = [
+            [cell.strip() for cell in row]
+            for row in rows[1:]
+            if self._row_has_values(row)
+        ]
+        return headers, data_rows
+
+    def _strip_trailing_delimiter(
+        self, line: str, delimiter: str
+    ) -> str:
+        """
+        Remove a trailing delimiter added by some exports.
+
+        Parameters:
+            line: Raw CSV line.
+            delimiter: Active CSV delimiter.
+
+        Returns:
+            Normalized line without the trailing delimiter.
+        """
+        stripped = line.strip()
+        if stripped.endswith(delimiter):
+            return stripped[:-1]
+        return stripped
+
+    def _row_has_values(self, row: Iterable[str]) -> bool:
+        """
+        Check whether a parsed CSV row has any non-empty cells.
+
+        Parameters:
+            row: Parsed CSV row values.
+
+        Returns:
+            True when the row contains data.
+        """
+        return any(cell.strip() for cell in row)
+
+    def _parse_decimal(self, raw: str) -> float:
+        """
+        Parse a decimal value from either export format.
+
+        Parameters:
+            raw: String like '6925,50' or '6734.00'.
 
         Returns:
             Float value.
@@ -215,7 +291,8 @@ class NinjaTraderParser(BaseParser):
         """
         Parse NinjaTrader commission format.
 
-        Handles format like '0,39 $'.
+        Handles legacy values like '0,39 $' and newer
+        compact values like '039 $'.
 
         Parameters:
             raw: Raw commission string.
@@ -228,6 +305,13 @@ class NinjaTraderParser(BaseParser):
         cleaned = re.sub(r'[^\d,.\-]', '', cleaned)
         if not cleaned:
             return 0.0
+        if (
+            "," not in cleaned
+            and "." not in cleaned
+            and cleaned.startswith("0")
+            and len(cleaned) > 1
+        ):
+            cleaned = f"0.{cleaned[1:]}"
         cleaned = cleaned.replace(",", ".")
         return float(cleaned)
 

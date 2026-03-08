@@ -35,6 +35,18 @@ class TestPlatformDetector:
         assert parser is not None
         assert isinstance(parser, NinjaTraderParser)
 
+    def test_detect_new_ninjatrader_format(self):
+        path = os.path.join(
+            EXAMPLES_DIR,
+            "NinjaTrader",
+            "NinjaTrader Grid example3.csv",
+        )
+        with open(path, "r", encoding="utf-8-sig") as f:
+            content = f.read()
+        parser = self.detector.detect(content)
+        assert parser is not None
+        assert isinstance(parser, NinjaTraderParser)
+
     def test_detect_quantower(self):
         path = os.path.join(
             EXAMPLES_DIR,
