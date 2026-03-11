@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { listTags } from '../../api/tags.api';
 import { updateTrade } from '../../api/trades.api';
 import { useToast } from '../../hooks/useToast';
-import type { Trade } from '../../types/trade.types';
+import type { Trade, UpdateTradeRequest } from '../../types/trade.types';
 import { InfoTooltip } from '../ui/InfoTooltip';
 
 interface StopAnalysisFieldsProps {
@@ -17,6 +17,8 @@ interface StopAnalysisFieldsProps {
  * Setting a wishful stop auto-manages the wicked-out tag.
  */
 export function StopAnalysisFields({ tradeId, trade, onSaved }: StopAnalysisFieldsProps) {
+  const isWinningTrade = trade.net_pnl > 0;
+
   // Auto-default target_price to avg_exit_price for winning trades
   const defaultTarget =
     trade.target_price != null
@@ -35,37 +37,41 @@ export function StopAnalysisFields({ tradeId, trade, onSaved }: StopAnalysisFiel
 
   const origWish = trade.wish_stop_price != null ? String(trade.wish_stop_price) : '';
   const origTarget = defaultTarget;
-  const hasChanges = wishStop !== origWish || targetPrice !== origTarget;
+  const hasChanges = (!isWinningTrade && wishStop !== origWish) || targetPrice !== origTarget;
 
   async function handleSave() {
     setIsSaving(true);
     try {
-      const wishVal = wishStop.trim() ? parseFloat(wishStop) : null;
       const targetVal = targetPrice.trim() ? parseFloat(targetPrice) : null;
 
-      // Auto-manage wicked-out tag
-      let tagIds = [...trade.tag_ids];
-      const tags = await listTags();
-      const woTag = tags.find((t) => t.name === 'wicked-out');
-      const woId = woTag?.id;
+      const updates: UpdateTradeRequest = {
+        target_price: targetVal,
+      };
 
-      if (wishVal != null) {
-        // Add wicked-out tag if not present (backend will create it if needed)
-        if (woId && !tagIds.includes(woId)) {
-          tagIds.push(woId);
-        }
-      } else {
-        // Remove wicked-out tag if present
-        if (woId) {
+      if (!isWinningTrade) {
+        const wishVal = wishStop.trim() ? parseFloat(wishStop) : null;
+
+        // Auto-manage wicked-out tag
+        let tagIds = [...trade.tag_ids];
+        const tags = await listTags();
+        const woTag = tags.find((t) => t.name === 'wicked-out');
+        const woId = woTag?.id;
+
+        if (wishVal != null) {
+          // Add wicked-out tag if not present (backend will create it if needed)
+          if (woId && !tagIds.includes(woId)) {
+            tagIds.push(woId);
+          }
+        } else if (woId) {
+          // Remove wicked-out tag if present
           tagIds = tagIds.filter((id) => id !== woId);
         }
+
+        updates.wish_stop_price = wishVal;
+        updates.tag_ids = tagIds;
       }
 
-      await updateTrade(tradeId, {
-        wish_stop_price: wishVal,
-        target_price: targetVal,
-        tag_ids: tagIds,
-      });
+      await updateTrade(tradeId, updates);
       addToast('success', 'Stop analysis saved');
       setIsEditing(false);
       onSaved?.();
@@ -146,12 +152,18 @@ export function StopAnalysisFields({ tradeId, trade, onSaved }: StopAnalysisFiel
               step="any"
               value={wishStop}
               onChange={(e) => setWishStop(e.target.value)}
+              disabled={isWinningTrade}
               placeholder="e.g. 5200.50"
-              className="input-field text-sm"
+              className="input-field text-sm disabled:cursor-not-allowed disabled:opacity-60"
             />
           ) : (
             <p className="text-sm text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-700 rounded p-3">
               {origWish || <span className="text-gray-400 dark:text-gray-500 italic">Not set</span>}
+            </p>
+          )}
+          {isWinningTrade && (
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              Wishful stop is only editable for losing trades.
             </p>
           )}
         </div>

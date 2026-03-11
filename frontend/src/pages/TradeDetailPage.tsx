@@ -7,6 +7,7 @@ import { CandlestickChart } from '../components/charts/CandlestickChart';
 import { ExecutionList } from '../components/trade/ExecutionList';
 import { StopAnalysisFields } from '../components/trade/StopAnalysisFields';
 import { TagSelector } from '../components/trade/TagSelector';
+import { TradeCostFields } from '../components/trade/TradeCostFields';
 import { TradeMedia } from '../components/trade/TradeMedia';
 import { TradeNotes } from '../components/trade/TradeNotes';
 import { useAuth } from '../hooks/useAuth';
@@ -450,13 +451,23 @@ export function TradeDetailPage() {
         </div>
       </div>
 
-      {/* Wishful stop & Target price */}
-      <div className="card p-4">
-        <StopAnalysisFields
-          tradeId={trade.id}
-          trade={trade}
-          onSaved={handleTradeRefresh}
-        />
+      {/* Editable detail cards */}
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        <div className="card p-4">
+          <TradeCostFields
+            tradeId={trade.id}
+            trade={trade}
+            onSaved={handleTradeRefresh}
+          />
+        </div>
+
+        <div className="card p-4">
+          <StopAnalysisFields
+            tradeId={trade.id}
+            trade={trade}
+            onSaved={handleTradeRefresh}
+          />
+        </div>
       </div>
 
       {/* Lower section: Executions + Notes/Tags */}
