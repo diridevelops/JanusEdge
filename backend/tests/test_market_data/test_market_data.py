@@ -2,12 +2,17 @@
 
 from unittest.mock import patch
 from datetime import date
+from uuid import uuid4
 
 import pytest
 import pandas as pd
 
-from app.market_data.symbol_mapper import map_to_yahoo
+from app.market_data.symbol_mapper import (
+    get_default_symbol_mappings,
+    map_to_yahoo,
+)
 from app.market_data.service import MarketDataService
+from app.models.user import create_user_doc
 
 
 class TestSymbolMapper:
@@ -39,9 +44,62 @@ class TestSymbolMapper:
     def test_unknown_symbol_gets_futures_suffix(self):
         assert map_to_yahoo("ZB") == "ZB=F"
 
+    def test_custom_mapping_overrides_default(self):
+        symbol_mappings = get_default_symbol_mappings()
+        symbol_mappings["MES"] = {
+            "yahoo_symbol": "MES-CUSTOM=F",
+            "dollar_value_per_point": 7.5,
+        }
+
+        assert (
+            map_to_yahoo(
+                "MES",
+                "MES 03-26",
+                symbol_mappings,
+            )
+            == "MES-CUSTOM=F"
+        )
+
+    def test_longest_prefix_match_prefers_longer_base_symbol(self):
+        symbol_mappings = get_default_symbol_mappings()
+        symbol_mappings["ME"] = {
+            "yahoo_symbol": "ME=F",
+            "dollar_value_per_point": 1.0,
+        }
+
+        assert (
+            map_to_yahoo(
+                "MES",
+                "MESM25",
+                symbol_mappings,
+            )
+            == "MES=F"
+        )
+
 
 class TestMarketDataService:
     """Tests for MarketDataService with mocked yfinance."""
+
+    def _create_user(
+        self,
+        app,
+        symbol_mappings: dict | None = None,
+    ) -> str:
+        """Insert a user for market data service tests."""
+        from app.extensions import mongo
+
+        with app.app_context():
+            result = mongo.db.users.insert_one(
+                create_user_doc(
+                    username=(
+                        f"market-data-user-{uuid4().hex}"
+                    ),
+                    password_hash="hashed",
+                    timezone="America/New_York",
+                    symbol_mappings=symbol_mappings,
+                )
+            )
+        return str(result.inserted_id)
 
     @patch("app.market_data.service.yf")
     def test_fetch_returns_ohlc(self, mock_yf, app):
@@ -63,10 +121,12 @@ class TestMarketDataService:
             index=idx,
         )
         mock_yf.download.return_value = data
+        user_id = self._create_user(app)
 
         with app.app_context():
             service = MarketDataService()
             ohlc = service.get_ohlc(
+            user_id=user_id,
                 symbol="MES",
                 interval="5m",
                 start="2026-01-05",
@@ -96,11 +156,13 @@ class TestMarketDataService:
             index=idx,
         )
         mock_yf.download.return_value = data
+        user_id = self._create_user(app)
 
         with app.app_context():
             service = MarketDataService()
             # First call — fetches from yfinance
             ohlc1 = service.get_ohlc(
+            user_id=user_id,
                 symbol="MES",
                 interval="5m",
                 start="2026-01-05",
@@ -110,6 +172,7 @@ class TestMarketDataService:
 
             # Second call — should use cache
             ohlc2 = service.get_ohlc(
+                user_id=user_id,
                 symbol="MES",
                 interval="5m",
                 start="2026-01-05",
@@ -128,10 +191,12 @@ class TestMarketDataService:
     ):
         """Empty yfinance response returns empty list."""
         mock_yf.download.return_value = pd.DataFrame()
+        user_id = self._create_user(app)
 
         with app.app_context():
             service = MarketDataService()
             ohlc = service.get_ohlc(
+                user_id=user_id,
                 symbol="MES",
                 interval="5m",
                 start="2026-01-05",
@@ -139,3 +204,32 @@ class TestMarketDataService:
             )
 
         assert ohlc == []
+
+    @patch("app.market_data.service.yf")
+    def test_fetch_uses_user_symbol_mappings(
+        self, mock_yf, app
+    ):
+        """Service resolves yfinance tickers from user settings."""
+        mock_yf.download.return_value = pd.DataFrame()
+        symbol_mappings = get_default_symbol_mappings()
+        symbol_mappings["MES"] = {
+            "yahoo_symbol": "MES-CUSTOM=F",
+            "dollar_value_per_point": 7.5,
+        }
+        user_id = self._create_user(app, symbol_mappings)
+
+        with app.app_context():
+            service = MarketDataService()
+            service.get_ohlc(
+                user_id=user_id,
+                symbol="MES",
+                raw_symbol="MES 03-26",
+                interval="5m",
+                start="2026-01-05",
+                end="2026-01-05",
+            )
+
+        assert (
+            mock_yf.download.call_args.kwargs["tickers"]
+            == "MES-CUSTOM=F"
+        )

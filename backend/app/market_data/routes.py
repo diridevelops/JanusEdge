@@ -1,7 +1,10 @@
 """Market data API routes."""
 
 from flask import jsonify, request
-from flask_jwt_extended import jwt_required
+from flask_jwt_extended import (
+    get_jwt_identity,
+    jwt_required,
+)
 
 from app.market_data import market_data_bp
 from app.market_data.service import MarketDataService
@@ -36,8 +39,10 @@ def get_ohlc():
     force_refresh = request.args.get(
         "force_refresh", "false"
     ).lower() in ("1", "true", "yes")
+    user_id = get_jwt_identity()
 
     ohlc = market_data_service.get_ohlc(
+        user_id=user_id,
         symbol=symbol,
         interval=interval,
         start=start,

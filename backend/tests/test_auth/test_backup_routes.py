@@ -12,6 +12,9 @@ from bson import ObjectId, json_util
 import pytest
 
 from app import create_app
+from app.market_data.symbol_mapper import (
+    get_default_symbol_mappings,
+)
 from app.models.execution import create_execution_doc
 from app.models.import_batch import create_import_batch_doc
 from app.models.market_data import create_market_data_doc
@@ -159,6 +162,16 @@ def _register_and_login(
     return token, user_id
 
 
+def _build_custom_symbol_mappings() -> dict:
+    """Build a deterministic custom mapping set for backup tests."""
+    symbol_mappings = get_default_symbol_mappings()
+    symbol_mappings["MES"] = {
+        "yahoo_symbol": "MES-CUSTOM=F",
+        "dollar_value_per_point": 9.5,
+    }
+    return symbol_mappings
+
+
 def _seed_portable_backup_graph(app, user_id: str) -> dict:
     """Seed a realistic export graph for a source user."""
     from app.extensions import mongo
@@ -167,6 +180,7 @@ def _seed_portable_backup_graph(app, user_id: str) -> dict:
     from app.repositories.user_repo import UserRepository
 
     user_oid = ObjectId(user_id)
+    symbol_mappings = _build_custom_symbol_mappings()
     with app.app_context():
         user_repo = UserRepository()
         user_repo.update_portable_settings(
@@ -174,6 +188,7 @@ def _seed_portable_backup_graph(app, user_id: str) -> dict:
             timezone="America/Chicago",
             display_timezone="UTC",
             starting_equity=25000.0,
+            symbol_mappings=symbol_mappings,
         )
 
         account_one = create_trade_account_doc(
@@ -493,7 +508,7 @@ def _seed_portable_backup_graph(app, user_id: str) -> dict:
         ])
 
         market_day_one_5m = create_market_data_doc(
-            symbol="MES=F",
+            symbol="MES-CUSTOM=F",
             interval="5m",
             date=datetime(2026, 1, 2),
             ohlc=[
@@ -510,7 +525,7 @@ def _seed_portable_backup_graph(app, user_id: str) -> dict:
         )
         market_day_one_5m["_id"] = ObjectId()
         market_day_one_1m = create_market_data_doc(
-            symbol="MES=F",
+            symbol="MES-CUSTOM=F",
             interval="1m",
             date=datetime(2026, 1, 2),
             ohlc=[
@@ -527,7 +542,7 @@ def _seed_portable_backup_graph(app, user_id: str) -> dict:
         )
         market_day_one_1m["_id"] = ObjectId()
         market_day_two_5m = create_market_data_doc(
-            symbol="MES=F",
+            symbol="MES-CUSTOM=F",
             interval="5m",
             date=datetime(2026, 1, 3),
             ohlc=[
@@ -571,6 +586,7 @@ def _seed_portable_backup_graph(app, user_id: str) -> dict:
             "trade_one": trade_one,
             "trade_two": trade_two,
             "deleted_trade": deleted_trade,
+            "symbol_mappings": symbol_mappings,
             "account_one": account_one,
             "account_two": account_two,
             "tag_one": tag_one,
@@ -607,6 +623,36 @@ def _parse_archive(archive_bytes: bytes) -> tuple[dict, dict, set[str]]:
             archive.read("data.json").decode("utf-8")
         )
         return manifest, payload, set(archive.namelist())
+
+
+def _rewrite_archive_payload(
+    archive_bytes: bytes, payload: dict
+) -> bytes:
+    """Rewrite the backup payload while preserving archive media."""
+    buffer = BytesIO()
+    with zipfile.ZipFile(BytesIO(archive_bytes)) as source_archive:
+        manifest = json.loads(
+            source_archive.read("manifest.json").decode("utf-8")
+        )
+        media_entries = {
+            name: source_archive.read(name)
+            for name in source_archive.namelist()
+            if name.startswith("media/")
+        }
+
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(
+            "manifest.json",
+            json.dumps(manifest, indent=2).encode("utf-8"),
+        )
+        archive.writestr(
+            "data.json",
+            json_util.dumps(payload, indent=2).encode("utf-8"),
+        )
+        for name, media_bytes in media_entries.items():
+            archive.writestr(name, media_bytes)
+
+    return buffer.getvalue()
 
 
 def _restore_archive(client, token: str, archive_bytes: bytes):
@@ -649,6 +695,7 @@ def test_export_backup_is_complete_and_self_contained(
         "timezone": "America/Chicago",
         "display_timezone": "UTC",
         "starting_equity": 25000.0,
+        "symbol_mappings": seeded["symbol_mappings"],
     }
 
     exported_trade_ids = {str(trade["_id"]) for trade in payload["trades"]}
@@ -665,7 +712,7 @@ def test_export_backup_is_complete_and_self_contained(
         "5m",
     }
     assert {cache["symbol"] for cache in payload["market_data_cache"]} == {
-        "MES=F"
+        "MES-CUSTOM=F"
     }
 
     media_entries = payload["media"]
@@ -725,6 +772,10 @@ def test_restore_into_different_user_remaps_graph_and_media(
         assert restored_user["timezone"] == "America/Chicago"
         assert restored_user["display_timezone"] == "UTC"
         assert restored_user["starting_equity"] == 25000.0
+        assert (
+            restored_user["symbol_mappings"]
+            == seeded["symbol_mappings"]
+        )
         assert "password_hash" in restored_user
 
         restored_accounts = list(
@@ -804,7 +855,7 @@ def test_restore_into_different_user_remaps_graph_and_media(
 
         restored_cache = list(
             mongo.db.market_data_cache.find(
-                {"symbol": "MES=F"}
+                {"symbol": "MES-CUSTOM=F"}
             )
         )
         assert len(restored_cache) == 3
@@ -838,6 +889,7 @@ def test_restore_merge_into_empty_user_creates_all_records(
                 "timezone",
                 "display_timezone",
                 "starting_equity",
+                "symbol_mappings",
             ]
         },
     }
@@ -1040,6 +1092,33 @@ def test_restore_rejects_invalid_archives(
     assert (
         response.get_json()["error"]["message"]
         == expected_message
+    )
+
+
+def test_restore_rejects_invalid_symbol_mappings(
+    client, app
+):
+    """Restore rejects archives with invalid symbol mappings."""
+    token, user_id = _register_and_login(
+        client, "invalid-symbol-mappings"
+    )
+    _seed_portable_backup_graph(app, user_id)
+    archive_bytes = _export_archive_bytes(client, token)
+    _, payload, _ = _parse_archive(archive_bytes)
+    payload["settings"]["symbol_mappings"]["MES"][
+        "dollar_value_per_point"
+    ] = 0
+
+    response = _restore_archive(
+        client,
+        token,
+        _rewrite_archive_payload(archive_bytes, payload),
+    )
+
+    assert response.status_code == 400
+    assert (
+        response.get_json()["error"]["message"]
+        == "Backup archive contains invalid symbol mappings."
     )
 
 

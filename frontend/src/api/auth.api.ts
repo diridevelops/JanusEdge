@@ -5,6 +5,7 @@ import type {
   LoginRequest,
   RegisterRequest,
   RestoreBackupResponse,
+  SymbolMappings,
   User,
 } from '../types/auth.types';
 
@@ -95,6 +96,16 @@ export async function updateStartingEquity(
 ): Promise<User> {
   const res = await apiClient.put<User>('/auth/starting-equity', {
     starting_equity: startingEquity,
+  });
+  return res.data;
+}
+
+/** Update the current user's symbol mappings. */
+export async function updateSymbolMappings(
+  symbolMappings: SymbolMappings
+): Promise<User> {
+  const res = await apiClient.put<User>('/auth/symbol-mappings', {
+    symbol_mappings: symbolMappings,
   });
   return res.data;
 }

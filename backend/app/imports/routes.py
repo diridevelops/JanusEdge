@@ -12,6 +12,9 @@ from marshmallow import (
 from app.imports import imports_bp
 from app.imports.schemas import FinalizeSchema
 from app.imports.service import ImportService
+from app.market_data.symbol_mapper import (
+    get_effective_symbol_mappings,
+)
 from app.repositories.import_batch_repo import (
     ImportBatchRepository,
 )
@@ -82,6 +85,7 @@ def reconstruct():
     Expects JSON: {executions[], method?}
     Returns: {trades[]}
     """
+    user_id = get_jwt_identity()
     data = request.get_json()
     if not data:
         raise ValidationError("Request body is required.")
@@ -91,10 +95,15 @@ def reconstruct():
         raise ValidationError("Executions are required.")
 
     method = data.get("method", "FIFO")
+    user = user_repo.find_by_id(user_id)
+    symbol_mappings = get_effective_symbol_mappings(
+        user.get("symbol_mappings") if user else None
+    )
 
     trades = import_service.reconstruct(
         executions_data=executions,
         method=method,
+        symbol_mappings=symbol_mappings,
     )
     return jsonify({"trades": trades}), 200
 
@@ -147,6 +156,9 @@ def finalize():
     user_timezone = (
         user.get("timezone") if user else None
     )
+    symbol_mappings = get_effective_symbol_mappings(
+        user.get("symbol_mappings") if user else None
+    )
 
     result = import_service.finalize(
         user_id=user_id,
@@ -163,6 +175,7 @@ def finalize():
         ],
         user_timezone=user_timezone,
         column_mapping=column_mapping,
+        symbol_mappings=symbol_mappings,
     )
     return jsonify(result), 201
 

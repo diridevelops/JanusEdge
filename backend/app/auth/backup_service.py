@@ -12,7 +12,11 @@ import zipfile
 from bson import ObjectId, json_util
 
 from app.auth.schemas import BackupManifestSchema
-from app.market_data.symbol_mapper import map_to_yahoo
+from app.market_data.symbol_mapper import (
+    get_effective_symbol_mappings,
+    map_to_yahoo,
+    validate_symbol_mappings,
+)
 from app.media.service import MediaService
 from app.repositories.account_repo import AccountRepository
 from app.repositories.execution_repo import ExecutionRepository
@@ -102,6 +106,15 @@ class PortableBackupService:
 
         destination_user_id = ObjectId(user_id)
         self._validate_portable_settings(payload["settings"])
+        restored_symbol_mappings = (
+            get_effective_symbol_mappings(
+                payload["settings"].get("symbol_mappings")
+            )
+            if "symbol_mappings" in payload["settings"]
+            else get_effective_symbol_mappings(
+                destination_user.get("symbol_mappings")
+            )
+        )
         self.user_repo.update_portable_settings(
             user_id=user_id,
             timezone=payload["settings"].get(
@@ -118,7 +131,16 @@ class PortableBackupService:
                 "starting_equity",
                 destination_user.get("starting_equity", 10000.0),
             ),
+            symbol_mappings=restored_symbol_mappings,
         )
+
+        settings_updated = [
+            "timezone",
+            "display_timezone",
+            "starting_equity",
+        ]
+        if "symbol_mappings" in payload["settings"]:
+            settings_updated.append("symbol_mappings")
 
         summary = {
             "accounts": {"created": 0, "reused": 0},
@@ -131,13 +153,7 @@ class PortableBackupService:
             "executions": {"created": 0, "skipped": 0},
             "media": {"created": 0, "skipped": 0},
             "market_data_cache": {"upserted": 0},
-            "settings": {
-                "updated": [
-                    "timezone",
-                    "display_timezone",
-                    "starting_equity",
-                ]
-            },
+            "settings": {"updated": settings_updated},
         }
 
         account_id_map = self._restore_accounts(
@@ -239,6 +255,11 @@ class PortableBackupService:
                 "starting_equity": user.get(
                     "starting_equity", 10000.0
                 ),
+                "symbol_mappings": (
+                    get_effective_symbol_mappings(
+                        user.get("symbol_mappings")
+                    )
+                ),
             },
             "accounts": self.account_repo.find_by_user(user_id),
             "tags": self.tag_repo.find_by_user(user_id),
@@ -248,7 +269,10 @@ class PortableBackupService:
             "trades": trades,
             "executions": executions,
             "media": payload_media,
-            "market_data_cache": self._collect_market_data(trades),
+            "market_data_cache": self._collect_market_data(
+                trades,
+                user.get("symbol_mappings"),
+            ),
         }
 
     def _build_manifest(self, payload: dict) -> dict:
@@ -409,6 +433,15 @@ class PortableBackupService:
             raise ValidationError(
                 "Backup archive contains an invalid starting equity."
             )
+
+        symbol_mappings = settings.get("symbol_mappings")
+        if symbol_mappings is not None:
+            try:
+                validate_symbol_mappings(symbol_mappings)
+            except ValueError as exc:
+                raise ValidationError(
+                    "Backup archive contains invalid symbol mappings."
+                ) from exc
 
     def _restore_accounts(
         self,
@@ -635,7 +668,11 @@ class PortableBackupService:
             self.market_data_repo.upsert_document(new_doc)
             summary["market_data_cache"]["upserted"] += 1
 
-    def _collect_market_data(self, trades: List[dict]) -> List[dict]:
+    def _collect_market_data(
+        self,
+        trades: List[dict],
+        symbol_mappings: dict | None = None,
+    ) -> List[dict]:
         """Collect cached market data slices related to exported trades."""
         if not trades:
             return []
@@ -647,6 +684,7 @@ class PortableBackupService:
                 map_to_yahoo(
                     trade.get("symbol", ""),
                     trade.get("raw_symbol"),
+                    symbol_mappings,
                 )
             )
 

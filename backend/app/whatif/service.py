@@ -10,13 +10,18 @@ import numpy as np
 from bson import ObjectId
 
 from app.extensions import mongo
-from app.imports.reconstructor import get_point_value
-from app.market_data.symbol_mapper import map_to_yahoo
+from app.market_data.symbol_mapper import (
+    get_effective_symbol_mappings,
+    get_point_value,
+    map_to_yahoo,
+)
 from app.repositories.market_data_repo import (
     MarketDataRepository,
 )
 from app.repositories.tag_repo import TagRepository
 from app.repositories.trade_repo import TradeRepository
+from app.repositories.user_repo import UserRepository
+from app.utils.errors import ValidationError
 from app.utils.trade_metrics import (
     calculate_r_multiple,
     calculate_widened_effective_risk,
@@ -127,6 +132,7 @@ class WhatIfService:
         self.trade_repo = TradeRepository()
         self.tag_repo = TagRepository()
         self.market_data_repo = MarketDataRepository()
+        self.user_repo = UserRepository()
 
     def get_stop_analysis(
         self,
@@ -265,6 +271,10 @@ class WhatIfService:
         trades = self.trade_repo.find_many(
             match, sort=[("exit_time", -1)], limit=0
         )
+        user = self.user_repo.find_by_id(user_id)
+        symbol_mappings = get_effective_symbol_mappings(
+            user.get("symbol_mappings") if user else None
+        )
 
         ohlc_cache: Dict[
             Tuple[str, Any], bool
@@ -274,7 +284,11 @@ class WhatIfService:
         for t in trades:
             symbol = t.get("symbol", "")
             raw_sym = t.get("raw_symbol")
-            yahoo = map_to_yahoo(symbol, raw_sym)
+            yahoo = map_to_yahoo(
+                symbol,
+                raw_sym,
+                symbol_mappings,
+            )
 
             entry_time = t.get("entry_time")
             if isinstance(entry_time, datetime):
@@ -359,6 +373,10 @@ class WhatIfService:
         match = _build_match(user_id, filters)
         trades = self.trade_repo.find_many(
             match, sort=[("exit_time", -1)], limit=0
+        )
+        user = self.user_repo.find_by_id(user_id)
+        symbol_mappings = get_effective_symbol_mappings(
+            user.get("symbol_mappings") if user else None
         )
 
         original_pnls: List[float] = []
@@ -472,7 +490,11 @@ class WhatIfService:
 
             # Loser — try to simulate
             raw_sym = t.get("raw_symbol")
-            yahoo = map_to_yahoo(symbol, raw_sym)
+            yahoo = map_to_yahoo(
+                symbol,
+                raw_sym,
+                symbol_mappings,
+            )
             if isinstance(entry_time, datetime):
                 day = entry_time.date()
             else:
@@ -532,7 +554,14 @@ class WhatIfService:
                 continue
 
             # Calculate wider stop price
-            point_value = get_point_value(symbol)
+            try:
+                point_value = get_point_value(
+                    symbol,
+                    raw_sym,
+                    symbol_mappings,
+                )
+            except ValueError as exc:
+                raise ValidationError(str(exc)) from exc
 
             # R in price points = |entry − exit| (fee-free,
             # consistent with overshoot_R formula).
@@ -628,6 +657,7 @@ class WhatIfService:
                         False,
                         "no_ohlc",
                         initial_risk,
+                        fee,
                         widened_risk,
                     )
                 )

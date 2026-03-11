@@ -1,17 +1,18 @@
 import axios from 'axios';
-import { Download, Upload } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { Download, Plus, Trash2, Upload } from 'lucide-react';
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import {
   changePassword,
   exportBackup,
   restoreBackup,
   updateDisplayTimezone,
   updateStartingEquity,
+  updateSymbolMappings,
   updateTimezone,
 } from '../api/auth.api';
 import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
-import type { RestoreSummary } from '../types/auth.types';
+import type { RestoreSummary, SymbolMappings } from '../types/auth.types';
 
 const TIMEZONES = [
   'America/New_York',
@@ -58,6 +59,92 @@ function getErrorMessage(error: unknown, fallbackMessage: string): string {
   return fallbackMessage;
 }
 
+interface SymbolMappingRow {
+  id: string;
+  baseSymbol: string;
+  yahooSymbol: string;
+  dollarValuePerPoint: string;
+}
+
+const EMPTY_SYMBOL_MAPPINGS: SymbolMappings = {};
+
+function createRowId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function createMappingRow(
+  baseSymbol = '',
+  yahooSymbol = '',
+  dollarValuePerPoint = ''
+): SymbolMappingRow {
+  return {
+    id: createRowId(),
+    baseSymbol,
+    yahooSymbol,
+    dollarValuePerPoint,
+  };
+}
+
+function recordToMappingRows(entries: SymbolMappings): SymbolMappingRow[] {
+  return Object.entries(entries).map(([baseSymbol, mapping]) =>
+    createMappingRow(
+      baseSymbol,
+      mapping.yahoo_symbol,
+      String(mapping.dollar_value_per_point)
+    )
+  );
+}
+
+function updateMappingRow(
+  rows: SymbolMappingRow[],
+  rowId: string,
+  field: 'baseSymbol' | 'yahooSymbol' | 'dollarValuePerPoint',
+  value: string
+): SymbolMappingRow[] {
+  return rows.map((row) => (row.id === rowId ? { ...row, [field]: value } : row));
+}
+
+function buildSymbolMappings(rows: SymbolMappingRow[]): SymbolMappings {
+  const result: SymbolMappings = {};
+
+  for (const row of rows) {
+    const baseSymbol = row.baseSymbol.trim();
+    const yahooSymbol = row.yahooSymbol.trim();
+    const dollarValuePerPoint = row.dollarValuePerPoint.trim();
+
+    if (!baseSymbol && !yahooSymbol && !dollarValuePerPoint) {
+      continue;
+    }
+
+    if (!baseSymbol || !yahooSymbol || !dollarValuePerPoint) {
+      throw new Error('Each symbol mapping row must include all three fields.');
+    }
+
+    const normalizedBaseSymbol = baseSymbol.toUpperCase();
+    if (Object.prototype.hasOwnProperty.call(result, normalizedBaseSymbol)) {
+      throw new Error(`Duplicate base symbol: ${normalizedBaseSymbol}`);
+    }
+
+    const numericDollarValuePerPoint = Number(dollarValuePerPoint);
+    if (!Number.isFinite(numericDollarValuePerPoint) || numericDollarValuePerPoint <= 0) {
+      throw new Error(
+        `Dollar value per point must be a number greater than zero for ${normalizedBaseSymbol}.`
+      );
+    }
+
+    result[normalizedBaseSymbol] = {
+      yahoo_symbol: yahooSymbol,
+      dollar_value_per_point: numericDollarValuePerPoint,
+    };
+  }
+
+  return result;
+}
+
 /** Settings page — password change and timezone update. */
 export function SettingsPage() {
   const { user, refreshProfile } = useAuth();
@@ -86,6 +173,10 @@ export function SettingsPage() {
   );
   const [seLoading, setSeLoading] = useState(false);
 
+  // Symbol mappings
+  const [symbolMappingRows, setSymbolMappingRows] = useState<SymbolMappingRow[]>([]);
+  const [mappingsLoading, setMappingsLoading] = useState(false);
+
   // Backup / restore
   const [exportLoading, setExportLoading] = useState(false);
   const [restoreLoading, setRestoreLoading] = useState(false);
@@ -100,7 +191,12 @@ export function SettingsPage() {
     setStartingEquity(String(user?.starting_equity ?? 10000));
   }, [user?.display_timezone, user?.starting_equity, user?.timezone]);
 
-  async function handleChangePassword(e: React.FormEvent) {
+  useEffect(() => {
+    const symbolMappings = user?.symbol_mappings ?? EMPTY_SYMBOL_MAPPINGS;
+    setSymbolMappingRows(recordToMappingRows(symbolMappings));
+  }, [user?.symbol_mappings]);
+
+  async function handleChangePassword(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (newPassword !== confirmPassword) {
       addToast('error', 'New passwords do not match.');
@@ -125,7 +221,7 @@ export function SettingsPage() {
     }
   }
 
-  async function handleUpdateTimezone(e: React.FormEvent) {
+  async function handleUpdateTimezone(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setTzLoading(true);
     try {
@@ -140,7 +236,7 @@ export function SettingsPage() {
     }
   }
 
-  async function handleUpdateDisplayTimezone(e: React.FormEvent) {
+  async function handleUpdateDisplayTimezone(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setDtzLoading(true);
     try {
@@ -158,7 +254,7 @@ export function SettingsPage() {
     }
   }
 
-  async function handleUpdateStartingEquity(e: React.FormEvent) {
+  async function handleUpdateStartingEquity(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const value = parseFloat(startingEquity);
     if (isNaN(value) || value < 0) {
@@ -175,6 +271,34 @@ export function SettingsPage() {
       addToast('error', message);
     } finally {
       setSeLoading(false);
+    }
+  }
+
+  async function handleUpdateSymbolMappings(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+
+    let symbolMappings: SymbolMappings;
+    try {
+      symbolMappings = buildSymbolMappings(symbolMappingRows);
+    } catch (error: unknown) {
+      addToast(
+        'error',
+        error instanceof Error
+          ? error.message
+          : 'Failed to validate symbol mappings.'
+      );
+      return;
+    }
+
+    setMappingsLoading(true);
+    try {
+      await updateSymbolMappings(symbolMappings);
+      addToast('success', 'Symbol mappings updated successfully.');
+      await refreshProfile();
+    } catch (err: unknown) {
+      addToast('error', getErrorMessage(err, 'Failed to update symbol mappings.'));
+    } finally {
+      setMappingsLoading(false);
     }
   }
 
@@ -210,7 +334,7 @@ export function SettingsPage() {
   }
 
   async function handleRestoreFileChange(
-    event: React.ChangeEvent<HTMLInputElement>
+    event: ChangeEvent<HTMLInputElement>
   ) {
     const file = event.target.files?.[0];
     event.target.value = '';
@@ -238,7 +362,7 @@ export function SettingsPage() {
   }
 
   return (
-    <div className="max-w-2xl space-y-8">
+    <div className="mx-auto max-w-5xl space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Settings</h1>
         <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
@@ -354,6 +478,131 @@ export function SettingsPage() {
         </form>
       </div>
       
+      {/* Symbol Mappings */}
+      <div className="card p-4">
+        <div className="space-y-2">
+          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+            Symbol Mappings
+          </h2>
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            Configure normalized base symbols that match imported symbols by prefix. When an imported symbol starts with a configured base symbol, TradeLogs uses the mapped Yahoo Finance symbol and dollar value per point.
+          </p>
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            Changes apply to future market data downloads, chart refreshes, and backup exports.
+          </p>
+        </div>
+
+        <form onSubmit={handleUpdateSymbolMappings} className="mt-4 space-y-6">
+          <div className="space-y-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                  Base Symbol Rules
+                </h3>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  A single base symbol can cover variants such as MES, MESM26, or MES 03-26 as long as the imported symbol starts with that prefix.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="btn-secondary inline-flex items-center gap-2 self-start"
+                onClick={() => setSymbolMappingRows((current) => [...current, createMappingRow()])}
+              >
+                <Plus className="h-4 w-4" aria-hidden="true" />
+                Add Row
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              {symbolMappingRows.length > 0 ? (
+                symbolMappingRows.map((row) => (
+                  <div
+                    key={row.id}
+                    className="grid gap-3 rounded-md border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-900/30 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]"
+                  >
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">
+                        Normalized Base Symbol
+                      </label>
+                      <input
+                        type="text"
+                        className="input-field mt-1"
+                        value={row.baseSymbol}
+                        onChange={(event) => {
+                          setSymbolMappingRows((current) =>
+                            updateMappingRow(current, row.id, 'baseSymbol', event.target.value)
+                          );
+                        }}
+                        placeholder="MES"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">
+                        Yahoo Finance Symbol
+                      </label>
+                      <input
+                        type="text"
+                        className="input-field mt-1"
+                        value={row.yahooSymbol}
+                        onChange={(event) => {
+                          setSymbolMappingRows((current) =>
+                            updateMappingRow(current, row.id, 'yahooSymbol', event.target.value)
+                          );
+                        }}
+                        placeholder="MES=F"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">
+                        Dollar Value Per Point
+                      </label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="any"
+                        className="input-field mt-1"
+                        value={row.dollarValuePerPoint}
+                        onChange={(event) => {
+                          setSymbolMappingRows((current) =>
+                            updateMappingRow(
+                              current,
+                              row.id,
+                              'dollarValuePerPoint',
+                              event.target.value
+                            )
+                          );
+                        }}
+                        placeholder="5"
+                      />
+                    </div>
+                    <div className="lg:pt-6">
+                      <button
+                        type="button"
+                        className="inline-flex items-center gap-1.5 text-sm font-medium text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+                        onClick={() => {
+                          setSymbolMappingRows((current) => current.filter((item) => item.id !== row.id));
+                        }}
+                      >
+                        <Trash2 className="h-4 w-4" aria-hidden="true" />
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <p className="rounded-md border border-dashed border-gray-300 px-3 py-4 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
+                  No base symbol rules configured.
+                </p>
+              )}
+            </div>
+          </div>
+
+          <button type="submit" className="btn-primary" disabled={mappingsLoading}>
+            {mappingsLoading ? 'Saving…' : 'Save Symbol Mappings'}
+          </button>
+        </form>
+      </div>
+
       {/* Backup */}
       <div className="card p-4">
         <div className="space-y-2">

@@ -20,10 +20,14 @@ from app.repositories.market_data_repo import (
 from app.repositories.media_repo import MediaRepository
 from app.repositories.tag_repo import TagRepository
 from app.repositories.trade_repo import TradeRepository
-from app.imports.reconstructor import get_point_value
-from app.market_data.symbol_mapper import map_to_yahoo
+from app.repositories.user_repo import UserRepository
+from app.market_data.symbol_mapper import (
+    get_effective_symbol_mappings,
+    get_point_value,
+    map_to_yahoo,
+)
 from app.utils.datetime_utils import utc_now
-from app.utils.errors import NotFoundError
+from app.utils.errors import NotFoundError, ValidationError
 from app.utils.trade_metrics import (
     calculate_initial_risk_no_fees,
 )
@@ -59,6 +63,7 @@ class TradeService:
         self.tag_repo = TagRepository()
         self.market_data_repo = MarketDataRepository()
         self.media_repo = MediaRepository()
+        self.user_repo = UserRepository()
 
     def list_trades(
         self,
@@ -191,6 +196,7 @@ class TradeService:
         total = self.trade_repo.count_by_user(
             user_id, filters
         )
+        symbol_mappings = self._get_symbol_mappings(user_id)
 
         market_cache: dict[tuple[str, datetime.date], bool] = {}
 
@@ -211,6 +217,7 @@ class TradeService:
             yahoo_symbol = map_to_yahoo(
                 trade.get("symbol", ""),
                 trade.get("raw_symbol"),
+                symbol_mappings,
             )
 
             cache_key = (yahoo_symbol, day_key)
@@ -289,7 +296,15 @@ class TradeService:
 
         # Compute P&L
         symbol = data["symbol"].upper()
-        point_value = get_point_value(symbol)
+        symbol_mappings = self._get_symbol_mappings(user_id)
+        try:
+            point_value = get_point_value(
+                symbol,
+                str(data.get("symbol", symbol)),
+                symbol_mappings,
+            )
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from exc
         qty = data["total_quantity"]
         entry_price = data["entry_price"]
         exit_price = data["exit_price"]
@@ -366,6 +381,13 @@ class TradeService:
         trade = self.trade_repo.find_by_id(trade_id)
         clear_simulation_cache()
         return self.trade_repo.serialize_doc(trade)
+
+    def _get_symbol_mappings(self, user_id: str) -> dict:
+        """Return the effective symbol mappings for a user."""
+        user = self.user_repo.find_by_id(user_id)
+        return get_effective_symbol_mappings(
+            user.get("symbol_mappings") if user else None
+        )
 
     def update_trade(
         self, user_id: str, trade_id: str, data: dict

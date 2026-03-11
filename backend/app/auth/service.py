@@ -4,6 +4,10 @@ import bcrypt
 from flask_jwt_extended import create_access_token
 
 from app.auth.backup_service import PortableBackupService
+from app.market_data.symbol_mapper import (
+    get_effective_symbol_mappings,
+    get_default_symbol_mappings,
+)
 from app.models.user import create_user_doc
 from app.repositories.user_repo import UserRepository
 from app.utils.errors import (
@@ -14,6 +18,7 @@ from app.utils.validators import is_valid_timezone
 
 
 DEFAULT_STARTING_EQUITY: int = 10000
+
 
 class AuthService:
     """Service for authentication operations."""
@@ -62,20 +67,16 @@ class AuthService:
             username=username,
             password_hash=password_hash,
             timezone=timezone,
+            symbol_mappings=get_default_symbol_mappings(),
         )
         user_id = self.user_repo.insert_one(user_doc)
 
         token = create_access_token(identity=user_id)
+        user_doc["_id"] = user_id
 
         return {
             "token": token,
-            "user": {
-                "id": user_id,
-                "username": username,
-                "timezone": timezone,
-                "display_timezone": timezone,
-                "starting_equity": DEFAULT_STARTING_EQUITY,
-            },
+            "user": self._serialize_user_profile(user_doc),
         }
 
     def login(
@@ -113,18 +114,7 @@ class AuthService:
 
         return {
             "token": token,
-            "user": {
-                "id": user_id,
-                "username": user["username"],
-                "timezone": user["timezone"],
-                "display_timezone": user.get(
-                    "display_timezone",
-                    user["timezone"],
-                ),
-                "starting_equity": user.get(
-                    "starting_equity", DEFAULT_STARTING_EQUITY
-                ),
-            },
+            "user": self._serialize_user_profile(user),
         }
 
     def get_profile(self, user_id: str) -> dict:
@@ -144,18 +134,7 @@ class AuthService:
         if not user:
             raise AuthenticationError("User not found.")
 
-        return {
-            "id": str(user["_id"]),
-            "username": user["username"],
-            "timezone": user["timezone"],
-            "display_timezone": user.get(
-                "display_timezone",
-                user["timezone"],
-            ),
-            "starting_equity": user.get(
-                "starting_equity", DEFAULT_STARTING_EQUITY
-            ),
-        }
+        return self._serialize_user_profile(user)
 
     def change_password(
         self,
@@ -227,19 +206,9 @@ class AuthService:
             raise AuthenticationError("User not found.")
 
         self.user_repo.update_timezone(user_id, timezone)
-
-        return {
-            "id": str(user["_id"]),
-            "username": user["username"],
-            "timezone": timezone,
-            "display_timezone": user.get(
-                "display_timezone",
-                timezone,
-            ),
-            "starting_equity": user.get(
-                "starting_equity", DEFAULT_STARTING_EQUITY
-            ),
-        }
+        updated_user = dict(user)
+        updated_user["timezone"] = timezone
+        return self._serialize_user_profile(updated_user)
 
     def update_display_timezone(
         self,
@@ -272,13 +241,9 @@ class AuthService:
         self.user_repo.update_display_timezone(
             user_id, display_timezone
         )
-
-        return {
-            "id": str(user["_id"]),
-            "username": user["username"],
-            "timezone": user["timezone"],
-            "display_timezone": display_timezone,
-        }
+        updated_user = dict(user)
+        updated_user["display_timezone"] = display_timezone
+        return self._serialize_user_profile(updated_user)
 
     def update_starting_equity(
         self,
@@ -305,17 +270,48 @@ class AuthService:
         self.user_repo.update_starting_equity(
             user_id, starting_equity
         )
+        updated_user = dict(user)
+        updated_user["starting_equity"] = starting_equity
+        return self._serialize_user_profile(updated_user)
 
-        return {
-            "id": str(user["_id"]),
-            "username": user["username"],
-            "timezone": user["timezone"],
-            "display_timezone": user.get(
-                "display_timezone",
-                user["timezone"],
-            ),
-            "starting_equity": starting_equity,
-        }
+    def update_symbol_mappings(
+        self,
+        user_id: str,
+        symbol_mappings: dict,
+    ) -> dict:
+        """
+        Update a user's symbol mappings.
+
+        Parameters:
+            user_id: The user's ObjectId string.
+            symbol_mappings: Replacement mapping configuration.
+
+        Returns:
+            Updated user profile dict.
+
+        Raises:
+            AuthenticationError: If user not found.
+            ValidationError: If mappings are invalid.
+        """
+        user = self.user_repo.find_by_id(user_id)
+        if not user:
+            raise AuthenticationError("User not found.")
+
+        try:
+            normalized_mappings = get_effective_symbol_mappings(
+                symbol_mappings
+            )
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from exc
+
+        self.user_repo.update_symbol_mappings(
+            user_id,
+            normalized_mappings,
+        )
+
+        updated_user = dict(user)
+        updated_user["symbol_mappings"] = normalized_mappings
+        return self._serialize_user_profile(updated_user)
 
     def export_backup(
         self, user_id: str
@@ -330,3 +326,23 @@ class AuthService:
         return self.backup_service.restore_backup(
             user_id, archive_file
         )
+
+    def _serialize_user_profile(
+        self, user: dict
+    ) -> dict:
+        """Serialize a user document for auth/profile responses."""
+        return {
+            "id": str(user["_id"]),
+            "username": user["username"],
+            "timezone": user["timezone"],
+            "display_timezone": user.get(
+                "display_timezone",
+                user["timezone"],
+            ),
+            "starting_equity": user.get(
+                "starting_equity", DEFAULT_STARTING_EQUITY
+            ),
+            "symbol_mappings": get_effective_symbol_mappings(
+                user.get("symbol_mappings")
+            ),
+        }

@@ -123,6 +123,7 @@ class ImportService:
         self,
         executions_data: list,
         method: str = "FIFO",
+        symbol_mappings: dict | None = None,
     ) -> list:
         """
         Reconstruct trades from parsed executions.
@@ -131,6 +132,7 @@ class ImportService:
             executions_data: List of execution dicts
                 from the upload step.
             method: Reconstruction method.
+            symbol_mappings: User or default symbol mappings.
 
         Returns:
             List of reconstructed trade dicts.
@@ -139,7 +141,14 @@ class ImportService:
             self._deserialize_execution(e)
             for e in executions_data
         ]
-        trades = reconstruct_trades(executions, method)
+        try:
+            trades = reconstruct_trades(
+                executions,
+                method,
+                symbol_mappings,
+            )
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from exc
 
         return [
             self._serialize_trade(t, i)
@@ -160,6 +169,7 @@ class ImportService:
         reconstruction_method: str = "FIFO",
         user_timezone: str = None,
         column_mapping: dict = None,
+        symbol_mappings: dict | None = None,
     ) -> dict:
         """
         Finalize import: persist executions, trades, batch.
@@ -176,6 +186,7 @@ class ImportService:
             reconstruction_method: Method used.
             user_timezone: User's timezone.
             column_mapping: Detected column mapping.
+            symbol_mappings: User or default symbol mappings.
 
         Returns:
             Import summary dict.
@@ -196,9 +207,14 @@ class ImportService:
             self._deserialize_execution(e)
             for e in all_executions
         ]
-        reconstructed = reconstruct_trades(
-            executions, reconstruction_method
-        )
+        try:
+            reconstructed = reconstruct_trades(
+                executions,
+                reconstruction_method,
+                symbol_mappings,
+            )
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from exc
 
         # Create import batch first
         batch_doc = create_import_batch_doc(

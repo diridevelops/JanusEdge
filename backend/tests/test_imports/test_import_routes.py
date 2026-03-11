@@ -6,6 +6,9 @@ from pathlib import Path
 import pytest
 
 from app import create_app
+from app.market_data.symbol_mapper import (
+    get_default_symbol_mappings,
+)
 from app.whatif.cache import _sim_cache
 from config import TestingConfig
 
@@ -74,6 +77,16 @@ def _register_and_login(client):
 def _auth(token):
     """Build auth headers."""
     return {"Authorization": f"Bearer {token}"}
+
+
+def _update_symbol_mappings(client, token, symbol_mappings):
+    """Persist symbol mappings for the authenticated test user."""
+    response = client.put(
+        "/api/auth/symbol-mappings",
+        json={"symbol_mappings": symbol_mappings},
+        headers=_auth(token),
+    )
+    assert response.status_code == 200
 
 
 def _load_example_bytes(filename: str) -> bytes:
@@ -217,3 +230,114 @@ def test_finalize_new_ninjatrader_format(client):
 
     assert result["trades_imported"] == 4
     assert result["executions_imported"] == 8
+
+
+def test_reconstruct_uses_user_symbol_mapping_point_value(client):
+    """Preview reconstruction uses the user's configured point value."""
+    token = _register_and_login(client)
+    symbol_mappings = get_default_symbol_mappings()
+    symbol_mappings["MES"] = {
+        "yahoo_symbol": "MES-CUSTOM=F",
+        "dollar_value_per_point": 10.0,
+    }
+    _update_symbol_mappings(client, token, symbol_mappings)
+
+    response = client.post(
+        "/api/imports/reconstruct",
+        json={
+            "executions": [
+                {
+                    "symbol": "MES",
+                    "raw_symbol": "MES 03-26",
+                    "side": "Buy",
+                    "quantity": 1,
+                    "price": 5000.0,
+                    "timestamp": "2026-01-01T10:00:00+00:00",
+                },
+                {
+                    "symbol": "MES",
+                    "raw_symbol": "MES 03-26",
+                    "side": "Sell",
+                    "quantity": 1,
+                    "price": 5010.0,
+                    "timestamp": "2026-01-01T10:05:00+00:00",
+                },
+            ],
+            "method": "FIFO",
+        },
+        headers=_auth(token),
+    )
+
+    assert response.status_code == 200
+    trade = response.get_json()["trades"][0]
+    assert trade["gross_pnl"] == 100.0
+
+
+def test_finalize_uses_user_symbol_mapping_point_value(client):
+    """Finalize persists trades using the user's configured point value."""
+    token = _register_and_login(client)
+    symbol_mappings = get_default_symbol_mappings()
+    symbol_mappings["MES"] = {
+        "yahoo_symbol": "MES-CUSTOM=F",
+        "dollar_value_per_point": 10.0,
+    }
+    _update_symbol_mappings(client, token, symbol_mappings)
+
+    executions = [
+        {
+            "symbol": "MES",
+            "raw_symbol": "MES 03-26",
+            "side": "Buy",
+            "quantity": 1,
+            "price": 5000.0,
+            "timestamp": "2026-01-01T10:00:00+00:00",
+        },
+        {
+            "symbol": "MES",
+            "raw_symbol": "MES 03-26",
+            "side": "Sell",
+            "quantity": 1,
+            "price": 5010.0,
+            "timestamp": "2026-01-01T10:05:00+00:00",
+        },
+    ]
+    reconstruct_resp = client.post(
+        "/api/imports/reconstruct",
+        json={"executions": executions, "method": "FIFO"},
+        headers=_auth(token),
+    )
+    assert reconstruct_resp.status_code == 200
+    trades = reconstruct_resp.get_json()["trades"]
+
+    finalize_resp = client.post(
+        "/api/imports/finalize",
+        json={
+            "file_hash": "mapping-backed-import-hash",
+            "platform": "ninjatrader",
+            "file_name": "mapping-backed-import.csv",
+            "file_size": 128,
+            "reconstruction_method": "FIFO",
+            "trades": [
+                {
+                    "index": trade["index"],
+                    "fee": 0.0,
+                    "initial_risk": 0.0,
+                }
+                for trade in trades
+            ],
+            "executions": executions,
+            "column_mapping": {},
+        },
+        headers=_auth(token),
+    )
+
+    assert finalize_resp.status_code == 201
+
+    trades_resp = client.get(
+        "/api/trades",
+        headers=_auth(token),
+    )
+    assert trades_resp.status_code == 200
+    trade = trades_resp.get_json()["trades"][0]
+    assert trade["gross_pnl"] == 100.0
+    assert trade["net_pnl"] == 100.0

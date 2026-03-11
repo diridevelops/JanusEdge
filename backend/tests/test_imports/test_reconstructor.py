@@ -1,5 +1,10 @@
 """Tests for trade reconstruction engine."""
 
+import pytest
+
+from app.market_data.symbol_mapper import (
+    get_default_symbol_mappings,
+)
 from app.imports.parsers.base import ParsedExecution
 from app.imports.reconstructor import (
     get_point_value,
@@ -40,8 +45,28 @@ class TestGetPointValue:
     def test_mnq_point_value(self):
         assert get_point_value("MNQ") == 2.0
 
-    def test_unknown_defaults_to_one(self):
-        assert get_point_value("UNKNOWN") == 1.0
+    def test_unknown_symbol_requires_configured_point_value(self):
+        with pytest.raises(
+            ValueError,
+            match="No dollar value per point is configured",
+        ):
+            get_point_value("UNKNOWN")
+
+    def test_custom_mapping_point_value(self):
+        symbol_mappings = get_default_symbol_mappings()
+        symbol_mappings["MES"] = {
+            "yahoo_symbol": "MES-CUSTOM=F",
+            "dollar_value_per_point": 12.5,
+        }
+
+        assert (
+            get_point_value(
+                "MES",
+                "MES 03-26",
+                symbol_mappings,
+            )
+            == 12.5
+        )
 
 
 class TestReconstructTrades:
@@ -260,3 +285,30 @@ class TestReconstructTrades:
         assert t.gross_pnl == -15.0
         assert t.symbol == "MES"
         assert t.account == "FNFTCH"
+
+    def test_reconstruct_uses_custom_point_value_mapping(self):
+        symbol_mappings = get_default_symbol_mappings()
+        symbol_mappings["MES"] = {
+            "yahoo_symbol": "MES-CUSTOM=F",
+            "dollar_value_per_point": 10.0,
+        }
+        executions = [
+            _make_exec(
+                side="Buy",
+                price=5000.0,
+                timestamp="2026-01-01T10:00:00+00:00",
+            ),
+            _make_exec(
+                side="Sell",
+                price=5010.0,
+                timestamp="2026-01-01T10:05:00+00:00",
+            ),
+        ]
+
+        trades = reconstruct_trades(
+            executions,
+            symbol_mappings=symbol_mappings,
+        )
+
+        assert len(trades) == 1
+        assert trades[0].gross_pnl == 100.0

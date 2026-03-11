@@ -1,3 +1,12 @@
+/** A symbol mapping entry keyed by normalized base symbol. */
+export interface SymbolMappingEntry {
+  yahoo_symbol: string;
+  dollar_value_per_point: number;
+}
+
+/** User symbol mappings keyed by normalized base symbol. */
+export type SymbolMappings = Record<string, SymbolMappingEntry>;
+
 /** User profile returned by the API. */
 export interface User {
   id: string;
@@ -5,6 +14,7 @@ export interface User {
   timezone: string;
   display_timezone: string;
   starting_equity: number;
+  symbol_mappings: SymbolMappings;
   created_at: string;
 }
 

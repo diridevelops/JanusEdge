@@ -6,6 +6,9 @@ import pytest
 from bson import ObjectId
 
 from app import create_app
+from app.market_data.symbol_mapper import (
+    get_default_symbol_mappings,
+)
 from config import TestingConfig
 
 
@@ -57,6 +60,16 @@ def _register_and_login(client):
 
 def _auth(token):
     return {"Authorization": f"Bearer {token}"}
+
+
+def _update_symbol_mappings(client, token, symbol_mappings):
+    """Persist symbol mappings for the authenticated test user."""
+    response = client.put(
+        "/api/auth/symbol-mappings",
+        json={"symbol_mappings": symbol_mappings},
+        headers=_auth(token),
+    )
+    assert response.status_code == 200
 
 
 def _create_trade(client, token, **overrides):
@@ -571,6 +584,67 @@ class TestSimulate:
         assert detail["trade_id"] == loser["id"]
         assert detail["converted"] is True
         assert detail["new_pnl"] > 0
+
+    def test_simulate_uses_user_symbol_mapping_point_value(
+        self, client, app
+    ):
+        """Simulation replay uses the user's configured point value."""
+        token = _register_and_login(client)
+        symbol_mappings = get_default_symbol_mappings()
+        symbol_mappings["MES"] = {
+            "yahoo_symbol": "MES-CUSTOM=F",
+            "dollar_value_per_point": 10.0,
+        }
+        _update_symbol_mappings(client, token, symbol_mappings)
+
+        loser = _create_trade(client, token, initial_risk=100.0)
+        update_resp = client.put(
+            f"/api/trades/{loser['id']}",
+            json={"target_price": 5005.0},
+            headers=_auth(token),
+        )
+        assert update_resp.status_code == 200
+
+        with app.app_context():
+            from app.extensions import mongo
+
+            mongo.db.market_data_cache.insert_one({
+                "symbol": "MES-CUSTOM=F",
+                "interval": "1m",
+                "date": datetime(2026, 1, 5),
+                "ohlc": [
+                    {
+                        "time": int(
+                            datetime(
+                                2026,
+                                1,
+                                5,
+                                10,
+                                0,
+                                tzinfo=timezone.utc,
+                            ).timestamp()
+                        ),
+                        "open": 5000.0,
+                        "high": 5006.0,
+                        "low": 4990.0,
+                        "close": 5004.0,
+                    }
+                ],
+                "bar_count": 1,
+                "fetched_at": datetime(2026, 1, 5),
+                "source": "test",
+            })
+
+        resp = client.post(
+            "/api/whatif/simulate?symbol=MES",
+            json={"r_widening": 0.5},
+            headers=_auth(token),
+        )
+        assert resp.status_code == 200
+
+        detail = resp.get_json()["details"][0]
+        assert detail["trade_id"] == loser["id"]
+        assert detail["new_pnl"] == 50.0
 
     def test_simulate_filters_by_tag(self, client, app):
         """Simulation respects the selected tag filter."""

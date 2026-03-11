@@ -13,6 +13,7 @@ from app.auth.schemas import (
     RegisterSchema,
     RestoreArchiveSchema,
     ChangePasswordSchema,
+    UpdateSymbolMappingsSchema,
     UpdateTimezoneSchema,
     UpdateDisplayTimezoneSchema,
     UpdateStartingEquitySchema,
@@ -27,6 +28,7 @@ change_password_schema = ChangePasswordSchema()
 update_timezone_schema = UpdateTimezoneSchema()
 update_display_timezone_schema = UpdateDisplayTimezoneSchema()
 update_starting_equity_schema = UpdateStartingEquitySchema()
+update_symbol_mappings_schema = UpdateSymbolMappingsSchema()
 restore_archive_schema = RestoreArchiveSchema()
 
 
@@ -227,6 +229,36 @@ def update_starting_equity():
     profile = auth_service.update_starting_equity(
         user_id=user_id,
         starting_equity=validated["starting_equity"],
+    )
+    return jsonify(profile), 200
+
+
+@auth_bp.route("/symbol-mappings", methods=["PUT"])
+@jwt_required()
+def update_symbol_mappings():
+    """
+    Update the current user's symbol mappings.
+
+    Expects JSON: {symbol_mappings}
+    Returns: {user}
+    """
+    data = request.get_json()
+    if not data:
+        raise ValidationError("Request body is required.")
+
+    try:
+        validated = update_symbol_mappings_schema.load(
+            data
+        )
+    except MarshmallowError as e:
+        raise ValidationError(
+            "Validation failed.", details=e.messages
+        )
+
+    user_id = get_jwt_identity()
+    profile = auth_service.update_symbol_mappings(
+        user_id=user_id,
+        symbol_mappings=validated["symbol_mappings"],
     )
     return jsonify(profile), 200
 

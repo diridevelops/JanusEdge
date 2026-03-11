@@ -1,6 +1,11 @@
 """Auth marshmallow schemas for validation."""
 
-from marshmallow import Schema, fields, validate
+from marshmallow import Schema, ValidationError, fields, validate
+from marshmallow.decorators import validates_schema
+
+from app.market_data.symbol_mapper import (
+    validate_symbol_mappings,
+)
 
 
 class RegisterSchema(Schema):
@@ -62,6 +67,41 @@ class UpdateStartingEquitySchema(Schema):
         required=True,
         validate=validate.Range(min=0),
     )
+
+
+class BaseSymbolMappingSchema(Schema):
+    """Schema for a single base symbol mapping entry."""
+
+    yahoo_symbol = fields.Str(
+        required=True,
+        validate=validate.Length(min=1, max=32),
+    )
+    dollar_value_per_point = fields.Float(
+        required=True,
+        validate=validate.Range(min=0, min_inclusive=False),
+    )
+
+
+class UpdateSymbolMappingsSchema(Schema):
+    """Schema for symbol mappings update."""
+
+    symbol_mappings = fields.Dict(
+        keys=fields.Str(
+            validate=validate.Length(min=1, max=32)
+        ),
+        values=fields.Nested(BaseSymbolMappingSchema()),
+        required=True,
+    )
+
+    @validates_schema
+    def validate_entries(self, data, **kwargs) -> None:
+        """Run centralized symbol mapping validation."""
+        try:
+            validate_symbol_mappings(
+                data["symbol_mappings"]
+            )
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from exc
 
 
 class RestoreArchiveSchema(Schema):

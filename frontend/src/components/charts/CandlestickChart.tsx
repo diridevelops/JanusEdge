@@ -32,6 +32,8 @@ interface CandlestickChartProps {
   isLoading?: boolean;
   /** Display timezone (IANA) for shifting chart times. */
   displayTimezone?: string;
+  /** Message shown when the chart has no data. */
+  emptyStateMessage?: string;
 }
 
 /**
@@ -81,6 +83,7 @@ export function CandlestickChart({
   avgExitPrice,
   isLoading,
   displayTimezone,
+  emptyStateMessage,
 }: CandlestickChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -279,8 +282,10 @@ export function CandlestickChart({
           </div>
         )}
         {!ohlcData.length && !isLoading && (
-          <div className="absolute inset-0 flex items-center justify-center text-gray-400 dark:text-gray-500 text-sm">
-            No chart data available
+          <div className="absolute inset-0 flex items-center justify-center px-6 text-center text-sm text-gray-400 dark:text-gray-500">
+            <div className="max-w-md">
+              {emptyStateMessage ?? 'No chart data available'}
+            </div>
           </div>
         )}
         <div ref={containerRef} />

@@ -124,12 +124,40 @@ class UserRepository(BaseRepository):
             },
         )
 
+    def update_symbol_mappings(
+        self,
+        user_id: str,
+        symbol_mappings: dict,
+    ) -> bool:
+        """
+        Update a user's symbol mappings.
+
+        Parameters:
+            user_id: The user's ObjectId string.
+            symbol_mappings: New symbol mapping settings.
+
+        Returns:
+            True if updated successfully.
+        """
+        from app.utils.datetime_utils import utc_now
+
+        return self.update_one(
+            user_id,
+            {
+                "$set": {
+                    "symbol_mappings": symbol_mappings,
+                    "updated_at": utc_now(),
+                }
+            },
+        )
+
     def update_portable_settings(
         self,
         user_id: str,
         timezone: str,
         display_timezone: str,
         starting_equity: float,
+        symbol_mappings: dict,
     ) -> bool:
         """Update all portable user settings in one write."""
         from app.utils.datetime_utils import utc_now
@@ -141,6 +169,7 @@ class UserRepository(BaseRepository):
                     "timezone": timezone,
                     "display_timezone": display_timezone,
                     "starting_equity": starting_equity,
+                    "symbol_mappings": symbol_mappings,
                     "updated_at": utc_now(),
                 }
             },

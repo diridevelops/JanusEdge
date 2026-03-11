@@ -6,10 +6,14 @@ from typing import List
 
 import yfinance as yf
 
-from app.market_data.symbol_mapper import map_to_yahoo
+from app.market_data.symbol_mapper import (
+    get_effective_symbol_mappings,
+    map_to_yahoo,
+)
 from app.repositories.market_data_repo import (
     MarketDataRepository,
 )
+from app.repositories.user_repo import UserRepository
 from app.utils.errors import MarketDataError
 
 
@@ -18,9 +22,11 @@ class MarketDataService:
 
     def __init__(self):
         self.cache_repo = MarketDataRepository()
+        self.user_repo = UserRepository()
 
     def get_ohlc(
         self,
+        user_id: str,
         symbol: str,
         interval: str = "5m",
         start: str = None,
@@ -35,6 +41,7 @@ class MarketDataService:
         and stores permanently.
 
         Parameters:
+            user_id: The requesting user's ObjectId string.
             symbol: Normalized symbol.
             interval: '1m', '5m', '15m', '1h', '1d'.
             start: Start date ISO string.
@@ -47,8 +54,14 @@ class MarketDataService:
             List of OHLC dicts with time, open,
             high, low, close, volume.
         """
+        user = self.user_repo.find_by_id(user_id)
+        symbol_mappings = get_effective_symbol_mappings(
+            user.get("symbol_mappings") if user else None
+        )
         yahoo_ticker = map_to_yahoo(
-            symbol, raw_symbol
+            symbol,
+            raw_symbol,
+            symbol_mappings,
         )
 
         start_dt = (

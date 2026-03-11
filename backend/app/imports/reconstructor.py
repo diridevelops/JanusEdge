@@ -1,25 +1,11 @@
 """Trade reconstruction engine — groups executions into trades."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
-from typing import List
+from typing import Any, List, Mapping
 
 from app.imports.parsers.base import ParsedExecution
-
-
-# Instrument point-value configuration
-INSTRUMENT_SPECS = {
-    "MES": {"point_value": 5.0, "tick_size": 0.25},
-    "ES": {"point_value": 50.0, "tick_size": 0.25},
-    "MNQ": {"point_value": 2.0, "tick_size": 0.25},
-    "NQ": {"point_value": 20.0, "tick_size": 0.25},
-    "MYM": {"point_value": 0.5, "tick_size": 1.0},
-    "YM": {"point_value": 5.0, "tick_size": 1.0},
-    "MCL": {"point_value": 100.0, "tick_size": 0.01},
-    "CL": {"point_value": 1000.0, "tick_size": 0.01},
-    "GC": {"point_value": 100.0, "tick_size": 0.1},
-    "MGC": {"point_value": 10.0, "tick_size": 0.1},
-}
+from app.market_data.symbol_mapper import get_point_value
 
 
 @dataclass
@@ -43,26 +29,10 @@ class ReconstructedTrade:
     account: str = ""
 
 
-def get_point_value(symbol: str) -> float:
-    """
-    Get the point value for an instrument.
-
-    Parameters:
-        symbol: Normalized symbol (e.g., 'MES').
-
-    Returns:
-        Dollar value per point of price movement.
-    """
-    spec = INSTRUMENT_SPECS.get(symbol)
-    if spec:
-        return spec["point_value"]
-    # Default to 1.0 for unknown instruments
-    return 1.0
-
-
 def reconstruct_trades(
     executions: List[ParsedExecution],
     method: str = "FIFO",
+    symbol_mappings: Mapping[str, Any] | None = None,
 ) -> List[ReconstructedTrade]:
     """
     Reconstruct flat-to-flat trades from executions.
@@ -73,6 +43,7 @@ def reconstruct_trades(
     Parameters:
         executions: List of parsed executions.
         method: Reconstruction method ('FIFO').
+        symbol_mappings: User or default symbol mappings.
 
     Returns:
         List of reconstructed trades.
@@ -90,7 +61,10 @@ def reconstruct_trades(
         # Sort by timestamp
         group_execs.sort(key=lambda e: e.timestamp)
         group_trades = _reconstruct_fifo(
-            symbol, account, group_execs
+            symbol,
+            account,
+            group_execs,
+            symbol_mappings,
         )
         trades.extend(group_trades)
 
@@ -103,6 +77,7 @@ def _reconstruct_fifo(
     symbol: str,
     account: str,
     executions: List[ParsedExecution],
+    symbol_mappings: Mapping[str, Any] | None = None,
 ) -> List[ReconstructedTrade]:
     """
     FIFO reconstruction for a single symbol+account.
@@ -114,6 +89,7 @@ def _reconstruct_fifo(
         symbol: Normalized symbol.
         account: Account name.
         executions: Sorted executions for this group.
+        symbol_mappings: User or default symbol mappings.
 
     Returns:
         List of reconstructed trades.
@@ -153,8 +129,12 @@ def _reconstruct_fifo(
         # Check if position is flat
         if current_position == 0 and current_trade_execs:
             trade = _build_trade(
-                symbol, account, current_trade_execs,
-                entry_prices, entry_qty_total,
+                symbol,
+                account,
+                current_trade_execs,
+                entry_prices,
+                entry_qty_total,
+                symbol_mappings=symbol_mappings,
             )
             trades.append(trade)
 
@@ -176,8 +156,12 @@ def _reconstruct_fifo(
             # Split: close old position, open new
             # For now, handle as a single trade closure
             trade = _build_trade(
-                symbol, account, current_trade_execs,
-                entry_prices, entry_qty_total,
+                symbol,
+                account,
+                current_trade_execs,
+                entry_prices,
+                entry_qty_total,
+                symbol_mappings=symbol_mappings,
             )
             trades.append(trade)
 
@@ -190,9 +174,13 @@ def _reconstruct_fifo(
     # Handle open position at end (if any)
     if current_trade_execs and current_position != 0:
         trade = _build_trade(
-            symbol, account, current_trade_execs,
-            entry_prices, entry_qty_total,
+            symbol,
+            account,
+            current_trade_execs,
+            entry_prices,
+            entry_qty_total,
             is_open=True,
+            symbol_mappings=symbol_mappings,
         )
         trades.append(trade)
 
@@ -206,6 +194,7 @@ def _build_trade(
     entry_prices: list,
     entry_qty_total: int,
     is_open: bool = False,
+    symbol_mappings: Mapping[str, Any] | None = None,
 ) -> ReconstructedTrade:
     """
     Build a ReconstructedTrade from its executions.
@@ -217,6 +206,7 @@ def _build_trade(
         entry_prices: List of (qty, price) for entries.
         entry_qty_total: Total entry quantity.
         is_open: Whether trade is still open.
+        symbol_mappings: User or default symbol mappings.
 
     Returns:
         ReconstructedTrade instance.
@@ -253,7 +243,11 @@ def _build_trade(
         avg_exit = last_exec.price
 
     # Calculate gross P&L
-    point_value = get_point_value(symbol)
+    point_value = get_point_value(
+        symbol,
+        first_exec.raw_symbol,
+        symbol_mappings,
+    )
     total_qty = entry_qty_total
 
     if side == "Long":

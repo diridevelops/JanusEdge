@@ -3,6 +3,9 @@
 import pytest
 
 from app import create_app
+from app.market_data.symbol_mapper import (
+    get_default_symbol_mappings,
+)
 from app.whatif.cache import _sim_cache
 from config import TestingConfig
 
@@ -56,6 +59,16 @@ def _auth_header(token):
     return {"Authorization": f"Bearer {token}"}
 
 
+def _update_symbol_mappings(client, token, symbol_mappings):
+    """Persist symbol mappings for the authenticated test user."""
+    response = client.put(
+        "/api/auth/symbol-mappings",
+        json={"symbol_mappings": symbol_mappings},
+        headers=_auth_header(token),
+    )
+    assert response.status_code == 200
+
+
 def _create_trade(client, token, **overrides):
     """Helper to create a trade with defaults."""
     data = {
@@ -105,6 +118,23 @@ def test_create_manual_trade_loser_sets_initial_risk(client):
     assert trade["net_pnl"] < 0
     assert trade["gross_pnl"] < 0
     assert trade["initial_risk"] == abs(trade["gross_pnl"])
+
+
+def test_create_manual_trade_uses_user_symbol_mapping_point_value(client):
+    token = _register_and_login(client)
+    symbol_mappings = get_default_symbol_mappings()
+    symbol_mappings["MES"] = {
+        "yahoo_symbol": "MES-CUSTOM=F",
+        "dollar_value_per_point": 10.0,
+    }
+    _update_symbol_mappings(client, token, symbol_mappings)
+
+    resp = _create_trade(client, token, fee=0.78)
+
+    assert resp.status_code == 201
+    trade = resp.get_json()["trade"]
+    assert trade["gross_pnl"] == 100.0
+    assert trade["net_pnl"] == 99.22
 
 
 def test_list_trades_empty(client):

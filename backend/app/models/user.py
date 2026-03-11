@@ -1,8 +1,8 @@
 """User model definition."""
 
-from datetime import datetime
-from typing import Optional
-
+from app.market_data.symbol_mapper import (
+    get_default_symbol_mappings,
+)
 from app.utils.datetime_utils import utc_now
 
 
@@ -12,6 +12,7 @@ def create_user_doc(
     timezone: str = "America/New_York",
     display_timezone: str | None = None,
     starting_equity: float = 10000.0,
+    symbol_mappings: dict | None = None,
 ) -> dict:
     """
     Create a user document for MongoDB insertion.
@@ -23,7 +24,9 @@ def create_user_doc(
         display_timezone: Timezone for UI display
             (defaults to trading timezone).
         starting_equity: Initial account equity for
-            Monte Carlo simulations (default 50 000).
+            Monte Carlo simulations (default 10 000).
+        symbol_mappings: User-configurable Yahoo Finance
+            base-symbol mappings.
 
     Returns:
         Dict ready for MongoDB insert.
@@ -35,6 +38,10 @@ def create_user_doc(
         "timezone": timezone,
         "display_timezone": display_timezone or timezone,
         "starting_equity": starting_equity,
+        "symbol_mappings": (
+            symbol_mappings
+            or get_default_symbol_mappings()
+        ),
         "created_at": now,
         "updated_at": now,
     }

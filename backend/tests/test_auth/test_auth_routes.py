@@ -2,6 +2,10 @@
 
 import pytest
 
+from app.market_data.symbol_mapper import (
+    get_default_symbol_mappings,
+)
+
 
 @pytest.fixture(autouse=True)
 def clean_db(app):
@@ -24,6 +28,10 @@ def test_register_success(client):
     assert "token" in data
     assert data["user"]["username"] == "testuser"
     assert data["user"]["timezone"] == "America/New_York"
+    assert (
+        data["user"]["symbol_mappings"]
+        == get_default_symbol_mappings()
+    )
 
 
 def test_register_duplicate_username(client):
@@ -74,6 +82,10 @@ def test_login_success(client):
     data = response.get_json()
     assert "token" in data
     assert data["user"]["username"] == "testuser"
+    assert (
+        data["user"]["symbol_mappings"]
+        == get_default_symbol_mappings()
+    )
 
 
 def test_login_wrong_password(client):
@@ -112,7 +124,9 @@ def test_me_with_token(client):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200
-    assert response.get_json()["username"] == "testuser"
+    data = response.get_json()
+    assert data["username"] == "testuser"
+    assert data["symbol_mappings"] == get_default_symbol_mappings()
 
 
 def test_me_without_token(client):
@@ -134,3 +148,59 @@ def test_logout(client):
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 200
+
+
+def test_update_symbol_mappings_persists_to_profile(client):
+    """Updating symbol mappings returns and persists the new config."""
+    reg = client.post("/api/auth/register", json={
+        "username": "mappinguser",
+        "password": "testpass123",
+        "timezone": "America/New_York",
+    })
+    token = reg.get_json()["token"]
+    symbol_mappings = get_default_symbol_mappings()
+    symbol_mappings["MES"] = {
+        "yahoo_symbol": "MES-CUSTOM=F",
+        "dollar_value_per_point": 8.0,
+    }
+
+    response = client.put(
+        "/api/auth/symbol-mappings",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"symbol_mappings": symbol_mappings},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["symbol_mappings"] == symbol_mappings
+
+    me_response = client.get(
+        "/api/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert me_response.status_code == 200
+    assert (
+        me_response.get_json()["symbol_mappings"]
+        == symbol_mappings
+    )
+
+
+def test_update_symbol_mappings_rejects_invalid_point_value(client):
+    """Updating symbol mappings validates point values."""
+    reg = client.post("/api/auth/register", json={
+        "username": "invalidmappinguser",
+        "password": "testpass123",
+        "timezone": "America/New_York",
+    })
+    token = reg.get_json()["token"]
+    symbol_mappings = get_default_symbol_mappings()
+    symbol_mappings["MES"][
+        "dollar_value_per_point"
+    ] = -1
+
+    response = client.put(
+        "/api/auth/symbol-mappings",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"symbol_mappings": symbol_mappings},
+    )
+
+    assert response.status_code == 400
