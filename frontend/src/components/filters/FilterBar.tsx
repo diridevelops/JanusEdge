@@ -57,8 +57,42 @@ export function FilterBar({
 
   const hasActiveFilters = Object.values(filters).some((v) => v !== '');
 
+  function handleDateFromChange(value: string) {
+    if (filters.date_to && value && value > filters.date_to) {
+      onFilterChange('date_to', value);
+    }
+    onFilterChange('date_from', value);
+  }
+
+  function handleDateToChange(value: string) {
+    if (filters.date_from && value && value < filters.date_from) {
+      onFilterChange('date_from', value);
+    }
+    onFilterChange('date_to', value);
+  }
+
   return (
     <div className="flex flex-wrap items-end gap-3 bg-gray-50 p-4 rounded-lg dark:bg-gray-800/50">
+      {/* Account */}
+      <div>
+        <label htmlFor="filter-account" className="block text-xs font-medium text-gray-500 mb-1 dark:text-gray-400">
+          Account
+        </label>
+        <select
+          id="filter-account"
+          value={filters.account}
+          onChange={(e) => onFilterChange('account', e.target.value)}
+          className="input-field w-40 text-sm"
+        >
+          <option value="">All Accounts</option>
+          {accounts.map((acc) => (
+            <option key={acc.id} value={acc.id}>
+              {acc.display_name || acc.account_name}
+            </option>
+          ))}
+        </select>
+      </div>
+
       {/* Symbol */}
       <div>
         <label htmlFor="filter-symbol" className="block text-xs font-medium text-gray-500 mb-1 dark:text-gray-400">
@@ -96,26 +130,6 @@ export function FilterBar({
         </select>
       </div>
 
-      {/* Account */}
-      <div>
-        <label htmlFor="filter-account" className="block text-xs font-medium text-gray-500 mb-1 dark:text-gray-400">
-          Account
-        </label>
-        <select
-          id="filter-account"
-          value={filters.account}
-          onChange={(e) => onFilterChange('account', e.target.value)}
-          className="input-field w-40 text-sm"
-        >
-          <option value="">All Accounts</option>
-          {accounts.map((acc) => (
-            <option key={acc.id} value={acc.id}>
-              {acc.display_name || acc.account_name}
-            </option>
-          ))}
-        </select>
-      </div>
-
       {/* Tag */}
       <div>
         <label htmlFor="filter-tag" className="block text-xs font-medium text-gray-500 mb-1 dark:text-gray-400">
@@ -147,7 +161,8 @@ export function FilterBar({
               id="filter-date-from"
               type="date"
               value={filters.date_from}
-              onChange={(e) => onFilterChange('date_from', e.target.value)}
+              onChange={(e) => handleDateFromChange(e.target.value)}
+              max={filters.date_to || undefined}
               className="input-field w-36 text-sm"
             />
           </div>
@@ -161,7 +176,8 @@ export function FilterBar({
               id="filter-date-to"
               type="date"
               value={filters.date_to}
-              onChange={(e) => onFilterChange('date_to', e.target.value)}
+              onChange={(e) => handleDateToChange(e.target.value)}
+              min={filters.date_from || undefined}
               className="input-field w-36 text-sm"
             />
           </div>

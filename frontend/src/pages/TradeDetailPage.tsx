@@ -447,6 +447,11 @@ export function TradeDetailPage() {
 
         {/* Media sidebar — same height as chart card */}
         <div className="card w-full lg:w-28 lg:self-stretch flex flex-col min-h-0 lg:max-h-[none]">
+          <div className="px-4 pt-4">
+            <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wider dark:text-gray-100">
+              Media
+            </h2>
+          </div>
           <TradeMedia tradeId={trade.id} compact />
         </div>
       </div>
