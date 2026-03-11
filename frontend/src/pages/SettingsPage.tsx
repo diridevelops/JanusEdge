@@ -503,14 +503,6 @@ export function SettingsPage() {
                   A single base symbol can cover variants such as MES, MESM26, or MES 03-26 as long as the imported symbol starts with that prefix.
                 </p>
               </div>
-              <button
-                type="button"
-                className="btn-secondary inline-flex items-center gap-2 self-start"
-                onClick={() => setSymbolMappingRows((current) => [...current, createMappingRow()])}
-              >
-                <Plus className="h-4 w-4" aria-hidden="true" />
-                Add Row
-              </button>
             </div>
 
             <div className="space-y-3">
@@ -594,6 +586,17 @@ export function SettingsPage() {
                   No base symbol rules configured.
                 </p>
               )}
+            </div>
+
+            <div>
+              <button
+                type="button"
+                className="btn-secondary inline-flex items-center gap-2"
+                onClick={() => setSymbolMappingRows((current) => [...current, createMappingRow()])}
+              >
+                <Plus className="h-4 w-4" aria-hidden="true" />
+                Add Row
+              </button>
             </div>
           </div>
 
