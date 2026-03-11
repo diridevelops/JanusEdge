@@ -2,10 +2,13 @@ import { ChevronDown, ChevronRight, FlaskConical, Loader2 } from 'lucide-react';
 import { startTransition, useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 
+import { getSummary } from '../api/analytics.api';
 import { getStopAnalysis, getWickedOutTrades, runSimulation } from '../api/whatif.api';
+import { MonteCarloSimulator } from '../components/analytics/MonteCarloSimulator';
 import { FilterBar } from '../components/filters/FilterBar';
 import { InfoTooltip } from '../components/ui/InfoTooltip';
 import { useToast } from '../hooks/useToast';
+import type { AnalyticsSummary } from '../types/analytics.types';
 import type {
   ConfidenceInterval,
   SimulationDetail,
@@ -313,9 +316,12 @@ function ResultSection({
 /*  Main Component                                                     */
 /* ------------------------------------------------------------------ */
 
+type WhatIfTab = 'simulator' | 'stop-management';
+
 /** What-if page: stop analysis, wicked-out trades, and simulation. */
 export function WhatIfPage() {
   const { addToast } = useToast();
+  const [activeTab, setActiveTab] = useState<WhatIfTab>('simulator');
 
   // Filters
   const [filters, setFilters] = useState({
@@ -338,6 +344,11 @@ export function WhatIfPage() {
     Object.entries(filters).filter(([, v]) => v !== ''),
   ) as Record<string, string>;
 
+  // ---- Filtered summary ----
+  const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const summaryRequestIdRef = useRef(0);
+
   // ---- Stop Analysis ----
   const [analysis, setAnalysis] = useState<StopAnalysisResponse | null>(null);
   const [analysisLoading, setAnalysisLoading] = useState(false);
@@ -359,6 +370,25 @@ export function WhatIfPage() {
   const simCache = useRef<Map<string, ReturnType<typeof buildSimulationViewModel>>>(new Map());
   const dataRequestIdRef = useRef(0);
   const simulationRequestIdRef = useRef(0);
+
+  const fetchSummary = useCallback(async (f: Record<string, string>) => {
+    const requestId = summaryRequestIdRef.current + 1;
+    summaryRequestIdRef.current = requestId;
+    setSummaryLoading(true);
+    try {
+      const summaryRes = await getSummary(f);
+      if (requestId !== summaryRequestIdRef.current) {
+        return;
+      }
+      setSummary(summaryRes);
+    } catch {
+      // Silenced — 401 handled by interceptor
+    } finally {
+      if (requestId === summaryRequestIdRef.current) {
+        setSummaryLoading(false);
+      }
+    }
+  }, []);
 
   // Fetch analysis + wicked-out trades on filter change
   const fetchData = useCallback(async (f: Record<string, string>) => {
@@ -398,6 +428,10 @@ export function WhatIfPage() {
     simCache.current.clear();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters.symbol, filters.side, filters.account, filters.tag, filters.date_from, filters.date_to]);
+
+  useEffect(() => {
+    void fetchSummary(apiFilters);
+  }, [fetchSummary, filters.symbol, filters.side, filters.account, filters.tag, filters.date_from, filters.date_to]);
 
   // Simulation handler
   async function handleSimulate() {
@@ -447,6 +481,12 @@ export function WhatIfPage() {
   const overshootByTradeId = new Map(
     (analysis?.details ?? []).map((detail) => [detail.trade_id, detail.overshoot_r]),
   );
+  const tabClass = (tab: WhatIfTab) =>
+    `px-4 py-2 text-sm font-medium rounded-t-md border border-b-0 ${
+      activeTab === tab
+        ? 'bg-white text-gray-900 border-gray-300 dark:bg-gray-800 dark:text-gray-100 dark:border-gray-600'
+        : 'bg-gray-100 text-gray-600 border-transparent hover:text-gray-800 dark:bg-gray-700 dark:text-gray-400 dark:hover:text-gray-200'
+    }`;
 
   return (
     <div className="space-y-6">
@@ -457,25 +497,52 @@ export function WhatIfPage() {
           <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">What-if</h1>
         </div>
         <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-          Analyse stop placement in R-multiples and simulate wider stops across trades.
+          Run filtered-trade simulations or inspect symbol-specific stop-management analysis.
         </p>
       </div>
 
-      {/* Filters — symbol required */}
+      {/* Filters */}
       <FilterBar
         filters={filters}
         onFilterChange={handleFilterChange}
         onClearFilters={handleClearFilters}
-        requireSymbol
       />
 
-      {!filters.symbol && (
-        <div className="card p-8 text-center text-gray-400 dark:text-gray-500">
-          Select an instrument above to view stop analysis.
-        </div>
-      )}
+      <div className="border-b border-gray-200 dark:border-gray-700">
+        <nav className="flex gap-2" aria-label="What-if tabs">
+          <button
+            type="button"
+            onClick={() => startTransition(() => setActiveTab('simulator'))}
+            className={tabClass('simulator')}
+          >
+            Simulator
+          </button>
+          <button
+            type="button"
+            onClick={() => startTransition(() => setActiveTab('stop-management'))}
+            className={tabClass('stop-management')}
+          >
+            Stop management
+          </button>
+        </nav>
+      </div>
 
-      {filters.symbol && (
+      {activeTab === 'simulator' ? (
+        summaryLoading && !summary ? (
+          <div className="card p-8 text-center text-gray-500 dark:text-gray-400">
+            <div className="flex items-center justify-center gap-2">
+              <Loader2 className="h-5 w-5 animate-spin text-brand-600" />
+              <span>Loading filtered trade metrics…</span>
+            </div>
+          </div>
+        ) : (
+          <MonteCarloSimulator summary={summary} summaryLoading={summaryLoading} filters={filters} />
+        )
+      ) : !filters.symbol ? (
+        <div className="card p-8 text-center text-gray-400 dark:text-gray-500">
+          Select a symbol in the filters above to view stop-management analysis.
+        </div>
+      ) : (
         <>
           {/* ---- Wicked-Out Trades ---- */}
           <div className="card relative overflow-hidden">
@@ -593,7 +660,7 @@ export function WhatIfPage() {
             {analysisLoading && analysis ? <CardLoadingOverlay label="Updating stop analysis…" /> : null}
             <div className="flex items-center gap-1 mb-4">
               <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100 uppercase tracking-wider">
-                Stop Management — Overshoot in R
+                Overshoot in R
               </h2>
               <InfoTooltip
                 text={

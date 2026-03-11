@@ -11,7 +11,6 @@ import {
   getSummary,
 } from '../api/analytics.api';
 import { EvolutionTab } from '../components/analytics/EvolutionTab';
-import { MonteCarloSimulator } from '../components/analytics/MonteCarloSimulator';
 import { APPTDailyChart } from '../components/charts/APPTDailyChart';
 import { DayOfWeekAPPTChart } from '../components/charts/DayOfWeekAPPTChart';
 import { DrawdownChart } from '../components/charts/DrawdownChart';
@@ -31,7 +30,7 @@ import type {
 } from '../types/analytics.types';
 import { formatCurrency, formatPercent } from '../utils/formatters';
 
-type DashboardTab = 'overview' | 'time-date' | 'evolution' | 'simulator';
+type DashboardTab = 'overview' | 'time-date' | 'evolution';
 
 /** Dashboard page — key stats, filters, and tabbed visualizations. */
 export function DashboardPage() {
@@ -199,9 +198,6 @@ export function DashboardPage() {
           <button type="button" onClick={() => setActiveTab('evolution')} className={tabClass('evolution')}>
             Evolution
           </button>
-          <button type="button" onClick={() => setActiveTab('simulator')} className={tabClass('simulator')}>
-            Simulator
-          </button>
         </nav>
       </div>
 
@@ -333,10 +329,6 @@ export function DashboardPage() {
 
       {activeTab === 'evolution' && (
         <EvolutionTab filters={filters} />
-      )}
-
-      {activeTab === 'simulator' && (
-        <MonteCarloSimulator summary={summary} filters={filters} />
       )}
     </div>
   );

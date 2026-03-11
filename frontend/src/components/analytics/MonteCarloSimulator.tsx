@@ -32,6 +32,7 @@ import { InfoTooltip } from '../ui/InfoTooltip';
 
 interface MonteCarloSimulatorProps {
   summary: AnalyticsSummary | null;
+  summaryLoading?: boolean;
   filters: FilterParams;
 }
 
@@ -85,14 +86,25 @@ function formatSignedPercent(value: number, decimals = 1) {
   return `${prefix}${value.toFixed(decimals)}%`;
 }
 
+function formatRMetric(value: number | null | undefined) {
+  if (value == null) {
+    return '—';
+  }
+  if (!Number.isFinite(value)) {
+    return value > 0 ? 'Inf' : '-Inf';
+  }
+  return `${value.toFixed(2)}R`;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Main Component                                                     */
 /* ------------------------------------------------------------------ */
 
-export function MonteCarloSimulator({ summary, filters }: MonteCarloSimulatorProps) {
+export function MonteCarloSimulator({ summary, summaryLoading = false, filters }: MonteCarloSimulatorProps) {
   const { user } = useAuth();
   const c = useChartColors();
-  const hasHistoricalTrades = (summary?.total_trades ?? 0) > 0;
+  const filteredTradeCount = summary?.total_trades ?? 0;
+  const hasHistoricalTrades = filteredTradeCount > 0;
 
   const fallbackWinRate = useMemo(() => {
     if (!hasHistoricalTrades) return DEFAULT_WIN_RATE_PCT;
@@ -204,11 +216,18 @@ export function MonteCarloSimulator({ summary, filters }: MonteCarloSimulatorPro
     }
   }, [avgRiskFixed, avgRiskPct, filters, minRisk, numTrades, riskMode, simMode, startingEquity, winLossRatio, winRate]);
 
-  // Run once automatically on mount
+  // Re-run when the active filters change so sampling mode reflects the current slice.
   useEffect(() => {
     void dispatchSimulation();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [
+    filters.account,
+    filters.symbol,
+    filters.side,
+    filters.tag,
+    filters.date_from,
+    filters.date_to,
+  ]);
 
   // Button handler — new random seed, then dispatch
   const handleNewSimulation = () => {
@@ -251,12 +270,57 @@ export function MonteCarloSimulator({ summary, filters }: MonteCarloSimulatorPro
   const metrics = simResult?.metrics;
   const simulationCount = simResult?.metadata.simulation_count ?? DEFAULT_SIMULATION_COUNT;
   const parsedNumTrades = Math.max(10, Math.min(1000, parseInt(numTrades, 10) || DEFAULT_NUM_TRADES));
+  const filteredTradeMetrics = [
+    {
+      label: 'Total Trades',
+      value: summaryLoading && !summary ? 'Loading…' : filteredTradeCount.toLocaleString(),
+      color: 'text-gray-900 dark:text-gray-100',
+    },
+    {
+      label: 'Win Rate',
+      value: summaryLoading && !summary ? 'Loading…' : summary ? formatPercent(summary.win_rate) : '—',
+      color: summary && summary.win_rate >= 50 ? 'text-profit' : 'text-gray-900 dark:text-gray-100',
+    },
+    {
+      label: 'Win : Loss Ratio (R)',
+      value: summaryLoading && !summary ? 'Loading…' : formatRMetric(summary?.wl_ratio_r),
+      color: summary?.wl_ratio_r != null ? (summary.wl_ratio_r >= 1 ? 'text-profit' : 'text-loss') : 'text-gray-900 dark:text-gray-100',
+    },
+    {
+      label: 'Expectancy (R)',
+      value: summaryLoading && !summary ? 'Loading…' : formatRMetric(summary?.expectancy_r),
+      color:
+        summary?.expectancy_r != null
+          ? (summary.expectancy_r >= 0 ? 'text-profit' : 'text-loss')
+          : 'text-gray-900 dark:text-gray-100',
+    },
+  ];
 
   return (
-    <div className="flex flex-col lg:flex-row gap-6">
-      {/* Left: Parameters panel */}
-      <div className="lg:w-72 xl:w-80 shrink-0 space-y-4">
-        <div className="card p-4 space-y-4">
+    <div className="space-y-6">
+      <section className="space-y-2">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-600 dark:text-gray-400">
+            Filtered trade stats
+          </h3>
+          {summaryLoading ? (
+            <span className="text-xs text-gray-500 dark:text-gray-400">Updating…</span>
+          ) : null}
+        </div>
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          {filteredTradeMetrics.map((metric) => (
+            <div key={metric.label} className="card p-4 text-center">
+              <p className="text-xs text-gray-500 dark:text-gray-400 uppercase">{metric.label}</p>
+              <p className={`text-lg font-semibold ${metric.color}`}>{metric.value}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <div className="flex flex-col gap-6 lg:flex-row">
+        {/* Left: Parameters panel */}
+        <div className="lg:w-72 xl:w-80 shrink-0 space-y-4">
+          <div className="card p-4 space-y-4">
           <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
             Simulation Parameters
           </h3>
@@ -292,7 +356,7 @@ export function MonteCarloSimulator({ summary, filters }: MonteCarloSimulatorPro
             </div>
             <p className="mt-1 text-[10px] text-gray-400 dark:text-gray-500 leading-tight">
               {simMode === 'bootstrap'
-                ? 'Samples filtered historical trades on the backend.'
+                ? `Samples ${filteredTradeCount.toLocaleString()} filtered historical trades on the backend.`
                 : 'Uses win rate, W:L ratio and risk parameters.'}
             </p>
           </div>
@@ -528,7 +592,7 @@ export function MonteCarloSimulator({ summary, filters }: MonteCarloSimulatorPro
                 tooltip="Optimal fraction of capital to risk per trade for maximum long-term growth."
               />
               <MetricCard
-                label="Expectation (R)"
+                label="Expectancy (R)"
                 value={metrics.expectation.toFixed(3)}
                 color={metrics.expectation > 0 ? 'pnl-positive' : 'pnl-negative'}
                 tooltip="Average R-multiple expected per trade. Positive means profitable on average."
@@ -595,6 +659,7 @@ export function MonteCarloSimulator({ summary, filters }: MonteCarloSimulatorPro
           </div>
         )}
       </div>
+    </div>
     </div>
   );
 }
