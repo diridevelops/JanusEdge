@@ -85,17 +85,30 @@ function DeltaCell({
   value,
   isCurrency = false,
   suffix = '',
+  decimals = 2,
+  favorableWhenNegative = false,
 }: {
   value: number | null;
   isCurrency?: boolean;
   suffix?: string;
+  decimals?: number;
+  favorableWhenNegative?: boolean;
 }) {
   if (value == null) {
     return <span className="text-gray-500">—</span>;
   }
 
   const positive = value > 0;
-  const cls = positive ? 'pnl-positive' : value < 0 ? 'pnl-negative' : 'text-gray-500';
+  const negative = value < 0;
+  const cls = positive
+    ? favorableWhenNegative
+      ? 'pnl-negative'
+      : 'pnl-positive'
+    : negative
+      ? favorableWhenNegative
+        ? 'pnl-positive'
+        : 'pnl-negative'
+      : 'text-gray-500';
   let text: string;
 
   if (!Number.isFinite(value)) {
@@ -103,7 +116,7 @@ function DeltaCell({
   } else {
     text = isCurrency
       ? `${positive ? '+' : ''}${formatCurrency(value)}`
-      : `${positive ? '+' : ''}${value.toFixed(2)}${suffix}`;
+      : `${positive ? '+' : ''}${value.toFixed(decimals)}${suffix}`;
   }
 
   return <span className={cls}>{text}</span>;
@@ -262,7 +275,7 @@ function ResultSection({
                     <th className="px-4 py-2 text-left">Side</th>
                     <th className="px-4 py-2 text-left">Original P&L</th>
                     <th className="px-4 py-2 text-left">New P&L</th>
-                    <th className="px-4 py-2 text-left">Change</th>
+                    <th className="px-4 py-2 text-left">Change P&amp;L</th>
                     <th className="px-4 py-2 text-left">Change R</th>
                     <th className="px-4 py-2 text-left">Status</th>
                   </tr>
@@ -825,7 +838,7 @@ export function WhatIfPage() {
                         <td className="px-4 py-2 text-right">{simResult.original.win_rate.toFixed(1)}%</td>
                         <td className="px-4 py-2 text-right">{simResult.whatIf.win_rate.toFixed(1)}%</td>
                         <td className="px-4 py-2 text-right">
-                          <DeltaCell value={simResult.delta.win_rate} />
+                          <DeltaCell value={simResult.delta.win_rate} suffix="%" decimals={1} />
                         </td>
                       </tr>
                       <tr className="border-b border-gray-100 dark:border-gray-700/50">
@@ -861,7 +874,7 @@ export function WhatIfPage() {
                         <td className="px-4 py-2 text-right">{simResult.original.total_losers}</td>
                         <td className="px-4 py-2 text-right">{simResult.whatIf.total_losers}</td>
                         <td className="px-4 py-2 text-right">
-                          <DeltaCell value={simResult.delta.losers_change} />
+                          <DeltaCell value={simResult.delta.losers_change} favorableWhenNegative />
                         </td>
                       </tr>
                     </tbody>
