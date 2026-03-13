@@ -1,10 +1,29 @@
 """Flask application factory for TradeLogs."""
 
 import logging
+import os
 
 from flask import Flask
 
-from config import DevelopmentConfig
+from config import (
+    DevelopmentConfig,
+    ProductionConfig,
+    TestingConfig,
+    validate_config,
+)
+
+
+def _resolve_config_class():
+    """Select the config class from the current Flask environment."""
+    env_name = os.environ.get(
+        "FLASK_ENV", "development"
+    ).lower()
+    config_map = {
+        "development": DevelopmentConfig,
+        "testing": TestingConfig,
+        "production": ProductionConfig,
+    }
+    return config_map.get(env_name, DevelopmentConfig)
 
 
 def create_app(config_class=None):
@@ -21,8 +40,9 @@ def create_app(config_class=None):
     app = Flask(__name__)
 
     if config_class is None:
-        config_class = DevelopmentConfig
+        config_class = _resolve_config_class()
     app.config.from_object(config_class)
+    validate_config(app.config)
 
     # Configure logging
     if app.debug:
