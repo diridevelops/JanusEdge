@@ -1,7 +1,8 @@
-import { BarChart3, LogOut, Moon, Sun, User } from 'lucide-react';
+import { LogOut, Moon, Sun, User } from 'lucide-react';
 import { useAuth } from '../../hooks/useAuth';
 import { useTheme } from '../../hooks/useTheme';
 import { APP_NAME, APP_TAGLINE } from '../../utils/constants';
+import { JanusEdgeLogo } from '../ui/JanusEdgeLogo';
 
 /** Top header bar with user info and logout. */
 export function Header() {
@@ -11,7 +12,7 @@ export function Header() {
   return (
     <header className="sticky top-0 z-20 flex h-20 items-center justify-between gap-6 border-b border-gray-200 bg-white px-6 dark:border-gray-700 dark:bg-gray-800">
       <div className="flex min-w-0 items-center gap-3">
-        <BarChart3 className="h-7 w-7 shrink-0 text-brand-600" />
+        <JanusEdgeLogo className="h-12 w-12 shrink-0" aria-hidden="true" />
         <div className="min-w-0">
           <p className="truncate text-xl font-bold text-gray-900 dark:text-gray-100">{APP_NAME}</p>
           <p className="whitespace-nowrap text-xs text-gray-500 dark:text-gray-400">{APP_TAGLINE}</p>
