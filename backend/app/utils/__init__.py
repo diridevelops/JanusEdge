@@ -1,1 +1,1 @@
-"""Utility modules for TradeLogs."""
+"""Utility modules for Janus Edge."""

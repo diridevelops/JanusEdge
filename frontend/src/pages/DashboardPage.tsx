@@ -28,6 +28,7 @@ import type {
   EquityCurvePoint,
   TagAnalytics,
 } from '../types/analytics.types';
+import { APP_NAME } from '../utils/constants';
 import { formatCurrency, formatPercent } from '../utils/formatters';
 
 type DashboardTab = 'overview' | 'time-date' | 'evolution';
@@ -116,7 +117,7 @@ export function DashboardPage() {
     return (
       <div className="flex flex-col items-center justify-center h-96 space-y-4">
         <Upload className="w-16 h-16 text-gray-300 dark:text-gray-600" />
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Welcome to TradeLogs</h1>
+        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Welcome to {APP_NAME}</h1>
         <p className="text-gray-500 text-center max-w-md dark:text-gray-400">
           Import your first trades to see analytics, charts, and performance metrics.
         </p>

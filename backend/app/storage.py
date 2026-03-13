@@ -1,4 +1,4 @@
-"""MinIO object storage client for TradeLogs."""
+"""MinIO object storage client for Janus Edge."""
 
 import logging
 

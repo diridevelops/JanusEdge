@@ -1,4 +1,4 @@
-"""Flask extension instances for TradeLogs."""
+"""Flask extension instances for Janus Edge."""
 
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager

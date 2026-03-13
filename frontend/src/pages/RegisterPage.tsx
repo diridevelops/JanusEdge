@@ -3,7 +3,7 @@ import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
-import { TIMEZONES } from '../utils/constants';
+import { APP_NAME, TIMEZONES } from '../utils/constants';
 
 /** Registration page with timezone selector. */
 export function RegisterPage() {
@@ -46,7 +46,7 @@ export function RegisterPage() {
       <div className="w-full max-w-md">
         <div className="flex flex-col items-center mb-8">
           <BarChart3 className="h-12 w-12 text-brand-600" />
-          <h1 className="mt-3 text-3xl font-bold text-gray-900 dark:text-gray-100">TradeLogs</h1>
+          <h1 className="mt-3 text-3xl font-bold text-gray-900 dark:text-gray-100">{APP_NAME}</h1>
           <p className="mt-1 text-gray-500 dark:text-gray-400">Create your account</p>
         </div>
         <form onSubmit={handleSubmit} className="card p-8 space-y-5">

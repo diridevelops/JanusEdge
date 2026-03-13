@@ -38,7 +38,7 @@ from app.utils.trade_fingerprint import (
 from app.utils.validators import is_valid_timezone
 
 
-BACKUP_ARCHIVE_TYPE = "tradelogs-portable-backup"
+BACKUP_ARCHIVE_TYPE = "janusedge-portable-backup"
 BACKUP_ARCHIVE_VERSION = "1.0"
 MANIFEST_PATH = "manifest.json"
 DATA_PATH = "data.json"
@@ -83,7 +83,7 @@ class PortableBackupService:
 
         archive_buffer.seek(0)
         filename = (
-            f"tradelogs-backup-"
+            f"janusedge-backup-"
             f"{manifest['created_at'].replace(':', '').replace('-', '')}"
             ".zip"
         )

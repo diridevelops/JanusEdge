@@ -1,4 +1,4 @@
-"""TradeLogs application entry point."""
+"""Janus Edge application entry point."""
 
 from app import create_app
 

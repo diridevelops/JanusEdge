@@ -8,10 +8,11 @@ import type {
   SymbolMappings,
   User,
 } from '../types/auth.types';
+import { BACKUP_FILENAME } from '../utils/constants';
 
 function getDownloadFilename(contentDisposition?: string): string {
   if (!contentDisposition) {
-    return 'tradelogs-backup.zip';
+    return BACKUP_FILENAME;
   }
 
   const utf8Match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
@@ -24,7 +25,7 @@ function getDownloadFilename(contentDisposition?: string): string {
     return filenameMatch[1];
   }
 
-  return 'tradelogs-backup.zip';
+  return BACKUP_FILENAME;
 }
 
 /** Register a new user account. */

@@ -119,7 +119,7 @@ class BackupManifestSchema(Schema):
     archive_type = fields.Str(
         required=True,
         validate=validate.OneOf(
-            ["tradelogs-portable-backup"]
+            ["janusedge-portable-backup"]
         ),
     )
     version = fields.Str(

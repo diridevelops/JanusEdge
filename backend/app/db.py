@@ -5,7 +5,7 @@ from pymongo.database import Database
 
 def init_db(db: Database) -> None:
     """
-    Create all required indexes for TradeLogs collections.
+    Create all required indexes for Janus Edge collections.
 
     Parameters:
         db: A PyMongo database instance.

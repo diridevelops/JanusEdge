@@ -9,9 +9,9 @@ import { Sidebar } from './Sidebar';
 export function AppLayout() {
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+      <Header />
       <Sidebar />
-      <div className="ml-60">
-        <Header />
+      <div className="ml-60 pt-20">
         <main className="p-6">
           <Outlet />
         </main>

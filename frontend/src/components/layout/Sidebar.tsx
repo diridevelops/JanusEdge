@@ -24,11 +24,7 @@ const navItems = [
 /** Sidebar navigation component. */
 export function Sidebar() {
   return (
-    <aside className="fixed inset-y-0 left-0 z-10 flex w-60 flex-col border-r border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
-      <div className="flex h-16 items-center gap-2 border-b border-gray-200 px-6 dark:border-gray-700">
-        <BarChart3 className="h-7 w-7 text-brand-600" />
-        <span className="text-xl font-bold text-gray-900 dark:text-gray-100">TradeLogs</span>
-      </div>
+    <aside className="fixed bottom-0 left-0 top-20 z-10 flex w-60 flex-col border-r border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-800">
       <nav className="flex-1 space-y-1 px-3 py-4">
         {navItems.map(({ to, label, icon: Icon }) => (
           <NavLink

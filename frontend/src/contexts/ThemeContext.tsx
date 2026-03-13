@@ -7,6 +7,8 @@ import {
     type ReactNode,
 } from 'react';
 
+import { APP_SLUG } from '../utils/constants';
+
 type Theme = 'light' | 'dark';
 
 interface ThemeState {
@@ -23,7 +25,7 @@ export const ThemeContext = createContext<ThemeState>({
   setTheme: () => {},
 });
 
-const STORAGE_KEY = 'tradelogs-theme';
+const STORAGE_KEY = `${APP_SLUG}-theme`;
 
 function getStoredTheme(): Theme {
   try {

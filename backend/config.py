@@ -1,4 +1,4 @@
-"""Configuration classes for TradeLogs application."""
+"""Configuration classes for Janus Edge."""
 
 import os
 from datetime import timedelta
@@ -48,7 +48,7 @@ class Config:
 
     SECRET_KEY = _get_env("SECRET_KEY")
     MONGO_URI = _get_env(
-        "MONGO_URI", "mongodb://localhost:27017/tradelogs"
+        "MONGO_URI", "mongodb://localhost:27017/janusedge"
     )
     JWT_SECRET_KEY = _get_env("JWT_SECRET_KEY")
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=1)
@@ -66,7 +66,7 @@ class Config:
     MINIO_ACCESS_KEY = _get_env("MINIO_ACCESS_KEY")
     MINIO_SECRET_KEY = _get_env("MINIO_SECRET_KEY")
     MINIO_BUCKET = _get_env(
-        "MINIO_BUCKET", "tradelogs-media"
+        "MINIO_BUCKET", "janusedge-media"
     )
     MINIO_USE_SSL = (
         _get_env("MINIO_USE_SSL", "false").lower()
@@ -95,7 +95,7 @@ class TestingConfig(Config):
     )
     MONGO_URI = os.environ.get(
         "MONGO_URI_TEST",
-        "mongodb://localhost:27017/tradelogs_test",
+        "mongodb://localhost:27017/janusedge_test",
     )
     MINIO_ACCESS_KEY = _get_env(
         "MINIO_ACCESS_KEY", "test-minio-access-key"

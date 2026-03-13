@@ -1,4 +1,4 @@
-"""Pytest fixtures for TradeLogs tests."""
+"""Pytest fixtures for Janus Edge tests."""
 
 import pytest
 

@@ -680,7 +680,7 @@ def test_export_backup_is_complete_and_self_contained(
     archive_bytes = _export_archive_bytes(client, token)
     manifest, payload, names = _parse_archive(archive_bytes)
 
-    assert manifest["archive_type"] == "tradelogs-portable-backup"
+    assert manifest["archive_type"] == "janusedge-portable-backup"
     assert manifest["version"] == "1.0"
     assert manifest["counts"] == {
         "accounts": 2,

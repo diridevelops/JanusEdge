@@ -2,17 +2,18 @@ import axios from 'axios';
 import { Download, Plus, Trash2, Upload } from 'lucide-react';
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import {
-  changePassword,
-  exportBackup,
-  restoreBackup,
-  updateDisplayTimezone,
-  updateStartingEquity,
-  updateSymbolMappings,
-  updateTimezone,
+    changePassword,
+    exportBackup,
+    restoreBackup,
+    updateDisplayTimezone,
+    updateStartingEquity,
+    updateSymbolMappings,
+    updateTimezone,
 } from '../api/auth.api';
 import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
 import type { RestoreSummary, SymbolMappings } from '../types/auth.types';
+import { APP_NAME } from '../utils/constants';
 
 const TIMEZONES = [
   'America/New_York',
@@ -485,7 +486,7 @@ export function SettingsPage() {
             Symbol Mappings
           </h2>
           <p className="text-xs text-gray-500 dark:text-gray-400">
-            Configure normalized base symbols that match imported symbols by prefix. When an imported symbol starts with a configured base symbol, TradeLogs uses the mapped Yahoo Finance symbol and dollar value per point.
+            Configure normalized base symbols that match imported symbols by prefix. When an imported symbol starts with a configured base symbol, {APP_NAME} uses the mapped Yahoo Finance symbol and dollar value per point.
           </p>
           <p className="text-xs text-gray-500 dark:text-gray-400">
             Changes apply to future market data downloads, chart refreshes, and backup exports.
@@ -614,7 +615,7 @@ export function SettingsPage() {
               Backup
             </h2>
             <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-              Export a ZIP backup of your TradeLogs data or restore one into your current account.
+              Export a ZIP backup of your {APP_NAME} data or restore one into your current account.
             </p>
           </div>
           <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
@@ -623,7 +624,7 @@ export function SettingsPage() {
         </div>
 
         <div className="mt-4 text-xs text-gray-500 dark:text-gray-400">
-          Choose a TradeLogs backup ZIP. Duplicate trades are detected by source, symbol, side, entry and exit times, quantity, and average prices, then skipped during restore.
+          Choose a {APP_NAME} backup ZIP. Duplicate trades are detected by source, symbol, side, entry and exit times, quantity, and average prices, then skipped during restore.
         </div>
 
         {restoreSummary ? (

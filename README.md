@@ -1,10 +1,10 @@
-# TradeLogs
+# Janus Edge
 
-TradeLogs is a self-hosted trade journaling and analytics application for futures traders. It imports execution-level CSV exports, reconstructs trades, stores media alongside journal entries, and surfaces analytics such as performance summaries and Monte Carlo simulations.
+Janus Edge is a self-hosted trade journaling and analytics application for futures traders. It imports execution-level CSV exports, reconstructs trades, stores media alongside journal entries, and surfaces analytics such as performance summaries and Monte Carlo simulations.
 
 ## Why It Exists
 
-TradeLogs is built for traders who want a local-first workflow they can inspect, modify, and run on their own infrastructure. The stack is intentionally straightforward: a React frontend, a Flask API, MongoDB for persistence, and MinIO for media storage.
+Janus Edge is built for traders who want a local-first workflow they can inspect, modify, and run on their own infrastructure. The stack is intentionally straightforward: a React frontend, a Flask API, MongoDB for persistence, and MinIO for media storage.
 
 ## Features
 
@@ -107,7 +107,7 @@ By default, the frontend talks to `/api` and proxies API requests to `http://loc
 
 ## Production Installation
 
-TradeLogs can be deployed as separate services behind HTTPS. The repository currently ships development-oriented Dockerfiles and Compose defaults, so production should provide hardened infrastructure and explicit environment values.
+Janus Edge can be deployed as separate services behind HTTPS. The repository currently ships development-oriented Dockerfiles and Compose defaults, so production should provide hardened infrastructure and explicit environment values.
 
 1. Provision MongoDB with authentication enabled and regular backups.
 2. Provision MinIO or another S3-compatible object store with unique access credentials and a dedicated bucket.

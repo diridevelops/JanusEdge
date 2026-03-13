@@ -1,13 +1,13 @@
 services:
   mongo:
     image: mongo:8.0
-    container_name: tradelogs-mongo
+    container_name: janusedge-mongo
     ports:
       - "27017:27017"
     volumes:
       - mongo-data:/data/db
     networks:
-      - tradelogs-net
+      - janusedge-net
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.runCommand({ping:1})"]
       interval: 10s
@@ -17,7 +17,7 @@ services:
 
   minio:
     image: minio/minio:latest
-    container_name: tradelogs-minio
+    container_name: janusedge-minio
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -28,7 +28,7 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     command: server /data --console-address ":9001"
     networks:
-      - tradelogs-net
+      - janusedge-net
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 10s
@@ -40,7 +40,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: tradelogs-backend
+    container_name: janusedge-backend
     ports:
       - "5000:5000"
     volumes:
@@ -51,14 +51,14 @@ services:
       FLASK_APP: ${FLASK_APP:-run.py}
       FLASK_ENV: ${FLASK_ENV:-development}
       FLASK_DEBUG: ${FLASK_DEBUG:-1}
-      MONGO_URI: ${MONGO_URI:-mongodb://mongo:27017/tradelogs}
+      MONGO_URI: ${MONGO_URI:-mongodb://mongo:27017/janusedge}
       JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-jwt-secret-change-in-production}
       SECRET_KEY: ${SECRET_KEY:-dev-secret-change-in-production}
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
       MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
-      MINIO_BUCKET: ${MINIO_BUCKET:-tradelogs-media}
+      MINIO_BUCKET: ${MINIO_BUCKET:-janusedge-media}
       MINIO_USE_SSL: ${MINIO_USE_SSL:-false}
       MINIO_PUBLIC_URL: ${MINIO_PUBLIC_URL:-http://localhost:9000}
     depends_on:
@@ -67,13 +67,13 @@ services:
       minio:
         condition: service_healthy
     networks:
-      - tradelogs-net
+      - janusedge-net
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: tradelogs-frontend
+    container_name: janusedge-frontend
     ports:
       - "5173:5173"
     volumes:
@@ -82,16 +82,16 @@ services:
     environment:
       VITE_API_BASE_URL: ${VITE_API_BASE_URL:-/api}
       VITE_API_PROXY_TARGET: ${VITE_API_PROXY_TARGET:-http://backend:5000}
-      VITE_APP_NAME: ${VITE_APP_NAME:-TradeLogs}
+      VITE_APP_NAME: ${VITE_APP_NAME:-Janus Edge}
     depends_on:
       - backend
     networks:
-      - tradelogs-net
+      - janusedge-net
 
 volumes:
   mongo-data:
   minio-data:
 
 networks:
-  tradelogs-net:
+  janusedge-net:
     driver: bridge

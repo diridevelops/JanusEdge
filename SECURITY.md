@@ -33,7 +33,7 @@ Examples that are usually out of scope unless they enable a broader exploit incl
 
 ## Disclosure Process
 
-TradeLogs follows coordinated disclosure. Please allow time for triage, patching, verification, and release preparation before public disclosure.
+Janus Edge follows coordinated disclosure. Please allow time for triage, patching, verification, and release preparation before public disclosure.
 
 If a report is confirmed, the maintainers should:
 

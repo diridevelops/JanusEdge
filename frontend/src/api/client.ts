@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 /**
- * Axios instance configured for the TradeLogs API.
+ * Axios instance configured for the Janus Edge API.
  *
  * - Base URL set from env or defaults to '/api'.
  * - Request interceptor attaches JWT token.

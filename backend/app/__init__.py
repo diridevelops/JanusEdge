@@ -1,4 +1,4 @@
-"""Flask application factory for TradeLogs."""
+"""Flask application factory for Janus Edge."""
 
 import logging
 import os

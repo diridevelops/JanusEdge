@@ -1,6 +1,9 @@
 /** Application-wide constants. */
 
-export const APP_NAME = 'TradeLogs';
+export const APP_NAME = 'Janus Edge';
+export const APP_SLUG = 'janusedge';
+export const APP_TAGLINE = 'Past insight. Future performance.';
+export const BACKUP_FILENAME = `${APP_SLUG}-backup.zip`;
 
 /** Available timezones for registration. */
 export const TIMEZONES = [
