@@ -1,163 +1,133 @@
-# Janus Edge
+# Janus Edge - Trading journal
 
-Janus Edge is a self-hosted trade journaling and analytics application for futures traders. It imports execution-level CSV exports, reconstructs trades, stores media alongside journal entries, and surfaces analytics such as performance summaries and Monte Carlo simulations.
+Janus Edge is an open-source, self-hosted trading journal built to help you turn raw executions into structured review, performance insight, and better decision-making.
 
-## Why It Exists
+<img src="./docs/assets/images/collage.png" alt="drawing" width="1000"/>
 
-Janus Edge is built for traders who want a local-first workflow they can inspect, modify, and run on their own infrastructure. The stack is intentionally straightforward: a React frontend, a Flask API, MongoDB for persistence, and MinIO for media storage.
+## Feature Highlights
 
-## Features
+- **Import and reconstruct trades** from supported CSV exports such as NinjaTrader and Quantower
+- **Journal every trade** with notes, tags, fees, initial risk, screenshots, and media
+- **Review trades in chart context** with executions plotted on candlestick data
+- **Track performance over time** with dashboard metrics, equity curve, drawdown, and tag-based analysis
+- **Study trading patterns** through calendar review, time-of-day analysis, and deeper analytics
+- **Test what-if scenarios** with Monte Carlo simulations and stop-management tools
+- **Back up and restore your data** with portable export and merge-based restore support
 
-- Import execution CSV files from NinjaTrader and Quantower
-- Reconstruct trades from execution data
-- Journal trades with notes, tags, and media attachments
-- Review charts and analytics dashboards
-- Run what-if and Monte Carlo analysis workflows
-- Store uploaded media in S3-compatible object storage
+## Installation
 
-## Tech Stack
+### Prerequisites
 
-- Frontend: React 19, TypeScript, Vite, Tailwind CSS, Lightweight Charts
-- Backend: Python 3.11+, Flask, PyMongo, pandas, yfinance
-- Data services: MongoDB 8 and MinIO
-- Auth: JWT via Flask-JWT-Extended
+For the default setup, install:
 
-## Repository Layout
+- Git
+- Docker Desktop, or Docker Engine with Docker Compose support
 
-- `frontend/`: React single-page application
-- `backend/`: Flask API and domain services
-- `trade_examples/`: sample import files for manual testing
+Make sure these local ports are available before starting the stack or change them in the compose file:
 
-## Local Development With Docker
+- `5173` for the frontend
+- `5000` for the backend API
+- `27017` for MongoDB
+- `9000` for MinIO API
+- `9001` for the MinIO console
 
-1. Copy the root environment template.
+### Quick Start With Docker
+
+Clone the repository and start the full local stack:
 
 ```bash
+git clone https://github.com/diridevelops/JanusEdge.git
+cd JanusEdge
 cp .env.example .env
+docker compose up -d --build
 ```
 
-2. Start the full stack.
+If you are using Windows PowerShell, replace `cp` with `copy`.
 
-```bash
-docker compose up -d
-```
+This starts:
 
-3. Open the applications.
+- the React frontend
+- the Flask backend
+- MongoDB
+- MinIO
 
-- Frontend: `http://localhost:5173`
-- Backend API: `http://localhost:5000`
-- MinIO console: `http://localhost:9001`
+After startup, open [http://localhost:5173](http://localhost:5173).
 
-4. Stop the stack when finished.
+To stop the stack later:
 
 ```bash
 docker compose down
 ```
 
-The development defaults in `.env.example` are placeholders for local use only. Replace them before any shared or production deployment.
+### Development
 
-## Local Development Without Docker
-
-### Prerequisites
+For mixed local development, install these additional prerequisites:
 
 - Python 3.11+
 - Node.js 20+
-- Docker Desktop or separately managed MongoDB and MinIO instances
 
-### Backend
-
-1. Copy the backend env template.
+If you have not cloned the repository yet, do that first:
 
 ```bash
-cp backend/.env.example backend/.env
+git clone https://github.com/diridevelops/JanusEdge.git
+cd JanusEdge
 ```
 
-2. Create and activate a virtual environment.
+Start MongoDB and MinIO in Docker:
+
+```bash
+docker compose up mongo minio -d
+```
+
+Run the backend locally:
 
 ```bash
 cd backend
-python3 -m venv .venv
+cp .env.example .env
+python -m venv .venv
 source .venv/bin/activate
-```
-
-3. Install dependencies and run the API.
-
-```bash
 pip install -r requirements.txt
 flask run --port 5000
 ```
 
-### Frontend
-
-1. Copy the frontend env template.
-
-```bash
-cp frontend/.env.example frontend/.env.local
-```
-
-2. Install dependencies and start Vite.
+Run the frontend locally:
 
 ```bash
 cd frontend
+cp .env.example .env.local
 npm install
 npm run dev
 ```
 
-By default, the frontend talks to `/api` and proxies API requests to `http://localhost:5000` during development.
+Default local URLs:
 
-## Production Installation
-
-Janus Edge can be deployed as separate services behind HTTPS. The repository currently ships development-oriented Dockerfiles and Compose defaults, so production should provide hardened infrastructure and explicit environment values.
-
-1. Provision MongoDB with authentication enabled and regular backups.
-2. Provision MinIO or another S3-compatible object store with unique access credentials and a dedicated bucket.
-3. Set strong values for `SECRET_KEY`, `JWT_SECRET_KEY`, `MINIO_ACCESS_KEY`, and `MINIO_SECRET_KEY`.
-4. Restrict `CORS_ORIGINS` to your real frontend origin.
-5. Run the backend with Gunicorn.
-
-```bash
-cd backend
-python -m venv .venv
-. .venv/bin/activate
-pip install -r requirements.txt
-gunicorn --bind 0.0.0.0:5000 run:app
-```
-
-6. Build the frontend and serve `frontend/dist` from a web server such as Nginx or Caddy.
-
-```bash
-cd frontend
-npm ci
-npm run build
-```
-
-7. Terminate TLS at the reverse proxy and route `/api` traffic to the Flask service.
-8. Enable structured logging, dependency updates, and backup monitoring before exposing the deployment publicly.
-
-## Configuration
-
-The project uses checked-in example files for configuration contracts:
-
-- `.env.example`: Docker Compose and containerized development
-- `backend/.env.example`: local backend development
-- `frontend/.env.example`: local frontend development
-
-Do not commit copied `.env`, `.env.local`, or other machine-specific secret files.
-
-## Security
-
-- Sensitive values are expected from environment variables, not from tracked source files.
-- Development example credentials such as `minioadmin` are placeholders only and must be replaced in any shared environment.
-- Security issues should be reported privately using the process in `SECURITY.md`.
+- Frontend: `http://localhost:5173`
+- Backend API: `http://localhost:5000`
+- MinIO Console: `http://localhost:9001`
 
 ## Documentation
 
-TBD
+Long-form project documentation lives in [docs/README.md](./docs/README.md).
 
-## Contributing And Support
+Recommended starting points:
 
-The repository does not yet ship a full contribution guide. Until that is added, open an issue for bugs or feature requests, and use the private security process for vulnerabilities.
+- [Getting Started](./docs/getting-started.md)
+- [Usage Guide](./docs/usage.md)
+- [Troubleshooting](./troubleshooting.md)
+
+## Project Structure
+
+- `backend/`: Flask API, MongoDB repositories, CSV import logic, analytics, and media handling
+- `frontend/`: React, TypeScript, and Vite single-page application
+- `trade_examples/`: sample CSV files for import testing
+- `docs/`: long-form contributor and operator documentation
+
+## Security
+
+Follow the reporting process in [SECURITY.md](./SECURITY.md) for vulnerabilities.
 
 ## License
 
-No license file is committed yet. A recommended license choice is documented in `SUGGESTIONS.md` so you can make an explicit decision before publishing the repository.
+The original code in this repository is licensed under the Apache License 2.0. See [LICENSE](./LICENSE).
+
+Third-party dependencies and bundled assets remain under their own licenses.
