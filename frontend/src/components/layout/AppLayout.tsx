@@ -11,8 +11,8 @@ export function AppLayout() {
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       <Header />
       <Sidebar />
-      <div className="ml-60 pt-20">
-        <main className="p-6">
+      <div className="ml-60">
+        <main className="p-6 pt-4">
           <Outlet />
         </main>
       </div>
