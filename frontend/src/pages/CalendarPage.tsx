@@ -1,9 +1,11 @@
 import { endOfMonth, format, startOfMonth } from 'date-fns';
+import { Calendar } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 
 import { getCalendar, getSummary } from '../api/analytics.api';
 import { CalendarHeatmap } from '../components/charts/CalendarHeatmap';
 import { FilterBar } from '../components/filters/FilterBar';
+import { PageHeader } from '../components/ui/PageHeader';
 import type { AnalyticsSummary, CalendarDay } from '../types/analytics.types';
 import { formatCurrency, formatPercent } from '../utils/formatters';
 
@@ -60,12 +62,11 @@ export function CalendarPage() {
   return (
     <div className="space-y-6">
       {/* Page header */}
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Calendar</h1>
-        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-          See your monthly trading performance at a glance.
-        </p>
-      </div>
+      <PageHeader
+        icon={Calendar}
+        title="Calendar"
+        description="See your monthly trading performance at a glance."
+      />
 
       {/* Filters */}
       <FilterBar

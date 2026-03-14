@@ -1,14 +1,14 @@
-import { ArrowRight, Upload } from 'lucide-react';
+import { ArrowRight, LayoutDashboard, Upload } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 
 import {
-  getApptByDayOfWeek,
-  getApptByTimeframe,
-  getByTag,
-  getDrawdown,
-  getEquityCurve,
-  getSummary,
+    getApptByDayOfWeek,
+    getApptByTimeframe,
+    getByTag,
+    getDrawdown,
+    getEquityCurve,
+    getSummary,
 } from '../api/analytics.api';
 import { EvolutionTab } from '../components/analytics/EvolutionTab';
 import { APPTDailyChart } from '../components/charts/APPTDailyChart';
@@ -18,15 +18,16 @@ import { EquityCurveChart } from '../components/charts/EquityCurveChart';
 import { TimeframeAPPTChart } from '../components/charts/TimeframeAPPTChart';
 import { WinRateDailyChart } from '../components/charts/WinRateDailyChart';
 import { FilterBar } from '../components/filters/FilterBar';
+import { PageHeader } from '../components/ui/PageHeader';
 import { Spinner } from '../components/ui/Spinner';
 import { useAuth } from '../hooks/useAuth';
 import type {
-  AnalyticsSummary,
-  ApptByDayOfWeekEntry,
-  ApptByTimeframeEntry,
-  DrawdownPoint,
-  EquityCurvePoint,
-  TagAnalytics,
+    AnalyticsSummary,
+    ApptByDayOfWeekEntry,
+    ApptByTimeframeEntry,
+    DrawdownPoint,
+    EquityCurvePoint,
+    TagAnalytics,
 } from '../types/analytics.types';
 import { APP_NAME } from '../utils/constants';
 import { formatCurrency, formatPercent } from '../utils/formatters';
@@ -161,7 +162,7 @@ export function DashboardPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Dashboard</h1>
+        <PageHeader icon={LayoutDashboard} title="Dashboard" />
         <Link
           to="/analytics"
           className="text-sm text-blue-600 hover:underline inline-flex items-center gap-1 dark:text-blue-400"

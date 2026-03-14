@@ -1,4 +1,5 @@
-import { Check, ChevronLeft, ChevronRight, Upload } from 'lucide-react';
+import { ArrowLeft, Check, ChevronLeft, ChevronRight, Upload } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { FeeEntryTable } from '../components/import/FeeEntryTable';
 import { FileDropZone } from '../components/import/FileDropZone';
 import { ImportPreview } from '../components/import/ImportPreview';
@@ -37,11 +38,16 @@ export function ImportPage() {
   return (
     <div className="max-w-5xl mx-auto space-y-6">
       {/* Page header */}
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Import Trades</h1>
-        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-          Upload one or more CSV exports from NinjaTrader or Quantower to import your trades.
-        </p>
+      <div className="flex items-center gap-3">
+        <Link to="/trades" className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300" aria-label="Back">
+          <ArrowLeft className="h-5 w-5" />
+        </Link>
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Import Trades</h1>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            Upload one or more CSV exports from NinjaTrader or Quantower to import your trades.
+          </p>
+        </div>
       </div>
 
       {/* Step indicator */}

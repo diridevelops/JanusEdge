@@ -1,9 +1,10 @@
-import { Plus, Upload } from 'lucide-react';
+import { List, Plus, Upload } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { listTrades } from '../api/trades.api';
 import { FilterBar } from '../components/filters/FilterBar';
 import { TradeTable } from '../components/trade/TradeTable';
+import { PageHeader } from '../components/ui/PageHeader';
 import { Pagination } from '../components/ui/Pagination';
 import { Spinner } from '../components/ui/Spinner';
 import { useToast } from '../hooks/useToast';
@@ -147,12 +148,12 @@ export function TradeListPage() {
     <div className="space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Trades</h1>
-          <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">
-            {totalItems} {totalItems === 1 ? 'trade' : 'trades'} total
-          </p>
-        </div>
+        <PageHeader
+          icon={List}
+          title="Trades"
+          description={`${totalItems} ${totalItems === 1 ? 'trade' : 'trades'} total`}
+          descriptionClassName="mt-0.5 text-sm text-gray-500 dark:text-gray-400"
+        />
         <div className="flex items-center gap-2">
           <Link to="/import" className="btn-primary text-sm inline-flex items-center gap-1">
             Import <Upload className="h-4 w-4" />

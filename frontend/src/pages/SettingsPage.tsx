@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { Download, Plus, Trash2, Upload } from 'lucide-react';
+import { Download, Plus, Settings, Trash2, Upload } from 'lucide-react';
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import {
     changePassword,
@@ -10,6 +10,7 @@ import {
     updateSymbolMappings,
     updateTimezone,
 } from '../api/auth.api';
+import { PageHeader } from '../components/ui/PageHeader';
 import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
 import type { RestoreSummary, SymbolMappings } from '../types/auth.types';
@@ -364,12 +365,11 @@ export function SettingsPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Settings</h1>
-        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-          Manage your account preferences.
-        </p>
-      </div>
+      <PageHeader
+        icon={Settings}
+        title="Settings"
+        description="Manage your account preferences."
+      />
 
       {/* Profile info */}
       <div className="card p-4">

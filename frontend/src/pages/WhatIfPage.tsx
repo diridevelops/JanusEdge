@@ -7,14 +7,15 @@ import { getStopAnalysis, getWickedOutTrades, runSimulation } from '../api/whati
 import { MonteCarloSimulator } from '../components/analytics/MonteCarloSimulator';
 import { FilterBar } from '../components/filters/FilterBar';
 import { InfoTooltip } from '../components/ui/InfoTooltip';
+import { PageHeader } from '../components/ui/PageHeader';
 import { useToast } from '../hooks/useToast';
 import type { AnalyticsSummary } from '../types/analytics.types';
 import type {
-  ConfidenceInterval,
-  SimulationDetail,
-  SimulationResponse,
-  StopAnalysisResponse,
-  WickedOutTrade,
+    ConfidenceInterval,
+    SimulationDetail,
+    SimulationResponse,
+    StopAnalysisResponse,
+    WickedOutTrade,
 } from '../types/whatif.types';
 import { formatCurrency, formatPnL } from '../utils/formatters';
 
@@ -504,15 +505,11 @@ export function WhatIfPage() {
   return (
     <div className="space-y-6">
       {/* Page header */}
-      <div>
-        <div className="flex items-center gap-2">
-          <FlaskConical className="h-6 w-6 text-brand-600" />
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">What-if</h1>
-        </div>
-        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-          Run filtered-trade simulations or inspect symbol-specific stop-management analysis.
-        </p>
-      </div>
+      <PageHeader
+        icon={FlaskConical}
+        title="What-if"
+        description="Run filtered-trade simulations or inspect symbol-specific stop-management analysis."
+      />
 
       {/* Filters */}
       <FilterBar

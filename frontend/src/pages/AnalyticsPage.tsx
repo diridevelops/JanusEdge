@@ -1,3 +1,4 @@
+import { BarChart3 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 
 import {
@@ -6,6 +7,7 @@ import {
 } from '../api/analytics.api';
 import { StatsGrid } from '../components/analytics/StatsGrid';
 import { FilterBar } from '../components/filters/FilterBar';
+import { PageHeader } from '../components/ui/PageHeader';
 import { useAuth } from '../hooks/useAuth';
 import type {
     AnalyticsSummary,
@@ -64,12 +66,11 @@ export function AnalyticsPage() {
   return (
     <div className="space-y-6">
       {/* Page header */}
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Analytics</h1>
-        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-          Detailed performance metrics and risk analysis of your trading.
-        </p>
-      </div>
+      <PageHeader
+        icon={BarChart3}
+        title="Analytics"
+        description="Detailed performance metrics and risk analysis of your trading."
+      />
 
       {/* Filters */}
       <FilterBar filters={filters} onFilterChange={handleFilterChange} onClearFilters={handleClearFilters} />
