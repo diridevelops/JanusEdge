@@ -75,7 +75,7 @@ export function InfoTooltip({
       </button>
       {open && (
         <div
-          className={`fixed z-[120] ${widthClass} max-w-[80vw] px-3 py-2 text-xs text-gray-100 bg-gray-800 dark:bg-gray-700 rounded-lg shadow-lg whitespace-pre-line pointer-events-none`}
+          className={`fixed z-[120] ${widthClass} max-w-[80vw] px-3 py-2 text-xs font-normal text-gray-100 bg-gray-800 dark:bg-gray-700 rounded-lg shadow-lg whitespace-pre-line pointer-events-none`}
           style={{ top: pos.top, left: pos.left, transform: 'translate(-50%, -100%)' }}
         >
           {text}

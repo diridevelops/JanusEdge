@@ -51,6 +51,9 @@ const DEFAULT_NUM_TRADES = 500;
 const DEFAULT_STARTING_EQUITY = 10000;
 const DEFAULT_WIN_RATE_PCT = 50;
 const DEFAULT_WIN_LOSS_RATIO_R = 2;
+const SIMULATION_MODE_TOOLTIP =
+  'Sampling mode: resamples your filtered historical trades to replay outcomes from the actual distribution of those trades.\n\n\
+  Parametric mode: generates outcomes from input win rate and win:loss ratio (R) instead of using individual historical trades.';
 
 /* ------------------------------------------------------------------ */
 /*  Sub-components                                                     */
@@ -327,7 +330,15 @@ export function MonteCarloSimulator({ summary, summaryLoading = false, filters }
 
           {/* Simulation Mode */}
           <div>
-            <span className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Mode</span>
+            <span className="mb-1 flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-gray-400">
+              Mode
+              <InfoTooltip
+                text={SIMULATION_MODE_TOOLTIP}
+                ariaLabel="Info about simulation mode"
+                iconSize="w-3 h-3"
+                widthClass="w-72"
+              />
+            </span>
             <div className="flex gap-2">
               <button
                 type="button"
