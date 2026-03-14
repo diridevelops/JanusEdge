@@ -1,3 +1,14 @@
+@font-face {
+  font-family: 'Unica One';
+  src:
+    local('Unica One'),
+    local('UnicaOne-Regular'),
+    url('/fonts/unica-one/UnicaOne-Regular.ttf') format('truetype');
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -9,6 +20,16 @@
 }
 
 @layer components {
+  .font-app-brand {
+    font-family: 'Unica One', sans-serif;
+    font-weight: 400;
+  }
+
+  .font-tagline-app-brand {
+    font-optical-sizing: auto;
+    font-weight: 400;
+  }
+
   .btn-primary {
     @apply inline-flex items-center justify-center rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-brand-700 focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 dark:focus:ring-offset-gray-900;
   }

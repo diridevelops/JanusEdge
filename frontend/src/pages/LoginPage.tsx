@@ -32,7 +32,7 @@ export function LoginPage() {
       <div className="w-full max-w-md">
         <div className="flex flex-col items-center mb-8">
           <JanusEdgeLogo className="h-20 w-20" aria-hidden="true" />
-          <h1 className="mt-3 text-3xl font-bold text-gray-900 dark:text-gray-100">{APP_NAME}</h1>
+          <h1 className="font-app-brand mt-3 text-3xl text-gray-900 dark:text-gray-100">{APP_NAME}</h1>
           <p className="mt-1 text-gray-500 dark:text-gray-400">Sign in to your account</p>
         </div>
         <form onSubmit={handleSubmit} className="card p-8 space-y-5">

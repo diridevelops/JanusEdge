@@ -14,8 +14,8 @@ export function Header() {
       <div className="flex min-w-0 items-center gap-3">
         <JanusEdgeLogo className="h-12 w-12 shrink-0" aria-hidden="true" />
         <div className="min-w-0">
-          <p className="truncate text-xl font-bold text-gray-900 dark:text-gray-100">{APP_NAME}</p>
-          <p className="whitespace-nowrap text-xs text-gray-500 dark:text-gray-400">{APP_TAGLINE}</p>
+          <p className="font-app-brand truncate text-2xl text-gray-900 dark:text-gray-100">{APP_NAME}</p>
+          <p className="font-tagline-app-brand whitespace-nowrap text-xs text-gray-500 dark:text-gray-400">{APP_TAGLINE}</p>
         </div>
       </div>
 
