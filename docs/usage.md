@@ -1,0 +1,654 @@
+# Usage Guide
+
+This guide explains how to use Janus Edge as a trader or journal user.
+
+## Index
+
+- [What Janus Edge Helps You Do](#what-janus-edge-helps-you-do)
+- [Before You Start](#before-you-start)
+- [Main Navigation](#main-navigation)
+- [Recommended First Workflow](#recommended-first-workflow)
+- [Login And Registration](#login-and-registration)
+- [Dashboard](#dashboard)
+- [Trades](#trades)
+- [Import Trades](#import-trades)
+- [Add A Manual Trade](#add-a-manual-trade)
+- [Trade Detail Page](#trade-detail-page)
+- [Calendar](#calendar)
+- [Analytics](#analytics)
+- [What-If](#what-if)
+- [Settings](#settings)
+- [Common Tasks](#common-tasks)
+- [Practical Tips](#practical-tips)
+- [When Something Looks Wrong](#when-something-looks-wrong)
+
+## What Janus Edge Helps You Do
+
+Janus Edge is built to help you:
+
+- import trades from supported CSV exports
+- add trades manually when needed
+- review charts, executions, notes, tags, and attachments for each trade
+- track performance over time
+- study daily and monthly patterns
+- test what-if ideas around stop placement and trade outcomes
+- back up your data and restore it later
+
+## Before You Start
+
+You need an account before you can use the app.
+
+On the sign-up screen, enter:
+
+- a username
+- a password
+- your trading timezone
+
+Your trading timezone matters because some imported files do not include full timezone information.
+
+After you sign in, the main app sections become available.
+
+## Main Navigation
+
+After signing in, the main sidebar gives you these sections:
+
+- Dashboard
+- Trades
+- Calendar
+- Analytics
+- What-if
+- Settings
+
+Two important actions are not in the sidebar:
+
+- Import Trades: open it from the Trades page
+- New Manual Trade: open it from the Trades page
+
+## Recommended First Workflow
+
+If you are new to the app, this is the simplest order to follow:
+
+1. Create your account and sign in.
+2. Open Settings and confirm your trading timezone and display timezone.
+3. If your symbols need special chart mappings, add them in Symbol Mappings.
+4. Open Trades and use Import to bring in your CSV files.
+5. Review imported trades and open individual trade details.
+6. Add notes, tags, fees, risk values, and media.
+7. Use Dashboard, Calendar, Analytics, and What-if to study your performance.
+8. Export a backup after you have useful data in the app.
+
+## Login And Registration
+
+### Register
+
+Use the Register page to create a new account.
+
+You will enter:
+
+- username
+- password
+- password confirmation
+- trading timezone
+
+If the passwords do not match, or the password is too short, the app will stop you before creating the account.
+
+### Sign In
+
+Use the Login page to access your account with your username and password.
+
+If your session expires, the app sends you back to the login page.
+
+## Dashboard
+
+The Dashboard is your main summary page.
+
+It shows:
+
+- total trades
+- net P&L
+- win rate
+- APPT
+- expectancy in R
+- equity curve
+- drawdown
+- daily APPT
+- daily win rate
+- performance by tag
+
+You can filter the dashboard by:
+
+- account
+- symbol
+- side
+- tag
+- date range
+
+The page has three tabs:
+
+### Overview
+
+Use this tab for your high-level performance picture.
+
+It includes:
+
+- equity curve
+- drawdown
+- APPT by day
+- win rate by day
+- performance by tag table
+
+### Time & Date
+
+Use this tab to see when you tend to trade best or worst.
+
+It groups results by:
+
+- day of week
+- time of day
+
+### Evolution
+
+Use this tab to study how your edge changes as more trades are added.
+
+It helps answer questions like:
+
+- Is my edge stable?
+- Is performance improving or fading?
+- Are recent trades behaving differently from older ones?
+
+## Trades
+
+The Trades page is the main list of all saved trades.
+
+It lets you:
+
+- browse all trades
+- filter trades
+- sort columns
+- move through pages of results
+- open a trade detail page
+- start an import
+- add a manual trade
+
+### Filters On The Trades Page
+
+You can filter by:
+
+- account
+- symbol
+- side
+- tag
+- date range
+
+Use Clear Filters to return to the full list.
+
+### Sorting And Table Columns
+
+You can sort the list by clicking table headers.
+
+Useful columns include:
+
+- date
+- symbol
+- side
+- quantity
+- entry
+- exit
+- net P&L
+- R-multiple
+- duration
+- tags
+- market-data status
+
+If a trade shows market data as available, chart data has already been cached for that trade.
+
+## Import Trades
+
+Open the Trades page and click Import.
+
+The import process is a guided wizard with four steps.
+
+### Step 1: Upload CSV Files
+
+You can drag and drop or click to select one or more CSV files.
+
+The current implementation supports:
+
+- NinjaTrader CSV exports
+- Quantower CSV exports
+
+### Step 2: Preview Parsed Executions
+
+After upload, the app shows a preview of the parsed executions.
+
+Review:
+
+- detected platform
+- file name
+- number of rows parsed
+- individual executions
+- warnings
+- parsing errors
+
+If there are row-level problems, they appear in a validation panel so you can decide whether to continue.
+
+### Step 3: Assign Fees And Initial Risk
+
+The app reconstructs trades from executions and then asks you to fill in:
+
+- fee or commission for each trade
+- initial risk for each trade
+
+You can enter values:
+
+- one trade at a time
+- in bulk for all trades
+
+This is especially useful if your source CSV does not include the values you want to track.
+
+### Step 4: Summary
+
+After finalizing the import, Janus Edge shows a summary of:
+
+- how many trades were created
+- winners, losers, and break-even trades
+- gross P&L
+- total fees
+- net P&L
+
+From there you can either:
+
+- import another file
+- go to the trade list
+
+## Add A Manual Trade
+
+Open the Trades page and click New Trade.
+
+Use this when you want to log a trade without importing a CSV file.
+
+You can enter:
+
+- symbol
+- long or short side
+- quantity
+- entry price
+- exit price
+- entry time
+- exit time
+- fee
+- initial risk
+- account name
+- notes
+
+After saving, the app opens the new trade detail page automatically.
+
+## Trade Detail Page
+
+Open any trade from the Trades list to see its detail page.
+
+This is where you do most of your journaling and review work.
+
+### Trade Summary
+
+At the top of the page you can review:
+
+- quantity
+- average entry and exit prices
+- gross P&L
+- fees
+- net P&L
+- initial risk
+- R-multiple
+- duration
+
+### Price Chart
+
+The chart shows the trade day with your executions plotted on top of market data.
+
+Use it to:
+
+- review context around entry and exit
+- switch chart interval inside the chart component
+- refresh market data if needed
+
+Important limitation:
+
+- intraday market data is only available for roughly the last two months
+
+If a chart does not load for a symbol, the most common fix is to check Symbol Mappings in Settings.
+
+### Media
+
+The Media section lets you attach files to a trade.
+
+You can:
+
+- drag and drop files
+- click to upload files
+- open attachments in a viewer
+- delete attachments
+
+Supported media includes common images and videos.
+
+### Fees & Risk
+
+This panel lets you edit:
+
+- fees
+- initial risk
+
+Use it when imported values were missing, inaccurate, or changed later.
+
+### Stop Analysis
+
+This panel lets you record:
+
+- a wishful stop
+- a target price
+
+This data is used by the What-if stop-management tools.
+
+In practical terms:
+
+- wishful stop = where you wish your stop had been
+- target price = the price you were aiming for
+
+These values help the app analyze whether a wider stop could have kept you in the trade.
+
+### Executions
+
+This section shows every execution that belongs to the trade, including:
+
+- timestamp
+- side
+- quantity
+- price
+- commission
+
+### Tags
+
+Use tags to label trades with ideas that matter to you.
+
+You can:
+
+- add an existing tag
+- remove a tag
+- create a new tag directly from the trade page
+
+Examples include setup names, mistakes, or market conditions.
+
+### Trade Notes
+
+Each trade supports two note areas:
+
+- Pre-Trade Plan
+- Post-Trade Review
+
+Use them to record what you planned, what happened, and what you learned.
+
+### Delete Trade
+
+The Delete button permanently removes the trade.
+
+Use it carefully.
+
+## Calendar
+
+The Calendar page shows a month view of your trading results.
+
+It includes:
+
+- a daily performance heatmap
+- monthly summary cards
+- optional filters for account, symbol, side, and tag
+
+You can move between months to review older periods.
+
+Helpful shortcut:
+
+- click any day in the calendar to open the Trades page filtered to that exact date
+
+## Analytics
+
+The Analytics page is for deeper performance study.
+
+It shows more detailed metric cards than the main dashboard.
+
+Use it to review:
+
+- results metrics
+- risk-normalized metrics
+- drawdown-related figures
+- profitability and consistency measures
+
+Many metrics include small info icons that explain what the number means.
+
+Use the same filter bar to focus on a specific:
+
+- account
+- symbol
+- side
+- tag
+- date range
+
+## What-If
+
+The What-if page has two tabs:
+
+- Simulator
+- Stop management
+
+Both tabs work with the filter bar at the top.
+
+### Simulator Tab
+
+The Simulator tab runs Monte Carlo style simulations.
+
+Use it to explore how your results might behave over many future trades.
+
+You can control:
+
+- simulation mode
+- starting equity
+- number of trades
+- risk per trade
+
+There are two modes:
+
+- Sampling: reuses your filtered historical trades
+- Parametric: uses the inputs you provide, such as win rate and win/loss ratio
+
+Use this section when you want to ask questions like:
+
+- What could my equity curve look like from here?
+- How much drawdown might I face?
+- What happens if my risk per trade changes?
+
+### Stop Management Tab
+
+This tab is designed for symbol-specific stop analysis.
+
+Important requirement:
+
+- you must select a symbol in the filters before this tab becomes useful
+
+It includes three parts.
+
+#### Wicked-Out Trades
+
+This list shows trades that were stopped out but may have moved back in your favor later.
+
+It helps you review:
+
+- wishful stop
+- target price
+- overshoot in R
+- whether 1-minute OHLC data is available
+
+#### Overshoot In R
+
+This section summarizes how far price moved past your stop before reversing.
+
+It shows statistics such as:
+
+- mean
+- median
+- P75
+- P90
+- P95
+- IQR
+
+Use this to estimate whether your stops are often too tight.
+
+#### What-If Calculator
+
+This tool simulates the effect of widening your stop.
+
+Use it to estimate how results might change if stopped-out trades had more room.
+
+## Settings
+
+The Settings page controls your account preferences and backup tools.
+
+It includes the following sections.
+
+### Profile
+
+Shows your current:
+
+- username
+- trading timezone
+- display timezone
+
+### Trading Timezone
+
+This is used to interpret timestamps from platforms that do not include timezone information clearly.
+
+If imported times look wrong, check this first.
+
+### Display Timezone
+
+This controls how times appear inside the app, including:
+
+- trade timestamps
+- chart times
+- other displayed dates and times
+
+### Simulation Starting Equity
+
+This sets the default starting balance used to prefill Monte Carlo simulations.
+
+### Symbol Mappings
+
+Use Symbol Mappings when an imported symbol does not automatically match a Yahoo Finance symbol for chart data.
+
+Each row lets you define:
+
+- normalized base symbol
+- Yahoo Finance symbol
+- dollar value per point
+
+Example use case:
+
+- your imported symbol starts with `MES`
+- you map it to `MES=F`
+
+If trade charts are missing for a symbol that should have data, this is the first place to check.
+
+### Backup
+
+This section lets you export and restore your data.
+
+#### Export Backup
+
+Use Export Backup to download a ZIP file containing your Janus Edge data.
+
+This is useful for:
+
+- personal backups
+- moving data between environments
+- keeping a recovery copy before major imports or edits
+
+#### Restore Backup
+
+Use Restore Backup to merge a previous ZIP backup into your current account.
+
+Important behavior:
+
+- restore merges into the current account
+- existing accounts, tags, and import batches are reused when possible
+- duplicate trades are skipped
+- after restore, the app shows a summary of what was created, reused, updated, or skipped
+
+This is not a full account replacement. It is a merge.
+
+### Change Password
+
+Use this section to change your password.
+
+You must enter:
+
+- current password
+- new password
+- confirmation of the new password
+
+## Common Tasks
+
+### Import A New Batch Of Trades
+
+1. Open Trades.
+2. Click Import.
+3. Upload one or more CSV files.
+4. Review the preview and any errors.
+5. Reconstruct trades.
+6. Fill in fees and initial risk.
+7. Finalize the import.
+8. Open the imported trades and review details.
+
+### Journal A Trade Properly
+
+1. Open a trade detail page.
+2. Review the chart and executions.
+3. Add or correct fees and initial risk.
+4. Add tags.
+5. Fill in Pre-Trade Plan and Post-Trade Review.
+6. Upload screenshots or videos if helpful.
+7. Add wishful stop and target price if you want to use stop-management analysis later.
+
+### Check A Bad Trading Day Quickly
+
+1. Open Calendar.
+2. Move to the month you want.
+3. Click the losing day.
+4. Review the filtered trade list.
+5. Open each trade detail page for notes, chart context, and execution review.
+
+### Study One Setup Or One Symbol
+
+1. Open Dashboard, Analytics, or What-if.
+2. Filter by symbol, tag, account, side, or date.
+3. Review the filtered charts and metrics.
+4. Use What-if for simulation or stop analysis when needed.
+
+## Practical Tips
+
+- Set your timezone correctly before importing large amounts of data.
+- If charts are missing for a symbol, check Symbol Mappings in Settings.
+- Add initial risk if you want meaningful R-multiples and risk-based analysis.
+- Use tags consistently so Dashboard and Analytics reports stay useful.
+- Use the Calendar page to jump directly into a specific day.
+- Export backups regularly, especially before large imports or cleanup work.
+- Treat Delete as permanent.
+
+## When Something Looks Wrong
+
+Try these checks first:
+
+- wrong timestamps: review Trading Timezone and Display Timezone in Settings
+- missing chart data: refresh the chart, then review Symbol Mappings
+- empty stop-management view: make sure you selected a symbol and saved wishful-stop data on trades
+- unexpected import issues: inspect the preview, warnings, and row-level parsing errors before finalizing
+- restore confusion: remember that restore merges into the current account instead of replacing it
+
+For setup and environment issues, see [Getting Started](./getting-started.md), [Configuration](./configuration.md), and [Troubleshooting](./troubleshooting.md).
