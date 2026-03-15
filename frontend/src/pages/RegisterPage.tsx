@@ -1,6 +1,6 @@
-import { BarChart3 } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { JanusEdgeLogo } from '../components/ui/JanusEdgeLogo';
 import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
 import { APP_NAME, TIMEZONES } from '../utils/constants';
@@ -45,8 +45,8 @@ export function RegisterPage() {
     <div className="flex min-h-screen items-center justify-center bg-gray-50 dark:bg-gray-900">
       <div className="w-full max-w-md">
         <div className="flex flex-col items-center mb-8">
-          <BarChart3 className="h-12 w-12 text-brand-600" />
-          <h1 className="mt-3 text-3xl font-bold text-gray-900 dark:text-gray-100">{APP_NAME}</h1>
+          <JanusEdgeLogo className="h-20 w-20" aria-hidden="true" />
+          <h1 className="font-app-brand mt-3 text-3xl text-gray-900 dark:text-gray-100">{APP_NAME}</h1>
           <p className="mt-1 text-gray-500 dark:text-gray-400">Create your account</p>
         </div>
         <form onSubmit={handleSubmit} className="card p-8 space-y-5">
