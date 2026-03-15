@@ -105,6 +105,31 @@ Default local URLs:
 - Backend API: `http://localhost:5000`
 - MinIO Console: `http://localhost:9001`
 
+### Updating An Existing Checkout
+
+If you already have the repository cloned, commit or stash local changes before updating.
+
+For the Docker-based stack:
+
+```bash
+git pull --rebase
+docker compose up -d --build
+```
+
+For mixed local development, pull the latest code, refresh dependencies, and restart the app processes:
+
+```bash
+git pull --rebase
+docker compose up mongo minio -d
+cd backend
+source .venv/bin/activate
+pip install -r requirements.txt
+cd ../frontend
+npm install
+```
+
+After that, restart the Flask backend and Vite frontend if they were already running.
+
 ## Documentation
 
 Long-form project documentation lives in [docs/README.md](./docs/README.md).

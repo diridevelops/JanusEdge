@@ -5,7 +5,7 @@ This folder contains the long-form project documentation for the repository.
 ## Documentation Map
 
 - [Getting Started](./getting-started.md)
-  Local setup options, Docker Compose usage, mixed local plus Docker workflow, and service URLs.
+  Local setup options, Docker Compose usage, mixed local plus Docker workflow, update steps for existing clones, and service URLs.
 - [Usage Guide](./usage.md)
   A non-technical walkthrough of every main section of the app and the most common daily workflows.
 - [Architecture Overview](./architecture/architecture.md)

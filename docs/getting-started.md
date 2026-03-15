@@ -73,6 +73,37 @@ This mixed mode uses:
 - Flask at `http://localhost:5000`
 - Vite at `http://localhost:5173`
 
+## Updating An Existing Checkout
+
+If you already have a local clone, commit or stash your local changes before you pull.
+
+### Docker Compose Stack
+
+Pull the latest code and rebuild the running stack:
+
+```bash
+git pull --rebase
+docker compose up -d --build
+```
+
+This recreates the backend and frontend containers with the latest code while keeping the named MongoDB and MinIO volumes intact.
+
+### Mixed Local App plus Docker Services
+
+Pull the latest code, refresh your dependencies, and restart the local app processes:
+
+```bash
+git pull --rebase
+docker compose up mongo minio -d
+cd backend
+source .venv/bin/activate
+pip install -r requirements.txt
+cd ../frontend
+npm install
+```
+
+If Flask or Vite were already running, stop and start them again after these commands so they pick up the new code.
+
 ## Environment Files
 
 The repository ships three example environment files:
