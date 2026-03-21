@@ -1,235 +1,463 @@
-"""Tests for symbol mapper and market data service."""
+"""Tests for symbol resolution, saved days, and dataset-backed OHLC."""
 
-from unittest.mock import patch
-from datetime import date
+from datetime import date, datetime, timezone
 from uuid import uuid4
 
-import pytest
-import pandas as pd
-
+from app.market_data.service import MarketDataService
 from app.market_data.symbol_mapper import (
     get_default_symbol_mappings,
-    map_to_yahoo,
+    resolve_market_data_symbol,
+    resolve_market_data_symbols,
 )
-from app.market_data.service import MarketDataService
-from app.models.user import create_user_doc
+
+
+def _register_and_login(client):
+    """Register a test user and return authorization headers."""
+
+    username = f"marketdata-{uuid4().hex}"
+
+    register_response = client.post(
+        "/api/auth/register",
+        json={
+            "username": username,
+            "password": "TestPass123!",
+            "timezone": "America/New_York",
+        },
+    )
+    response = client.post(
+        "/api/auth/login",
+        json={
+            "username": username,
+            "password": "TestPass123!",
+        },
+    )
+    token = response.get_json()["token"]
+    return {
+        "Authorization": f"Bearer {token}"
+    }, register_response.get_json()["user"]["id"]
 
 
 class TestSymbolMapper:
-    """Tests for symbol mapping."""
+    """Tests for market-data symbol resolution."""
 
-    def test_ninjatrader_mes(self):
+    def test_defaults_to_self_without_explicit_mapping(self):
         assert (
-            map_to_yahoo("MES", "MES 03-26") == "MES=F"
+            resolve_market_data_symbol("MES", "MES 03-26")
+            == "MES 03-26"
         )
+        assert resolve_market_data_symbol("mes") == "MES"
 
-    def test_ninjatrader_es(self):
-        assert (
-            map_to_yahoo("ES", "ES 03-26") == "ES=F"
-        )
-
-    def test_quantower_mes(self):
-        assert (
-            map_to_yahoo("MES", "MESM25") == "MES=F"
-        )
-
-    def test_quantower_nq(self):
-        assert (
-            map_to_yahoo("NQ", "NQH26") == "NQ=F"
-        )
-
-    def test_base_symbol_fallback(self):
-        assert map_to_yahoo("MES") == "MES=F"
-
-    def test_unknown_symbol_gets_futures_suffix(self):
-        assert map_to_yahoo("ZB") == "ZB=F"
-
-    def test_custom_mapping_overrides_default(self):
-        symbol_mappings = get_default_symbol_mappings()
-        symbol_mappings["MES"] = {
-            "yahoo_symbol": "MES-CUSTOM=F",
-            "dollar_value_per_point": 7.5,
+    def test_applies_explicit_mapping_preserving_suffixes(self):
+        market_data_mappings = {
+            "M": "SHOULD_NOT_MATCH",
+            "MES": "ES",
         }
 
         assert (
-            map_to_yahoo(
+            resolve_market_data_symbol(
                 "MES",
                 "MES 03-26",
-                symbol_mappings,
+                market_data_mappings,
             )
-            == "MES-CUSTOM=F"
+            == "ES 03-26"
         )
-
-    def test_longest_prefix_match_prefers_longer_base_symbol(self):
-        symbol_mappings = get_default_symbol_mappings()
-        symbol_mappings["ME"] = {
-            "yahoo_symbol": "ME=F",
-            "dollar_value_per_point": 1.0,
-        }
-
         assert (
-            map_to_yahoo(
+            resolve_market_data_symbol(
                 "MES",
-                "MESM25",
-                symbol_mappings,
+                "MESM26",
+                market_data_mappings,
             )
-            == "MES=F"
+            == "ESM26"
         )
+
+    def test_returns_explicit_and_original_symbol_aliases(self):
+        assert resolve_market_data_symbols(
+            "MES",
+            "MES 03-26",
+            {"MES": "ES"},
+        ) == [
+            "ES 03-26",
+            "MES 03-26",
+            "ES",
+            "MES",
+        ]
+
+    def test_default_symbol_mapping_keeps_point_values_only(self):
+        mappings = get_default_symbol_mappings()
+
+        assert mappings["MES"] == {"dollar_value_per_point": 5.0}
 
 
 class TestMarketDataService:
-    """Tests for MarketDataService with mocked yfinance."""
+    """Tests for reading and regenerating stored OHLC data."""
 
-    def _create_user(
+    def test_get_ohlc_reads_precomputed_candles(
         self,
         app,
-        symbol_mappings: dict | None = None,
-    ) -> str:
-        """Insert a user for market data service tests."""
-        from app.extensions import mongo
-
-        with app.app_context():
-            result = mongo.db.users.insert_one(
-                create_user_doc(
-                    username=(
-                        f"market-data-user-{uuid4().hex}"
+        seed_market_data_dataset,
+    ):
+        trading_day = date(2026, 1, 5)
+        seed_market_data_dataset(
+            symbol="MES 03-26",
+            raw_symbol="MES 03-26",
+            dataset_type="candles",
+            timeframe="5m",
+            trading_day=trading_day,
+            rows=[
+                {
+                    "time": int(
+                        datetime(
+                            2026,
+                            1,
+                            5,
+                            10,
+                            0,
+                            tzinfo=timezone.utc,
+                        ).timestamp()
                     ),
-                    password_hash="hashed",
-                    timezone="America/New_York",
-                    symbol_mappings=symbol_mappings,
-                )
-            )
-        return str(result.inserted_id)
-
-    @patch("app.market_data.service.yf")
-    def test_fetch_returns_ohlc(self, mock_yf, app):
-        """Test fetching data from yfinance 1.1.0."""
-        # yfinance 1.1.0 with multi_level_index=False
-        # returns flat column names.
-        idx = pd.DatetimeIndex([
-            "2026-01-05 10:00:00",
-            "2026-01-05 10:05:00",
-        ])
-        data = pd.DataFrame(
-            {
-                "Open": [5000.0, 5005.0],
-                "High": [5010.0, 5015.0],
-                "Low": [4990.0, 4995.0],
-                "Close": [5005.0, 5010.0],
-                "Volume": [100.0, 150.0],
-            },
-            index=idx,
+                    "open": 5000.0,
+                    "high": 5006.0,
+                    "low": 4998.0,
+                    "close": 5004.0,
+                    "volume": 10,
+                },
+                {
+                    "time": int(
+                        datetime(
+                            2026,
+                            1,
+                            5,
+                            10,
+                            5,
+                            tzinfo=timezone.utc,
+                        ).timestamp()
+                    ),
+                    "open": 5004.0,
+                    "high": 5008.0,
+                    "low": 5002.0,
+                    "close": 5007.0,
+                    "volume": 12,
+                },
+            ],
         )
-        mock_yf.download.return_value = data
-        user_id = self._create_user(app)
 
         with app.app_context():
-            service = MarketDataService()
-            ohlc = service.get_ohlc(
-            user_id=user_id,
+            ohlc = MarketDataService().get_ohlc(
+                user_id="ignored",
                 symbol="MES",
+                raw_symbol="MES 03-26",
                 interval="5m",
-                start="2026-01-05",
-                end="2026-01-05",
+                start="2026-01-05T10:00:00+00:00",
+                end="2026-01-05T10:10:00+00:00",
             )
 
         assert len(ohlc) == 2
         assert ohlc[0]["open"] == 5000.0
-        assert ohlc[1]["close"] == 5010.0
+        assert ohlc[1]["close"] == 5007.0
 
-    @patch("app.market_data.service.yf")
-    def test_cache_hit_avoids_yfinance(
-        self, mock_yf, app
+    def test_get_ohlc_reads_legacy_symbol_dataset_via_alias_lookup(
+        self,
+        app,
+        client,
+        seed_market_data_dataset,
     ):
-        """Second request should serve from cache."""
-        idx = pd.DatetimeIndex([
-            "2026-01-05 10:00:00",
-        ])
-        data = pd.DataFrame(
-            {
-                "Open": [5000.0],
-                "High": [5010.0],
-                "Low": [4990.0],
-                "Close": [5005.0],
-                "Volume": [100.0],
-            },
-            index=idx,
+        headers, user_id = _register_and_login(client)
+        update_response = client.put(
+            "/api/auth/market-data-mappings",
+            headers=headers,
+            json={"market_data_mappings": {"MES": "ES"}},
         )
-        mock_yf.download.return_value = data
-        user_id = self._create_user(app)
+        assert update_response.status_code == 200
+
+        trading_day = date(2026, 1, 5)
+        seed_market_data_dataset(
+            symbol="ES 03-26",
+            raw_symbol="ES 03-26",
+            dataset_type="candles",
+            timeframe="5m",
+            trading_day=trading_day,
+            rows=[
+                {
+                    "time": int(
+                        datetime(
+                            2026,
+                            1,
+                            5,
+                            10,
+                            0,
+                            tzinfo=timezone.utc,
+                        ).timestamp()
+                    ),
+                    "open": 5000.0,
+                    "high": 5006.0,
+                    "low": 4998.0,
+                    "close": 5004.0,
+                    "volume": 10,
+                }
+            ],
+        )
 
         with app.app_context():
-            service = MarketDataService()
-            # First call — fetches from yfinance
-            ohlc1 = service.get_ohlc(
-            user_id=user_id,
-                symbol="MES",
-                interval="5m",
-                start="2026-01-05",
-                end="2026-01-05",
-            )
-            call_count_1 = mock_yf.download.call_count
-
-            # Second call — should use cache
-            ohlc2 = service.get_ohlc(
-                user_id=user_id,
-                symbol="MES",
-                interval="5m",
-                start="2026-01-05",
-                end="2026-01-05",
-            )
-            call_count_2 = mock_yf.download.call_count
-
-        assert len(ohlc1) > 0
-        assert len(ohlc2) > 0
-        # yfinance should not be called a second time
-        assert call_count_2 == call_count_1
-
-    @patch("app.market_data.service.yf")
-    def test_empty_data_returns_empty(
-        self, mock_yf, app
-    ):
-        """Empty yfinance response returns empty list."""
-        mock_yf.download.return_value = pd.DataFrame()
-        user_id = self._create_user(app)
-
-        with app.app_context():
-            service = MarketDataService()
-            ohlc = service.get_ohlc(
-                user_id=user_id,
-                symbol="MES",
-                interval="5m",
-                start="2026-01-05",
-                end="2026-01-05",
-            )
-
-        assert ohlc == []
-
-    @patch("app.market_data.service.yf")
-    def test_fetch_uses_user_symbol_mappings(
-        self, mock_yf, app
-    ):
-        """Service resolves yfinance tickers from user settings."""
-        mock_yf.download.return_value = pd.DataFrame()
-        symbol_mappings = get_default_symbol_mappings()
-        symbol_mappings["MES"] = {
-            "yahoo_symbol": "MES-CUSTOM=F",
-            "dollar_value_per_point": 7.5,
-        }
-        user_id = self._create_user(app, symbol_mappings)
-
-        with app.app_context():
-            service = MarketDataService()
-            service.get_ohlc(
+            ohlc = MarketDataService().get_ohlc(
                 user_id=user_id,
                 symbol="MES",
                 raw_symbol="MES 03-26",
                 interval="5m",
-                start="2026-01-05",
-                end="2026-01-05",
+                start="2026-01-05T10:00:00+00:00",
+                end="2026-01-05T10:05:00+00:00",
             )
 
-        assert (
-            mock_yf.download.call_args.kwargs["tickers"]
-            == "MES-CUSTOM=F"
+        assert len(ohlc) == 1
+        assert ohlc[0]["close"] == 5004.0
+
+    def test_force_refresh_regenerates_candles_from_ticks(
+        self,
+        app,
+        client,
+        seed_market_data_dataset,
+    ):
+        headers, user_id = _register_and_login(client)
+        update_response = client.put(
+            "/api/auth/market-data-mappings",
+            headers=headers,
+            json={"market_data_mappings": {"MES": "ES"}},
+        )
+        assert update_response.status_code == 200
+
+        trading_day = date(2026, 1, 5)
+        seed_market_data_dataset(
+            symbol="ES 03-26",
+            raw_symbol="ES 03-26",
+            dataset_type="ticks",
+            trading_day=trading_day,
+            rows=[
+                {
+                    "timestamp": "2026-01-05T10:00:00+00:00",
+                    "last_price": 5000.0,
+                    "bid_price": 4999.75,
+                    "ask_price": 5000.25,
+                    "size": 1,
+                },
+                {
+                    "timestamp": "2026-01-05T10:02:00+00:00",
+                    "last_price": 5003.0,
+                    "bid_price": 5002.75,
+                    "ask_price": 5003.25,
+                    "size": 2,
+                },
+                {
+                    "timestamp": "2026-01-05T10:04:00+00:00",
+                    "last_price": 5001.0,
+                    "bid_price": 5000.75,
+                    "ask_price": 5001.25,
+                    "size": 3,
+                },
+            ],
+        )
+        seed_market_data_dataset(
+            symbol="ES 03-26",
+            raw_symbol="ES 03-26",
+            dataset_type="candles",
+            timeframe="5m",
+            trading_day=trading_day,
+            rows=[
+                {
+                    "time": int(
+                        datetime(
+                            2026,
+                            1,
+                            5,
+                            10,
+                            0,
+                            tzinfo=timezone.utc,
+                        ).timestamp()
+                    ),
+                    "open": 1.0,
+                    "high": 1.0,
+                    "low": 1.0,
+                    "close": 1.0,
+                    "volume": 1,
+                }
+            ],
+        )
+
+        with app.app_context():
+            ohlc = MarketDataService().get_ohlc(
+                user_id=user_id,
+                symbol="MES",
+                raw_symbol="MES 03-26",
+                interval="5m",
+                start="2026-01-05T10:00:00+00:00",
+                end="2026-01-05T10:05:00+00:00",
+                force_refresh=True,
+            )
+
+        assert ohlc == [
+            {
+                "time": int(
+                    datetime(
+                        2026,
+                        1,
+                        5,
+                        10,
+                        0,
+                        tzinfo=timezone.utc,
+                    ).timestamp()
+                ),
+                "open": 5000.0,
+                "high": 5003.0,
+                "low": 5000.0,
+                "close": 5001.0,
+                "volume": 6,
+            }
+        ]
+
+    def test_get_ohlc_returns_empty_when_no_dataset_exists(
+        self,
+        app,
+    ):
+        with app.app_context():
+            ohlc = MarketDataService().get_ohlc(
+                user_id="ignored",
+                symbol="MES",
+                raw_symbol="MES 03-26",
+                interval="5m",
+                start="2026-01-05T10:00:00+00:00",
+                end="2026-01-05T10:05:00+00:00",
+            )
+
+        assert ohlc == []
+
+
+class TestMarketDataRoutes:
+    """Tests for authenticated market-data summary routes."""
+
+    def test_saved_days_returns_symbol_date_summaries(
+        self,
+        client,
+        seed_market_data_dataset,
+    ):
+        headers, _ = _register_and_login(client)
+
+        seed_market_data_dataset(
+            symbol="ES 06-26",
+            raw_symbol="ES 06-26",
+            dataset_type="ticks",
+            trading_day=date(2026, 1, 6),
+            rows=[
+                {
+                    "timestamp": "2026-01-06T14:30:00+00:00",
+                    "last_price": 5000.0,
+                    "bid_price": 4999.75,
+                    "ask_price": 5000.25,
+                    "size": 1,
+                }
+            ],
+        )
+        seed_market_data_dataset(
+            symbol="ES 06-26",
+            raw_symbol="ES 06-26",
+            dataset_type="candles",
+            timeframe="1m",
+            trading_day=date(2026, 1, 6),
+            rows=[
+                {
+                    "time": int(
+                        datetime(
+                            2026,
+                            1,
+                            6,
+                            14,
+                            30,
+                            tzinfo=timezone.utc,
+                        ).timestamp()
+                    ),
+                    "open": 5000.0,
+                    "high": 5001.0,
+                    "low": 4999.0,
+                    "close": 5000.5,
+                    "volume": 2,
+                }
+            ],
+        )
+        seed_market_data_dataset(
+            symbol="ES 06-26",
+            raw_symbol="ES 06-26",
+            dataset_type="candles",
+            timeframe="5m",
+            trading_day=date(2026, 1, 6),
+            rows=[
+                {
+                    "time": int(
+                        datetime(
+                            2026,
+                            1,
+                            6,
+                            14,
+                            30,
+                            tzinfo=timezone.utc,
+                        ).timestamp()
+                    ),
+                    "open": 5000.0,
+                    "high": 5002.0,
+                    "low": 4999.0,
+                    "close": 5001.0,
+                    "volume": 5,
+                }
+            ],
+        )
+        seed_market_data_dataset(
+            symbol="NQ 06-26",
+            raw_symbol="NQ 06-26",
+            dataset_type="candles",
+            timeframe="1m",
+            trading_day=date(2026, 1, 5),
+            rows=[
+                {
+                    "time": int(
+                        datetime(
+                            2026,
+                            1,
+                            5,
+                            14,
+                            30,
+                            tzinfo=timezone.utc,
+                        ).timestamp()
+                    ),
+                    "open": 21000.0,
+                    "high": 21010.0,
+                    "low": 20990.0,
+                    "close": 21005.0,
+                    "volume": 3,
+                }
+            ],
+        )
+
+        response = client.get(
+            "/api/market-data/saved-days",
+            headers=headers,
+        )
+
+        assert response.status_code == 200
+        payload = response.get_json()
+        assert payload["saved_days"] == [
+            {
+                "date": "2026-01-06",
+                "symbol": "ES 06-26",
+                "raw_symbol": "ES 06-26",
+                "available_timeframes": ["1m", "5m"],
+                "has_ticks": True,
+                "updated_at": payload["saved_days"][0]["updated_at"],
+            },
+            {
+                "date": "2026-01-05",
+                "symbol": "NQ 06-26",
+                "raw_symbol": "NQ 06-26",
+                "available_timeframes": ["1m"],
+                "has_ticks": False,
+                "updated_at": payload["saved_days"][1]["updated_at"],
+            },
+        ]
+        assert payload["saved_days"][0]["updated_at"].endswith(
+            "+00:00"
         )

@@ -155,8 +155,11 @@ export function TradeListPage() {
           descriptionClassName="mt-0.5 text-sm text-gray-500 dark:text-gray-400"
         />
         <div className="flex items-center gap-2">
+          <Link to="/market-data/import" className="btn-secondary text-sm inline-flex items-center gap-1">
+            Market Data <Upload className="h-4 w-4" />
+          </Link>
           <Link to="/import" className="btn-primary text-sm inline-flex items-center gap-1">
-            Import <Upload className="h-4 w-4" />
+            Import Trades <Upload className="h-4 w-4" />
           </Link>
           <Link to="/trades/new" className="btn-primary inline-flex items-center gap-1.5">
             <Plus className="h-4 w-4" />

@@ -13,6 +13,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { ImportPage } from './pages/ImportPage';
 import { LoginPage } from './pages/LoginPage';
 import { ManualTradePage } from './pages/ManualTradePage';
+import { MarketDataImportPage } from './pages/MarketDataImportPage';
 import { NotFoundPage } from './pages/NotFoundPage';
 import { RegisterPage } from './pages/RegisterPage';
 import { SettingsPage } from './pages/SettingsPage';
@@ -49,6 +50,7 @@ export default function App() {
                     <Route path="/trades/new" element={<ManualTradePage />} />
                     <Route path="/trades/:id" element={<TradeDetailPage />} />
                     <Route path="/import" element={<ImportPage />} />
+                    <Route path="/market-data/import" element={<MarketDataImportPage />} />
                     <Route path="/analytics" element={<AnalyticsPage />} />
                     <Route path="/calendar" element={<CalendarPage />} />
                     <Route path="/whatif" element={<WhatIfPage />} />

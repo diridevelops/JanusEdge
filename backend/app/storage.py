@@ -9,7 +9,19 @@ logger = logging.getLogger(__name__)
 
 # Module-level singleton
 _client: Minio | None = None
-_bucket: str = ""
+_media_bucket: str = ""
+_market_data_bucket: str = ""
+
+
+def _ensure_bucket(client: Minio, bucket: str) -> None:
+    """Create a bucket when it does not already exist."""
+
+    if not client.bucket_exists(bucket):
+        client.make_bucket(bucket)
+        logger.info("Created MinIO bucket: %s", bucket)
+        return
+
+    logger.info("MinIO bucket already exists: %s", bucket)
 
 
 def init_storage(app: Flask) -> None:
@@ -20,13 +32,16 @@ def init_storage(app: Flask) -> None:
     Parameters:
         app: The Flask application instance.
     """
-    global _client, _bucket
+    global _client, _media_bucket, _market_data_bucket
 
     endpoint = app.config["MINIO_ENDPOINT"]
     access_key = app.config["MINIO_ACCESS_KEY"]
     secret_key = app.config["MINIO_SECRET_KEY"]
     use_ssl = app.config.get("MINIO_USE_SSL", False)
-    _bucket = app.config["MINIO_BUCKET"]
+    _media_bucket = app.config["MINIO_BUCKET"]
+    _market_data_bucket = app.config[
+        "MINIO_MARKET_DATA_BUCKET"
+    ]
 
     _client = Minio(
         endpoint,
@@ -35,14 +50,8 @@ def init_storage(app: Flask) -> None:
         secure=use_ssl,
     )
 
-    # Create the bucket if it does not exist
-    if not _client.bucket_exists(_bucket):
-        _client.make_bucket(_bucket)
-        logger.info("Created MinIO bucket: %s", _bucket)
-    else:
-        logger.info(
-            "MinIO bucket already exists: %s", _bucket
-        )
+    _ensure_bucket(_client, _media_bucket)
+    _ensure_bucket(_client, _market_data_bucket)
 
 
 def get_client() -> Minio:
@@ -67,9 +76,20 @@ def get_bucket() -> str:
     Raises:
         RuntimeError: If called before init_storage.
     """
-    if not _bucket:
+    if not _media_bucket:
         raise RuntimeError(
             "MinIO bucket not configured. "
             "Call init_storage(app) first."
         )
-    return _bucket
+    return _media_bucket
+
+
+def get_market_data_bucket() -> str:
+    """Return the configured market-data bucket name."""
+
+    if not _market_data_bucket:
+        raise RuntimeError(
+            "Market-data bucket not configured. "
+            "Call init_storage(app) first."
+        )
+    return _market_data_bucket

@@ -1,10 +1,10 @@
 """Tests for media attachment routes and service layer."""
 
 from io import BytesIO
-from unittest.mock import MagicMock, patch
 
 import pytest
 
+import app.storage as storage_module
 from app import create_app
 from config import TestingConfig
 
@@ -13,17 +13,11 @@ from config import TestingConfig
 
 
 @pytest.fixture
-def app():
-    """Create a test Flask application with MinIO mocked."""
-    with patch("app.storage.Minio") as MockMinio:
-        mock_client = MagicMock()
-        mock_client.bucket_exists.return_value = True
-        MockMinio.return_value = mock_client
-
-        application = create_app(TestingConfig)
-        # Expose the mock so tests can inspect calls
-        application._minio_mock = mock_client
-        yield application
+def app(patch_minio):
+    """Create a test Flask application with shared MinIO stub."""
+    application = create_app(TestingConfig)
+    application._minio_mock = storage_module.get_client()
+    yield application
 
 
 @pytest.fixture
@@ -377,8 +371,9 @@ class TestGetMediaUrl:
         self, client, app
     ):
         """Get URL returns the presigned link."""
-        app._minio_mock.presigned_get_object\
-            .return_value = "http://minio:9000/signed"
+        app._minio_mock.presigned_get_object.side_effect = (
+            lambda *args, **kwargs: "http://minio:9000/signed"
+        )
 
         token = _register_and_login(client)
         trade_id = _create_trade(client, token)

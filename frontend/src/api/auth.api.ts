@@ -3,6 +3,7 @@ import type {
   AuthResponse,
   ExportBackupFile,
   LoginRequest,
+  MarketDataMappings,
   RegisterRequest,
   RestoreBackupResponse,
   SymbolMappings,
@@ -107,6 +108,16 @@ export async function updateSymbolMappings(
 ): Promise<User> {
   const res = await apiClient.put<User>('/auth/symbol-mappings', {
     symbol_mappings: symbolMappings,
+  });
+  return res.data;
+}
+
+/** Update the current user's market-data symbol mappings. */
+export async function updateMarketDataMappings(
+  marketDataMappings: MarketDataMappings
+): Promise<User> {
+  const res = await apiClient.put<User>('/auth/market-data-mappings', {
+    market_data_mappings: marketDataMappings,
   });
   return res.data;
 }

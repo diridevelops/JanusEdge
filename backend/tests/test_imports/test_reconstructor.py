@@ -55,7 +55,6 @@ class TestGetPointValue:
     def test_custom_mapping_point_value(self):
         symbol_mappings = get_default_symbol_mappings()
         symbol_mappings["MES"] = {
-            "yahoo_symbol": "MES-CUSTOM=F",
             "dollar_value_per_point": 12.5,
         }
 
@@ -289,7 +288,6 @@ class TestReconstructTrades:
     def test_reconstruct_uses_custom_point_value_mapping(self):
         symbol_mappings = get_default_symbol_mappings()
         symbol_mappings["MES"] = {
-            "yahoo_symbol": "MES-CUSTOM=F",
             "dollar_value_per_point": 10.0,
         }
         executions = [

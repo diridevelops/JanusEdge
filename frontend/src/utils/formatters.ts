@@ -94,6 +94,31 @@ export function formatDateTime(
 }
 
 /**
+ * Format an ISO date string for display, including the rendered timezone label.
+ *
+ * @param isoString - ISO 8601 date string.
+ * @returns Formatted date string (e.g., "Jan 15, 2025 10:30 AM EST").
+ */
+export function formatDateTimeWithTimeZone(
+  isoString: string,
+  timezone?: string
+): string {
+  const opts: Intl.DateTimeFormatOptions = {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true,
+    timeZoneName: 'short',
+  };
+  if (timezone) {
+    opts.timeZone = timezone;
+  }
+  return new Date(isoString).toLocaleString('en-US', opts);
+}
+
+/**
  * Format an ISO date string as date only.
  *
  * @param isoString - ISO 8601 date string.

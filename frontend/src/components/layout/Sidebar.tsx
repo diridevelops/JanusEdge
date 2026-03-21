@@ -1,6 +1,7 @@
 import {
   BarChart3,
   Calendar,
+  Database,
   FlaskConical,
   LayoutDashboard,
   List,
@@ -11,6 +12,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 const navItems = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/trades', label: 'Trades', icon: List },
+  { to: '/market-data/import', label: 'Market Data', icon: Database },
   { to: '/calendar', label: 'Calendar', icon: Calendar },
   { to: '/analytics', label: 'Analytics', icon: BarChart3 },
   { to: '/whatif', label: 'What-if', icon: FlaskConical },
@@ -26,6 +28,7 @@ export function Sidebar() {
       <nav className="flex-1 space-y-1 px-3 py-4">
         {navItems.map(({ to, label, icon: Icon }) => {
           const isTradesEntry = to === '/trades';
+          const isMarketDataEntry = to === '/market-data/import';
 
           return (
             <NavLink
@@ -35,7 +38,9 @@ export function Sidebar() {
               className={({ isActive }) => {
                 const showAsActive = isTradesEntry
                   ? isActive || location.pathname === '/import'
-                  : isActive;
+                  : isMarketDataEntry
+                    ? isActive || location.pathname.startsWith('/market-data')
+                    : isActive;
 
                 return `flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors ${
                   showAsActive

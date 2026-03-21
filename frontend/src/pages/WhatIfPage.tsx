@@ -576,7 +576,7 @@ export function WhatIfPage() {
                 {woLoading ? (
                   'Loading…'
                 ) : (
-                  `${woTrades.length} trade${woTrades.length !== 1 ? 's' : ''} (${woWithData} with data, ${woMissing} missing OHLC)`
+                  `${woTrades.length} trade${woTrades.length !== 1 ? 's' : ''} (${woWithData} with market data, ${woMissing} missing market data)`
                 )}
               </span>
             </button>
@@ -603,7 +603,7 @@ export function WhatIfPage() {
                           <th className="px-4 py-2 text-right">Wishful Stop</th>
                           <th className="px-4 py-2 text-right">Target</th>
                           <th className="px-4 py-2 text-right">Overshoot</th>
-                          <th className="px-4 py-2 text-center">OHLC</th>
+                          <th className="px-4 py-2 text-center">Market Data</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -649,9 +649,9 @@ export function WhatIfPage() {
                               </td>
                               <td className="px-4 py-2 text-center">
                                 {t.has_ohlc_data ? (
-                                  <span className="text-green-600 dark:text-green-400" title="1-min OHLC available">✓</span>
+                                  <span className="text-green-600 dark:text-green-400" title="Market data available">✓</span>
                                 ) : (
-                                  <span className="text-amber-500 dark:text-amber-400" title="Missing 1-min OHLC">⚠</span>
+                                  <span className="text-amber-500 dark:text-amber-400" title="Missing market data">⚠</span>
                                 )}
                               </td>
                             </tr>
@@ -748,7 +748,7 @@ export function WhatIfPage() {
                 text={
                   'Simulate widening your stop across all trades:\n' +
                   '- Winners keep their P&L.\n' +
-                  '- Losers with a target price and 1-min OHLC data ' +
+                  '- Losers with a target price and stored market data ' +
                   'are replayed with the wider stop to check if they would have reached the target.'
                 }
                 widthClass="w-80"

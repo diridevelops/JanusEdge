@@ -1,15 +1,16 @@
-"""Market data cache repository."""
+"""Market-data dataset metadata repository."""
 
-from typing import Iterable, List
+from collections.abc import Iterable
+from typing import Any, List
 from datetime import date, datetime
 
 from app.repositories.base import BaseRepository
 
 
 class MarketDataRepository(BaseRepository):
-    """Repository for market_data_cache collection."""
+    """Repository for market_data_datasets collection."""
 
-    collection_name = "market_data_cache"
+    collection_name = "market_data_datasets"
 
     @staticmethod
     def _to_datetime(d):
@@ -20,29 +21,84 @@ class MarketDataRepository(BaseRepository):
             return datetime(d.year, d.month, d.day)
         return d
 
+    @staticmethod
+    def _normalize_symbol_filters(
+        symbols: str | Iterable[str],
+    ) -> list[str]:
+        """Normalize symbol filters into a unique ordered list."""
+
+        if isinstance(symbols, str):
+            values = [symbols]
+        else:
+            values = list(symbols)
+
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            if not value or value in seen:
+                continue
+            normalized.append(value)
+            seen.add(value)
+        return normalized
+
+    @staticmethod
+    def _symbol_priority(
+        value: str,
+        ordered_values: list[str],
+    ) -> int:
+        """Return the priority index for the given symbol."""
+
+        try:
+            return ordered_values.index(value)
+        except ValueError:
+            return len(ordered_values)
+
+    def _dedupe_documents_by_symbol_priority(
+        self,
+        documents: list[dict],
+        symbol_order: list[str],
+        *,
+        key_builder,
+    ) -> list[dict]:
+        """Keep the highest-priority symbol variant per logical dataset."""
+
+        selected: dict[Any, dict] = {}
+        for document in documents:
+            key = key_builder(document)
+            existing = selected.get(key)
+            if existing is None:
+                selected[key] = document
+                continue
+
+            if self._symbol_priority(
+                document.get("symbol", ""),
+                symbol_order,
+            ) < self._symbol_priority(
+                existing.get("symbol", ""),
+                symbol_order,
+            ):
+                selected[key] = document
+
+        return list(selected.values())
+
     def find_cached(
         self,
-        symbol: str,
+        symbol: str | Iterable[str],
         interval: str,
         start_date,
         end_date,
     ) -> List[dict]:
-        """
-        Find cached OHLC data for a date range.
+        """Return candle dataset metadata for a date range."""
+        symbols = self._normalize_symbol_filters(symbol)
+        if not symbols:
+            return []
 
-        Parameters:
-            symbol: yfinance ticker.
-            interval: Time interval.
-            start_date: Start date.
-            end_date: End date.
-
-        Returns:
-            List of cached data documents.
-        """
-        return self.find_many(
+        documents = self.find_many(
             {
-                "symbol": symbol,
-                "interval": interval,
+                "symbol": {"$in": symbols},
+                "dataset_type": "candles",
+                "timeframe": interval,
+                "status": "ready",
                 "date": {
                     "$gte": self._to_datetime(
                         start_date
@@ -50,8 +106,15 @@ class MarketDataRepository(BaseRepository):
                     "$lte": self._to_datetime(end_date),
                 },
             },
-            sort=[("date", 1)],
+            sort=[("date", 1), ("symbol", 1)],
         )
+        deduped = self._dedupe_documents_by_symbol_priority(
+            documents,
+            symbols,
+            key_builder=lambda document: document["date"],
+        )
+        deduped.sort(key=lambda document: document["date"])
+        return deduped
 
     def upsert_cache(
         self,
@@ -61,49 +124,30 @@ class MarketDataRepository(BaseRepository):
         ohlc: list,
         bar_count: int,
     ) -> None:
-        """
-        Insert or update cached OHLC data.
-
-        Parameters:
-            symbol: yfinance ticker.
-            interval: Time interval.
-            cache_date: The trading day.
-            ohlc: List of OHLC dicts.
-            bar_count: Number of candles.
-        """
-        from app.utils.datetime_utils import utc_now
-
-        dt = self._to_datetime(cache_date)
-        self.collection.update_one(
-            {
-                "symbol": symbol,
-                "interval": interval,
-                "date": dt,
-            },
-            {
-                "$set": {
-                    "ohlc": ohlc,
-                    "bar_count": bar_count,
-                    "fetched_at": utc_now(),
-                    "source": "yfinance",
-                }
-            },
-            upsert=True,
+        """Retained for compatibility; use upsert_dataset_document."""
+        raise NotImplementedError(
+            "Embedded OHLC cache is no longer supported."
         )
 
     def has_cached_day(
         self,
-        symbol: str,
+        symbol: str | Iterable[str],
         interval: str,
         cache_date,
     ) -> bool:
-        """Return True if cached data exists for symbol/interval/day."""
+        """Return True if candle metadata exists for symbol/day."""
         dt = self._to_datetime(cache_date)
+        symbols = self._normalize_symbol_filters(symbol)
+        if not symbols:
+            return False
+
         doc = self.find_one(
             {
-                "symbol": symbol,
-                "interval": interval,
+                "symbol": {"$in": symbols},
+                "dataset_type": "candles",
+                "timeframe": interval,
                 "date": dt,
+                "status": "ready",
             }
         )
         return doc is not None
@@ -115,22 +159,12 @@ class MarketDataRepository(BaseRepository):
         start_date,
         end_date,
     ) -> int:
-        """
-        Delete cached OHLC data for a date range.
-
-        Parameters:
-            symbol: yfinance ticker.
-            interval: Time interval.
-            start_date: Start date.
-            end_date: End date.
-
-        Returns:
-            Number of deleted documents.
-        """
+        """Delete candle metadata for a date range."""
         result = self.collection.delete_many(
             {
                 "symbol": symbol,
-                "interval": interval,
+                "dataset_type": "candles",
+                "timeframe": interval,
                 "date": {
                     "$gte": self._to_datetime(
                         start_date
@@ -148,33 +182,130 @@ class MarketDataRepository(BaseRepository):
         symbols: Iterable[str],
         cache_dates: Iterable[date],
     ) -> List[dict]:
-        """Return cached slices for the given symbols and dates."""
-        symbols = list(symbols)
+        """Return dataset metadata slices for the given symbols and dates."""
+        symbols = self._normalize_symbol_filters(symbols)
         cache_dates = [self._to_datetime(day) for day in cache_dates]
         if not symbols or not cache_dates:
             return []
-        return self.find_many(
+        documents = self.find_many(
             {
                 "symbol": {"$in": symbols},
                 "date": {"$in": cache_dates},
+                "status": "ready",
             },
-            sort=[("symbol", 1), ("interval", 1), ("date", 1)],
+            sort=[
+                ("symbol", 1),
+                ("dataset_type", 1),
+                ("timeframe", 1),
+                ("date", 1),
+            ],
+        )
+        deduped = self._dedupe_documents_by_symbol_priority(
+            documents,
+            symbols,
+            key_builder=lambda document: (
+                document["dataset_type"],
+                document.get("timeframe"),
+                document["date"],
+            ),
+        )
+        deduped.sort(
+            key=lambda document: (
+                document["symbol"],
+                document["dataset_type"],
+                document.get("timeframe") or "",
+                document["date"],
+            )
+        )
+        return deduped
+
+    def find_dataset(
+        self,
+        symbol: str | Iterable[str],
+        dataset_type: str,
+        dataset_date,
+        timeframe: str | None = None,
+    ) -> dict | None:
+        """Return one dataset metadata document by its natural key."""
+        symbols = self._normalize_symbol_filters(symbol)
+        if not symbols:
+            return None
+
+        documents = self.find_many(
+            {
+                "symbol": {"$in": symbols},
+                "dataset_type": dataset_type,
+                "timeframe": timeframe,
+                "date": self._to_datetime(dataset_date),
+                "status": "ready",
+            }
+        )
+        if not documents:
+            return None
+
+        documents.sort(
+            key=lambda document: self._symbol_priority(
+                document.get("symbol", ""),
+                symbols,
+            )
+        )
+        return documents[0]
+
+    def find_saved_day_documents(self) -> List[dict]:
+        """Return ready dataset metadata ordered for saved-day summaries."""
+
+        return self.find_many(
+            {"status": "ready"},
+            sort=[
+                ("date", -1),
+                ("symbol", 1),
+                ("dataset_type", 1),
+                ("timeframe", 1),
+                ("updated_at", -1),
+            ],
+            projection={
+                "_id": 0,
+                "symbol": 1,
+                "raw_symbol": 1,
+                "dataset_type": 1,
+                "timeframe": 1,
+                "date": 1,
+                "updated_at": 1,
+            },
         )
 
     def upsert_document(self, document: dict) -> None:
-        """Upsert a full cache document by its natural key."""
+        """Upsert a full dataset document by its natural key."""
+        from app.utils.datetime_utils import utc_now
+
         self.collection.update_one(
             {
                 "symbol": document["symbol"],
-                "interval": document["interval"],
+                "dataset_type": document["dataset_type"],
+                "timeframe": document.get("timeframe"),
                 "date": self._to_datetime(document["date"]),
             },
             {
                 "$set": {
-                    "ohlc": document.get("ohlc", []),
-                    "bar_count": document.get("bar_count", 0),
-                    "fetched_at": document.get("fetched_at"),
-                    "source": document.get("source", "yfinance"),
+                    "raw_symbol": document.get("raw_symbol"),
+                    "object_key": document["object_key"],
+                    "row_count": document.get("row_count", 0),
+                    "byte_size": document.get("byte_size", 0),
+                    "source_file_name": document.get(
+                        "source_file_name", ""
+                    ),
+                    "import_batch_id": document.get(
+                        "import_batch_id"
+                    ),
+                    "status": document.get("status", "ready"),
+                    "updated_at": document.get(
+                        "updated_at", utc_now()
+                    ),
+                },
+                "$setOnInsert": {
+                    "created_at": document.get(
+                        "created_at", utc_now()
+                    ),
                 }
             },
             upsert=True,

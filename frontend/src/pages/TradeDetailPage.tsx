@@ -28,22 +28,8 @@ function bestInterval(holdingSeconds: number): ChartInterval {
   return '1h';
 }
 
-function isTradeOlderThanTwoMonths(trade: Trade): boolean {
-  const latestTradeTime = Math.max(
-    new Date(trade.entry_time).getTime(),
-    new Date(trade.exit_time).getTime()
-  );
-  const cutoff = new Date();
-  cutoff.setMonth(cutoff.getMonth() - 2);
-  return latestTradeTime < cutoff.getTime();
-}
-
-function getMarketDataFailureMessage(trade: Trade): string {
-  if (isTradeOlderThanTwoMonths(trade)) {
-    return 'Intraday market data is only available for the last two months.';
-  }
-
-  return 'Market data could not be downloaded. There may be a missing mapping between this trade symbol and the Yahoo Finance symbol in Settings.';
+function getMarketDataFailureMessage(): string {
+  return 'No stored market data was found for this trade window. Import a NinjaTrader tick-data file from Market Data to populate candles for this symbol.';
 }
 
 function SkeletonBlock({ className }: { className: string }) {
@@ -163,102 +149,118 @@ export function TradeDetailPage() {
   const tradeRequestIdRef = useRef(0);
   const chartRequestIdRef = useRef(0);
 
-  const fetchAllCharts = useCallback(async (tradeToLoad: Trade, forceRefresh: boolean = false) => {
-    const requestId = chartRequestIdRef.current + 1;
-    chartRequestIdRef.current = requestId;
-    setIsChartLoading(true);
-    setChartError(null);
-    const failureMessage = getMarketDataFailureMessage(tradeToLoad);
+  const fetchAllCharts = useCallback(
+    async (
+      tradeToLoad: Trade,
+      options: {
+        forceRefresh?: boolean;
+        notifyOnMissing?: boolean;
+      } = {}
+    ) => {
+      const requestId = chartRequestIdRef.current + 1;
+      chartRequestIdRef.current = requestId;
+      setIsChartLoading(true);
+      setChartError(null);
+      const failureMessage = getMarketDataFailureMessage();
+      const { forceRefresh = false, notifyOnMissing = false } = options;
 
-    try {
-      const entryDate = new Date(tradeToLoad.entry_time);
-      const exitDate = new Date(tradeToLoad.exit_time);
+      try {
+        const entryDate = new Date(tradeToLoad.entry_time);
+        const exitDate = new Date(tradeToLoad.exit_time);
 
-      const first = entryDate <= exitDate ? entryDate : exitDate;
-      const last = entryDate <= exitDate ? exitDate : entryDate;
+        const first = entryDate <= exitDate ? entryDate : exitDate;
+        const last = entryDate <= exitDate ? exitDate : entryDate;
 
-      const dayStart = new Date(
-        Date.UTC(
-          first.getUTCFullYear(),
-          first.getUTCMonth(),
-          first.getUTCDate(),
-          0, 0, 0, 0
-        )
-      );
+        const dayStart = new Date(
+          Date.UTC(
+            first.getUTCFullYear(),
+            first.getUTCMonth(),
+            first.getUTCDate(),
+            0, 0, 0, 0
+          )
+        );
 
-      const dayEnd = new Date(
-        Date.UTC(
-          last.getUTCFullYear(),
-          last.getUTCMonth(),
-          last.getUTCDate() + 1,
-          0, 0, 0, 0
-        )
-      );
+        const dayEnd = new Date(
+          Date.UTC(
+            last.getUTCFullYear(),
+            last.getUTCMonth(),
+            last.getUTCDate() + 1,
+            0, 0, 0, 0
+          )
+        );
 
-      const results = await Promise.allSettled(
-        ALL_INTERVALS.map(async (iv) => {
-          const data = await getOHLC({
-            symbol: tradeToLoad.symbol,
-            raw_symbol: tradeToLoad.raw_symbol,
-            interval: iv,
-            start: dayStart.toISOString(),
-            end: dayEnd.toISOString(),
-            force_refresh: forceRefresh,
-          });
+        const results = await Promise.allSettled(
+          ALL_INTERVALS.map(async (iv) => {
+            const data = await getOHLC({
+              symbol: tradeToLoad.symbol,
+              raw_symbol: tradeToLoad.raw_symbol,
+              interval: iv,
+              start: dayStart.toISOString(),
+              end: dayEnd.toISOString(),
+              force_refresh: forceRefresh,
+            });
 
-          return {
-            interval: iv,
-            data,
-          };
-        })
-      );
+            return {
+              interval: iv,
+              data,
+            };
+          })
+        );
 
-      const map: Record<string, OHLCDataPoint[]> = {};
-      let hasAnyData = false;
+        const map: Record<string, OHLCDataPoint[]> = {};
+        let hasAnyData = false;
 
-      for (const [index, result] of results.entries()) {
-        const intervalKey = ALL_INTERVALS[index];
-        if (!intervalKey) {
-          continue;
-        }
-
-        if (result.status === 'fulfilled') {
-          map[result.value.interval] = result.value.data;
-          if (result.value.data.length > 0) {
-            hasAnyData = true;
+        for (const [index, result] of results.entries()) {
+          const intervalKey = ALL_INTERVALS[index];
+          if (!intervalKey) {
+            continue;
           }
-          continue;
+
+          if (result.status === 'fulfilled') {
+            map[result.value.interval] = result.value.data;
+            if (result.value.data.length > 0) {
+              hasAnyData = true;
+            }
+            continue;
+          }
+
+          map[intervalKey] = [];
         }
 
-        map[intervalKey] = [];
-      }
+        if (requestId !== chartRequestIdRef.current) {
+          return null;
+        }
 
-      if (requestId !== chartRequestIdRef.current) {
-        return null;
-      }
+        setOhlcMap(map);
 
-      setOhlcMap(map);
+        if (!hasAnyData) {
+          setChartError(failureMessage);
+          if (notifyOnMissing) {
+            addToast('error', failureMessage);
+          }
+          return false;
+        }
+      } catch {
+        if (requestId !== chartRequestIdRef.current) {
+          return null;
+        }
 
-      if (!hasAnyData) {
-        setChartError(failureMessage);
-        return false;
-      }
-    } catch {
-      if (requestId !== chartRequestIdRef.current) {
-        return null;
-      }
-      if (requestId === chartRequestIdRef.current) {
         setOhlcMap({});
         setChartError(failureMessage);
+        if (notifyOnMissing) {
+          addToast('error', failureMessage);
+        }
+        return false;
+      } finally {
+        if (requestId === chartRequestIdRef.current) {
+          setIsChartLoading(false);
+        }
       }
-      return false;
-    } finally {
-      if (requestId === chartRequestIdRef.current) {
-        setIsChartLoading(false);
-      }
-    }
-    return true;
-  }, []);
+
+      return true;
+    },
+    [addToast]
+  );
 
   const fetchTrade = useCallback(async (preserveExisting = false) => {
     if (!id) {
@@ -315,11 +317,11 @@ export function TradeDetailPage() {
 
   async function handleRefreshChartData() {
     if (!trade) return;
-    const ok = await fetchAllCharts(trade, true);
+    const ok = await fetchAllCharts(trade, { forceRefresh: true });
     if (ok === true) {
-      addToast('success', 'Market data refreshed');
+      addToast('success', 'Stored candles refreshed');
     } else if (ok === false) {
-      addToast('error', getMarketDataFailureMessage(trade));
+      addToast('error', getMarketDataFailureMessage());
     }
   }
 
@@ -469,7 +471,7 @@ export function TradeDetailPage() {
               onClick={handleRefreshChartData}
               disabled={isChartLoading}
               className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600 hover:text-gray-800 disabled:opacity-50 dark:text-gray-400 dark:hover:text-gray-200"
-              title="Redownload market data for this trade day"
+              title="Reload stored candles for this trade day"
             >
               <RefreshCw className={`h-4 w-4 ${isChartLoading ? 'animate-spin' : ''}`} />
               Refresh Data

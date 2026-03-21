@@ -4,6 +4,7 @@ from marshmallow import Schema, ValidationError, fields, validate
 from marshmallow.decorators import validates_schema
 
 from app.market_data.symbol_mapper import (
+    validate_market_data_mappings,
     validate_symbol_mappings,
 )
 
@@ -72,10 +73,6 @@ class UpdateStartingEquitySchema(Schema):
 class BaseSymbolMappingSchema(Schema):
     """Schema for a single base symbol mapping entry."""
 
-    yahoo_symbol = fields.Str(
-        required=True,
-        validate=validate.Length(min=1, max=32),
-    )
     dollar_value_per_point = fields.Float(
         required=True,
         validate=validate.Range(min=0, min_inclusive=False),
@@ -99,6 +96,30 @@ class UpdateSymbolMappingsSchema(Schema):
         try:
             validate_symbol_mappings(
                 data["symbol_mappings"]
+            )
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from exc
+
+
+class UpdateMarketDataMappingsSchema(Schema):
+    """Schema for market-data mappings update."""
+
+    market_data_mappings = fields.Dict(
+        keys=fields.Str(
+            validate=validate.Length(min=1, max=32)
+        ),
+        values=fields.Str(
+            validate=validate.Length(min=1, max=32)
+        ),
+        required=True,
+    )
+
+    @validates_schema
+    def validate_entries(self, data, **kwargs) -> None:
+        """Run centralized market-data mapping validation."""
+        try:
+            validate_market_data_mappings(
+                data["market_data_mappings"]
             )
         except ValueError as exc:
             raise ValidationError(str(exc)) from exc

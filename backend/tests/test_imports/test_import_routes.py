@@ -19,7 +19,7 @@ EXAMPLES_DIR = (
 
 
 @pytest.fixture
-def app():
+def app(patch_minio):
     """Create a test Flask application."""
     application = create_app(TestingConfig)
     yield application
@@ -43,7 +43,8 @@ def clean_db(app):
             "executions",
             "trade_accounts",
             "tags",
-            "market_data_cache",
+            "market_data_datasets",
+            "market_data_import_batches",
             "import_batches",
             "audit_logs",
             "media",
@@ -237,7 +238,6 @@ def test_reconstruct_uses_user_symbol_mapping_point_value(client):
     token = _register_and_login(client)
     symbol_mappings = get_default_symbol_mappings()
     symbol_mappings["MES"] = {
-        "yahoo_symbol": "MES-CUSTOM=F",
         "dollar_value_per_point": 10.0,
     }
     _update_symbol_mappings(client, token, symbol_mappings)
@@ -278,7 +278,6 @@ def test_finalize_uses_user_symbol_mapping_point_value(client):
     token = _register_and_login(client)
     symbol_mappings = get_default_symbol_mappings()
     symbol_mappings["MES"] = {
-        "yahoo_symbol": "MES-CUSTOM=F",
         "dollar_value_per_point": 10.0,
     }
     _update_symbol_mappings(client, token, symbol_mappings)

@@ -22,7 +22,8 @@ graph TB
   Trades[(trades)]
   Tags[(tags)]
   Media[(media)]
-  Market[(market_data_cache)]
+  MarketDatasets[(market_data_datasets)]
+  MarketBatches[(market_data_import_batches)]
   Audit[(audit_logs)]
 
   Users --> Accounts
@@ -32,12 +33,14 @@ graph TB
   Users --> Tags
   Users --> Media
   Users --> Audit
+  Users --> MarketBatches
   Accounts --> Executions
   Accounts --> Trades
   Batches --> Executions
   Batches --> Trades
   Trades --> Executions
   Trades --> Media
+  MarketBatches --> MarketDatasets
 ```
 
 ## Collections Present In The Codebase
@@ -52,7 +55,8 @@ The backend explicitly uses these MongoDB collections:
 | `executions` | Normalized execution-level rows from imported files |
 | `trades` | Reconstructed or manually entered trades |
 | `tags` | User-defined trade tags |
-| `market_data_cache` | Cached OHLC slices fetched through `yfinance` |
+| `market_data_datasets` | Metadata for stored tick and candle Parquet datasets |
+| `market_data_import_batches` | Progress and result metadata for tick-data imports |
 | `audit_logs` | Audit trail records, currently including import events |
 | `media` | Metadata for trade-related media stored in MinIO |
 
@@ -72,9 +76,11 @@ The shapes below are based on the document-construction helpers in `backend/app/
   "starting_equity": 10000.0,
   "symbol_mappings": {
     "MES": {
-      "yahoo_symbol": "MES=F",
       "dollar_value_per_point": 5.0
     }
+  },
+  "market_data_mappings": {
+    "MES": "ES"
   },
   "created_at": "datetime",
   "updated_at": "datetime"
@@ -83,8 +89,10 @@ The shapes below are based on the document-construction helpers in `backend/app/
 
 Notes:
 
-- `symbol_mappings` is initialized with built-in defaults.
+- `symbol_mappings` is initialized with built-in point-value defaults.
 - Built-in defaults currently include MES, ES, MNQ, NQ, MYM, YM, MCL, CL, GC, and MGC.
+- `market_data_mappings` is initialized to an empty object.
+- An empty `market_data_mappings` object means market data lookup uses the symbol as stored on the trade or dataset.
 
 ### `trade_accounts`
 
@@ -211,34 +219,32 @@ Notes:
 }
 ```
 
-### `market_data_cache`
+### `market_data_datasets`
 
 ```json
 {
   "_id": "ObjectId",
-  "symbol": "MES=F",
-  "interval": "5m",
+  "symbol": "MES 06-26",
+  "raw_symbol": "MES 06-26",
+  "dataset_type": "candles",
+  "timeframe": "5m",
   "date": "datetime at day precision",
-  "ohlc": [
-    {
-      "time": 1739145600,
-      "open": 0.0,
-      "high": 0.0,
-      "low": 0.0,
-      "close": 0.0,
-      "volume": 0
-    }
-  ],
-  "bar_count": 0,
-  "fetched_at": "datetime",
-  "source": "yfinance"
+  "object_key": "MES 06-26/candles/5m/2026/01/02.parquet",
+  "row_count": 0,
+  "byte_size": 0,
+  "source_file_name": "MES 06-26.Last.txt",
+  "import_batch_id": "string or null",
+  "status": "ready",
+  "created_at": "datetime",
+  "updated_at": "datetime"
 }
 ```
 
 Notes:
 
-- `symbol` stores the resolved Yahoo Finance ticker, not necessarily the platform symbol seen in imported CSV files.
-- cache lookups are performed by `symbol + interval + date`.
+- one metadata document exists per `symbol + dataset_type + timeframe + date`
+- `dataset_type` is `ticks` for raw daily ticks and `candles` for precomputed bar datasets
+- Parquet payloads live in MinIO; MongoDB stores only indexing metadata and import provenance
 
 ### `media`
 
@@ -324,7 +330,7 @@ Indexes are created in `backend/app/db.py`.
 
 - non-deleted trades are typically filtered as `status != "deleted"`
 - distinct symbol lists only use trades with `status == "closed"`
-- market-data caching assumes one document per Yahoo symbol, interval, and trading day
+- market-data datasets are keyed by resolved dataset symbol, dataset type, optional timeframe, and trading day
 - import duplicate detection assumes `file_hash` uniqueness per user
 
 ## Backup, Export, And Restore Shape
@@ -350,7 +356,7 @@ Restore is merge-only into the authenticated destination user.
 
 Current restore behavior visible in `backend/app/auth/backup_service.py`:
 
-- updates portable settings such as timezone, display timezone, starting equity, and symbol mappings
+- updates portable settings such as timezone, display timezone, starting equity, symbol mappings, and market-data mappings
 - reuses accounts by natural key
 - reuses tags by natural key
 - reuses import batches by `file_hash`
@@ -379,20 +385,19 @@ flowchart LR
   InsertBatch --> InsertAudit["Insert<br/>audit_log"]
 ```
 
-### Source Market Data Cache Flow Diagram
+### Source Market Data Lookup Flow Diagram
 
 ```mermaid
 flowchart LR
   Request["GET /api/market-data/ohlc<br/>symbol=MES, interval=5m<br/>start=2026-02-06 09:30<br/>end=2026-02-06 16:00"]
-    
-  Request --> MapSymbol["Map MES → MES=F"]
-  MapSymbol --> QueryCache["Query market_data_cache<br/>symbol=MES=F<br/>interval=5m<br/>date=2026-02-06"]
-    
-  QueryCache --> CacheResult{Cache<br/>found?}
-    
-  CacheResult -->|Hit| ReturnCached["Return cached OHLC<br/>filter by time range"]
-    
-  CacheResult -->|Miss| FetchYF["yfinance.download()<br/>'MES=F', '5m'<br/>start, end"]
-  FetchYF --> StoreCache["Upsert to<br/>market_data_cache"]
-  StoreCache --> ReturnCached
+
+  Request --> ResolveSymbol["Apply explicit market_data_mappings<br/>or keep MES as-is"]
+  ResolveSymbol --> QueryMetadata["Query market_data_datasets<br/>symbol=resolved symbol<br/>dataset_type=candles<br/>timeframe=5m<br/>date=2026-02-06"]
+
+  QueryMetadata --> DatasetFound{Dataset<br/>found?}
+
+  DatasetFound -->|Yes| ReadParquet["Read candle Parquet from MinIO"]
+  ReadParquet --> ReturnBars["Return OHLC bars<br/>filtered by time range"]
+
+  DatasetFound -->|No| ReturnEmpty["Return empty OHLC array"]
 ```

@@ -28,6 +28,7 @@ def test_register_success(client):
     assert "token" in data
     assert data["user"]["username"] == "testuser"
     assert data["user"]["timezone"] == "America/New_York"
+    assert data["user"]["market_data_mappings"] == {}
     assert (
         data["user"]["symbol_mappings"]
         == get_default_symbol_mappings()
@@ -82,6 +83,7 @@ def test_login_success(client):
     data = response.get_json()
     assert "token" in data
     assert data["user"]["username"] == "testuser"
+    assert data["user"]["market_data_mappings"] == {}
     assert (
         data["user"]["symbol_mappings"]
         == get_default_symbol_mappings()
@@ -126,6 +128,7 @@ def test_me_with_token(client):
     assert response.status_code == 200
     data = response.get_json()
     assert data["username"] == "testuser"
+    assert data["market_data_mappings"] == {}
     assert data["symbol_mappings"] == get_default_symbol_mappings()
 
 
@@ -160,7 +163,6 @@ def test_update_symbol_mappings_persists_to_profile(client):
     token = reg.get_json()["token"]
     symbol_mappings = get_default_symbol_mappings()
     symbol_mappings["MES"] = {
-        "yahoo_symbol": "MES-CUSTOM=F",
         "dollar_value_per_point": 8.0,
     }
 
@@ -201,6 +203,57 @@ def test_update_symbol_mappings_rejects_invalid_point_value(client):
         "/api/auth/symbol-mappings",
         headers={"Authorization": f"Bearer {token}"},
         json={"symbol_mappings": symbol_mappings},
+    )
+
+    assert response.status_code == 400
+
+
+def test_update_market_data_mappings_persists_to_profile(client):
+    """Updating market-data mappings returns and persists the config."""
+    reg = client.post("/api/auth/register", json={
+        "username": "marketdatamappinguser",
+        "password": "testpass123",
+        "timezone": "America/New_York",
+    })
+    token = reg.get_json()["token"]
+    market_data_mappings = {"MES": "ES"}
+
+    response = client.put(
+        "/api/auth/market-data-mappings",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"market_data_mappings": market_data_mappings},
+    )
+
+    assert response.status_code == 200
+    assert (
+        response.get_json()["market_data_mappings"]
+        == market_data_mappings
+    )
+
+    me_response = client.get(
+        "/api/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert me_response.status_code == 200
+    assert (
+        me_response.get_json()["market_data_mappings"]
+        == market_data_mappings
+    )
+
+
+def test_update_market_data_mappings_rejects_invalid_values(client):
+    """Updating market-data mappings validates mapping values."""
+    reg = client.post("/api/auth/register", json={
+        "username": "invalidmarketdatamappinguser",
+        "password": "testpass123",
+        "timezone": "America/New_York",
+    })
+    token = reg.get_json()["token"]
+
+    response = client.put(
+        "/api/auth/market-data-mappings",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"market_data_mappings": {"MES": "   "}},
     )
 
     assert response.status_code == 400

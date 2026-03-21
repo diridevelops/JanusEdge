@@ -1,27 +1,25 @@
-"""Market data service — yfinance 1.1.0 with MongoDB caching."""
+"""Market-data service backed by imported tick-derived candles."""
 
 import datetime as dt
-from datetime import date, timedelta
+from datetime import timedelta
 from typing import List
 
-import yfinance as yf
+from bson import ObjectId
 
 from app.market_data.symbol_mapper import (
-    get_effective_symbol_mappings,
-    map_to_yahoo,
+    get_effective_market_data_mappings,
 )
-from app.repositories.market_data_repo import (
-    MarketDataRepository,
-)
+from app.repositories.market_data_repo import MarketDataRepository
 from app.repositories.user_repo import UserRepository
-from app.utils.errors import MarketDataError
+from app.tick_data.service import TickDataService
 
 
 class MarketDataService:
-    """Service for OHLC market data with caching."""
+    """Service for OHLC market data backed by stored Parquet datasets."""
 
     def __init__(self):
-        self.cache_repo = MarketDataRepository()
+        self.dataset_repo = MarketDataRepository()
+        self.tick_data_service = TickDataService()
         self.user_repo = UserRepository()
 
     def get_ohlc(
@@ -37,9 +35,6 @@ class MarketDataService:
         """
         Get OHLC candlestick data.
 
-        Checks cache first. On miss, fetches from yfinance
-        and stores permanently.
-
         Parameters:
             user_id: The requesting user's ObjectId string.
             symbol: Normalized symbol.
@@ -47,23 +42,12 @@ class MarketDataService:
             start: Start date ISO string.
             end: End date ISO string.
             raw_symbol: Original platform symbol.
-            force_refresh: If True, bypass cache and
-                refresh OHLC data from source.
+            force_refresh: If True, regenerate candles from stored ticks.
 
         Returns:
             List of OHLC dicts with time, open,
             high, low, close, volume.
         """
-        user = self.user_repo.find_by_id(user_id)
-        symbol_mappings = get_effective_symbol_mappings(
-            user.get("symbol_mappings") if user else None
-        )
-        yahoo_ticker = map_to_yahoo(
-            symbol,
-            raw_symbol,
-            symbol_mappings,
-        )
-
         start_dt = (
             dt.datetime.fromisoformat(start)
             if start
@@ -89,166 +73,105 @@ class MarketDataService:
         start_date = start_dt.date()
         end_date = end_dt.date()
 
-        if not force_refresh:
-            # Check cache
-            cached = self.cache_repo.find_cached(
-                yahoo_ticker, interval, start_date, end_date
+        user = None
+        if ObjectId.is_valid(user_id):
+            user = self.user_repo.find_by_id(user_id)
+        market_data_mappings = (
+            get_effective_market_data_mappings(
+                user.get("market_data_mappings")
+                if user
+                else None
             )
-
-            if cached:
-                # Check coverage
-                cached_dates = set()
-                for doc in cached:
-                    d = doc["date"]
-                    if isinstance(d, dt.datetime):
-                        cached_dates.add(d.date())
-                    else:
-                        cached_dates.add(d)
-                needed_dates = self._trading_dates(
-                    start_date, end_date
-                )
-                missing = needed_dates - cached_dates
-
-                if not missing:
-                    # Full cache hit
-                    ohlc = []
-                    for doc in cached:
-                        ohlc.extend(doc.get("ohlc", []))
-                    ohlc.sort(key=lambda x: x["time"])
-                    return ohlc
-        else:
-            # Delete old cache so fresh data replaces it
-            self.cache_repo.delete_cached_range(
-                yahoo_ticker, interval,
-                start_date, end_date,
-            )
-
-        # Fetch from yfinance
-        ohlc_data = self._fetch_yfinance(
-            yahoo_ticker, interval, start_dt, end_dt
         )
 
-        # Group by date and cache
-        self._cache_by_date(
-            yahoo_ticker, interval, ohlc_data
+        if force_refresh:
+            self.tick_data_service.refresh_ohlc(
+                symbol=symbol,
+                raw_symbol=raw_symbol,
+                start_date=start_date,
+                end_date=end_date,
+                market_data_mappings=market_data_mappings,
+            )
+
+        return self.tick_data_service.get_ohlc(
+            symbol=symbol,
+            raw_symbol=raw_symbol,
+            interval=interval,
+            start_dt=start_dt,
+            end_dt=end_dt,
+            market_data_mappings=market_data_mappings,
         )
 
-        return ohlc_data
+    def list_saved_days(self, user_id: str) -> List[dict]:
+        """Return saved market-data day summaries ordered by date."""
 
-    def _fetch_yfinance(
-        self,
-        ticker: str,
-        interval: str,
-        start_dt: dt.datetime,
-        end_dt: dt.datetime,
-    ) -> List[dict]:
-        """
-        Fetch OHLC from yfinance 1.1.0.
+        del user_id
 
-        Uses tz-aware UTC datetimes for start/end and
-        multi_level_index=False to get flat column names.
+        summaries: dict[tuple[str, dt.date], dict] = {}
+        for document in self.dataset_repo.find_saved_day_documents():
+            document_date = document["date"]
+            if isinstance(document_date, dt.datetime):
+                trading_day = document_date.date()
+            else:
+                trading_day = document_date
 
-        Parameters:
-            ticker: yfinance ticker string.
-            interval: Time interval.
-            start_dt: Start datetime (tz-aware UTC).
-            end_dt: End datetime (tz-aware UTC).
+            summary_key = (document["symbol"], trading_day)
+            summary = summaries.get(summary_key)
+            if summary is None:
+                summary = {
+                    "date": trading_day.isoformat(),
+                    "symbol": document["symbol"],
+                    "raw_symbol": document.get("raw_symbol"),
+                    "available_timeframes": [],
+                    "has_ticks": False,
+                    "updated_at": self._serialize_datetime(
+                        document.get("updated_at")
+                    ),
+                }
+                summaries[summary_key] = summary
 
-        Returns:
-            List of OHLC dicts.
-        """
-        try:
-            data = yf.download(
-                tickers=ticker,
-                start=start_dt,
-                end=end_dt,
-                interval=interval,
-                prepost=False,
-                progress=False,
-                timeout=10,
-                multi_level_index=False,
+            raw_symbol = document.get("raw_symbol")
+            if summary["raw_symbol"] is None and raw_symbol:
+                summary["raw_symbol"] = raw_symbol
+
+            if document.get("dataset_type") == "ticks":
+                summary["has_ticks"] = True
+
+            timeframe = document.get("timeframe")
+            if (
+                document.get("dataset_type") == "candles"
+                and timeframe
+                and timeframe not in summary["available_timeframes"]
+            ):
+                summary["available_timeframes"].append(timeframe)
+
+            updated_at = self._serialize_datetime(
+                document.get("updated_at")
             )
+            if updated_at and (
+                summary["updated_at"] is None
+                or updated_at > summary["updated_at"]
+            ):
+                summary["updated_at"] = updated_at
 
-            if data.empty:
-                return []
+        ordered_summaries = sorted(
+            summaries.values(),
+            key=lambda summary: (
+                -dt.date.fromisoformat(summary["date"]).toordinal(),
+                summary["symbol"],
+            ),
+        )
+        for summary in ordered_summaries:
+            summary["available_timeframes"].sort()
 
-            ohlc = []
-            for idx, row in data.iterrows():
-                ts = idx
-                if hasattr(ts, "timestamp"):
-                    time_val = int(ts.timestamp())
-                else:
-                    time_val = int(
-                        dt.datetime.combine(
-                            ts, dt.time.min
-                        ).timestamp()
-                    )
+        return ordered_summaries
 
-                ohlc.append({
-                    "time": time_val,
-                    "open": round(
-                        float(row["Open"]), 6
-                    ),
-                    "high": round(
-                        float(row["High"]), 6
-                    ),
-                    "low": round(
-                        float(row["Low"]), 6
-                    ),
-                    "close": round(
-                        float(row["Close"]), 6
-                    ),
-                    "volume": int(
-                        float(row.get("Volume", 0))
-                    ),
-                })
+    @staticmethod
+    def _serialize_datetime(value: dt.datetime | None) -> str | None:
+        """Serialize datetimes to ISO-8601 strings."""
 
-            return ohlc
-
-        except Exception as e:
-            raise MarketDataError(
-                f"Failed to fetch market data: {str(e)}"
-            )
-
-    def _cache_by_date(
-        self,
-        ticker: str,
-        interval: str,
-        ohlc_data: List[dict],
-    ) -> None:
-        """Cache OHLC data grouped by date."""
-        if not ohlc_data:
-            return
-
-        grouped = {}
-        for bar in ohlc_data:
-            bar_date = dt.datetime.fromtimestamp(
-                bar["time"], tz=dt.timezone.utc
-            ).date()
-            if bar_date not in grouped:
-                grouped[bar_date] = []
-            grouped[bar_date].append(bar)
-
-        for bar_date, bars in grouped.items():
-            self.cache_repo.upsert_cache(
-                symbol=ticker,
-                interval=interval,
-                cache_date=bar_date,
-                ohlc=bars,
-                bar_count=len(bars),
-            )
-
-    def _trading_dates(
-        self, start: date, end: date
-    ) -> set:
-        """
-        Generate potential trading dates
-        (weekdays only) in a range.
-        """
-        dates = set()
-        current = start
-        while current <= end:
-            if current.weekday() < 5:
-                dates.add(current)
-            current += timedelta(days=1)
-        return dates
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.isoformat() + "+00:00"
+        return value.isoformat()

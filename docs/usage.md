@@ -70,7 +70,7 @@ If you are new to the app, this is the simplest order to follow:
 
 1. Create your account and sign in.
 2. Open Settings and confirm your trading timezone and display timezone.
-3. If your symbols need special chart mappings, add them in Symbol Mappings.
+3. If you need custom lookup behavior, configure point-value symbol mappings separately from explicit market-data mappings.
 4. Open Trades and use Import to bring in your CSV files.
 5. Review imported trades and open individual trade details.
 6. Add notes, tags, fees, risk values, and media.
@@ -316,7 +316,7 @@ Important limitation:
 
 - intraday market data is only available for roughly the last two months
 
-If a chart does not load for a symbol, the most common fix is to check Symbol Mappings in Settings.
+If a chart does not load for a symbol, check whether the trade symbol matches an imported dataset directly or whether you need an explicit market-data mapping.
 
 ### Media
 
@@ -541,20 +541,31 @@ This sets the default starting balance used to prefill Monte Carlo simulations.
 
 ### Symbol Mappings
 
-Use Symbol Mappings when an imported symbol does not automatically match a Yahoo Finance symbol for chart data.
+Use Symbol Mappings to control point-value resolution only.
 
-Each row lets you define:
+Each row defines:
 
 - normalized base symbol
-- Yahoo Finance symbol
 - dollar value per point
+
+These mappings do not change which market-data dataset the backend reads.
+
+### Market-Data Mappings
+
+Use Market-Data Mappings only when you want one symbol family to read another symbol family's imported datasets.
+
+Each row defines:
+
+- source symbol prefix
+- target symbol prefix
 
 Example use case:
 
-- your imported symbol starts with `MES`
-- you map it to `MES=F`
+- your trades use `MES`
+- your imported market-data datasets are stored under `ES`
+- you add an explicit mapping from `MES` to `ES`
 
-If trade charts are missing for a symbol that should have data, this is the first place to check.
+The default market-data mapping configuration is empty, which means market-data lookup uses the symbol exactly as stored on the trade.
 
 ### Backup
 
@@ -634,7 +645,7 @@ You must enter:
 ## Practical Tips
 
 - Set your timezone correctly before importing large amounts of data.
-- If charts are missing for a symbol, check Symbol Mappings in Settings.
+- If charts are missing for a symbol, check explicit market-data mappings before changing point-value settings.
 - Add initial risk if you want meaningful R-multiples and risk-based analysis.
 - Use tags consistently so Dashboard and Analytics reports stay useful.
 - Use the Calendar page to jump directly into a specific day.
@@ -646,7 +657,7 @@ You must enter:
 Try these checks first:
 
 - wrong timestamps: review Trading Timezone and Display Timezone in Settings
-- missing chart data: refresh the chart, then review Symbol Mappings
+- missing chart data: refresh the chart, then review explicit market-data mappings and dataset availability
 - empty stop-management view: make sure you selected a symbol and saved wishful-stop data on trades
 - unexpected import issues: inspect the preview, warnings, and row-level parsing errors before finalizing
 - restore confusion: remember that restore merges into the current account instead of replacing it

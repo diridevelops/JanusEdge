@@ -23,6 +23,7 @@ Unless otherwise noted, IDs are MongoDB ObjectId strings serialized as plain str
 | PUT | `/api/auth/display-timezone` | Yes | Update display timezone | JSON with `display_timezone` | Direct serialized user object |
 | PUT | `/api/auth/starting-equity` | Yes | Update starting equity used by simulations | JSON with `starting_equity` | Direct serialized user object |
 | PUT | `/api/auth/symbol-mappings` | Yes | Replace user symbol mappings | JSON with `symbol_mappings` | Direct serialized user object |
+| PUT | `/api/auth/market-data-mappings` | Yes | Replace user market-data mappings | JSON with `market_data_mappings` | Direct serialized user object |
 | GET | `/api/auth/export` | Yes | Export a portable backup ZIP | None | ZIP download |
 | POST | `/api/auth/restore` | Yes | Restore a portable backup ZIP into the current user | `multipart/form-data` with `file` | `{ message, summary }` |
 
@@ -38,9 +39,13 @@ Where the backend returns a serialized user object, the frontend currently expec
   "display_timezone": "America/New_York",
   "starting_equity": 10000,
   "symbol_mappings": {},
-  "created_at": "..."
+  "market_data_mappings": {}
 }
 ```
+
+- `symbol_mappings` controls point-value resolution only.
+- `market_data_mappings` controls explicit cross-symbol market-data lookup.
+- The default `market_data_mappings` value is `{}`, which means market data lookup uses the symbol as-is.
 
 ## Imports
 
@@ -97,7 +102,7 @@ If you need an exact stable schema here, treat it as TODO because the preview re
 - `sort_by=r_multiple` is handled specially in the backend.
 - `account` can be either an account ObjectId or an account name.
 - `tag` can be either a tag ObjectId or a tag name.
-- each returned trade currently includes a computed `market_data_cached` boolean.
+- each returned trade currently includes a computed `market_data_cached` boolean based on stored candle metadata.
 
 ### Delete and restore note
 
@@ -133,6 +138,9 @@ Note: the route docstring mentions an `account` query parameter, but the current
 | Method | Path | Auth | Purpose | Request | Response |
 | --- | --- | --- | --- | --- | --- |
 | GET | `/api/market-data/ohlc` | Yes | Return OHLC data for charting | Query params: `symbol` required, optional `interval`, `start`, `end`, `raw_symbol`, `force_refresh` | `{ ohlc_data: [...] }` |
+| POST | `/api/market-data/tick-imports/preview` | Yes | Validate a NinjaTrader tick export and summarize it by day | `multipart/form-data` with `file` | `{ file_name, symbol_guess, total_lines, valid_ticks, skipped_lines, first_tick_at, last_tick_at, trading_dates }` |
+| POST | `/api/market-data/tick-imports` | Yes | Start a background tick-data import | `multipart/form-data` with `file` and optional `symbol`, `raw_symbol` | Import batch document |
+| GET | `/api/market-data/tick-imports/:batch_id` | Yes | Poll tick-data import progress | Path parameter `batch_id` | Import batch document |
 
 The frontend currently expects each OHLC point to look like:
 
@@ -146,6 +154,13 @@ The frontend currently expects each OHLC point to look like:
   "volume": 0
 }
 ```
+
+### Tick import notes
+
+- imports currently support NinjaTrader UTF-8 text exports only
+- the backend writes raw daily ticks and derived daily candles to Snappy-compressed Parquet in MinIO
+- import progress is persisted in MongoDB so the frontend can poll percentage complete
+- `force_refresh=true` on the OHLC route regenerates candle datasets from stored raw ticks for the requested date range
 
 ## Analytics
 

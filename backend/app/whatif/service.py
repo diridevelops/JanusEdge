@@ -10,13 +10,11 @@ import numpy as np
 from bson import ObjectId
 
 from app.extensions import mongo
+from app.market_data.service import MarketDataService
 from app.market_data.symbol_mapper import (
+    get_effective_market_data_mappings,
     get_effective_symbol_mappings,
     get_point_value,
-    map_to_yahoo,
-)
-from app.repositories.market_data_repo import (
-    MarketDataRepository,
 )
 from app.repositories.tag_repo import TagRepository
 from app.repositories.trade_repo import TradeRepository
@@ -131,7 +129,7 @@ class WhatIfService:
     def __init__(self):
         self.trade_repo = TradeRepository()
         self.tag_repo = TagRepository()
-        self.market_data_repo = MarketDataRepository()
+        self.market_data_service = MarketDataService()
         self.user_repo = UserRepository()
 
     def get_stop_analysis(
@@ -241,6 +239,13 @@ class WhatIfService:
             "details": details,
         }
 
+    def _get_market_data_mappings(self, user_id: str) -> dict:
+        """Return the effective market-data mappings for a user."""
+        user = self.user_repo.find_by_id(user_id)
+        return get_effective_market_data_mappings(
+            user.get("market_data_mappings") if user else None
+        )
+
     def get_wicked_out_trades(
         self,
         user_id: str,
@@ -271,9 +276,8 @@ class WhatIfService:
         trades = self.trade_repo.find_many(
             match, sort=[("exit_time", -1)], limit=0
         )
-        user = self.user_repo.find_by_id(user_id)
-        symbol_mappings = get_effective_symbol_mappings(
-            user.get("symbol_mappings") if user else None
+        market_data_mappings = self._get_market_data_mappings(
+            user_id
         )
 
         ohlc_cache: Dict[
@@ -284,11 +288,6 @@ class WhatIfService:
         for t in trades:
             symbol = t.get("symbol", "")
             raw_sym = t.get("raw_symbol")
-            yahoo = map_to_yahoo(
-                symbol,
-                raw_sym,
-                symbol_mappings,
-            )
 
             entry_time = t.get("entry_time")
             if isinstance(entry_time, datetime):
@@ -298,13 +297,15 @@ class WhatIfService:
                     str(entry_time)
                 ).date()
 
-            cache_key = (yahoo, day)
+            cache_key = (symbol, raw_sym, day)
             if cache_key not in ohlc_cache:
                 ohlc_cache[cache_key] = any(
-                    self.market_data_repo.has_cached_day(
-                        symbol=yahoo,
+                    self.market_data_service.tick_data_service.has_ohlc_for_day(
+                        symbol=symbol,
+                        raw_symbol=raw_sym,
                         interval=iv,
-                        cache_date=day,
+                        trading_day=day,
+                        market_data_mappings=market_data_mappings,
                     )
                     for iv in ("1m", "5m")
                 )
@@ -377,6 +378,9 @@ class WhatIfService:
         user = self.user_repo.find_by_id(user_id)
         symbol_mappings = get_effective_symbol_mappings(
             user.get("symbol_mappings") if user else None
+        )
+        market_data_mappings = get_effective_market_data_mappings(
+            user.get("market_data_mappings") if user else None
         )
 
         original_pnls: List[float] = []
@@ -490,11 +494,6 @@ class WhatIfService:
 
             # Loser — try to simulate
             raw_sym = t.get("raw_symbol")
-            yahoo = map_to_yahoo(
-                symbol,
-                raw_sym,
-                symbol_mappings,
-            )
             if isinstance(entry_time, datetime):
                 day = entry_time.date()
             else:
@@ -503,10 +502,12 @@ class WhatIfService:
                 ).date()
 
             has_market_data = any(
-                self.market_data_repo.has_cached_day(
-                    symbol=yahoo,
+                self.market_data_service.tick_data_service.has_ohlc_for_day(
+                    symbol=symbol,
+                    raw_symbol=raw_sym,
                     interval=iv,
-                    cache_date=day,
+                    trading_day=day,
+                    market_data_mappings=market_data_mappings,
                 )
                 for iv in ("1m", "5m")
             )
@@ -600,10 +601,12 @@ class WhatIfService:
             # Pick best available OHLC interval
             ohlc_interval = None
             for iv in ("1m", "5m"):
-                if self.market_data_repo.has_cached_day(
-                    symbol=yahoo,
+                if self.market_data_service.tick_data_service.has_ohlc_for_day(
+                    symbol=symbol,
+                    raw_symbol=raw_sym,
                     interval=iv,
-                    cache_date=day,
+                    trading_day=day,
+                    market_data_mappings=market_data_mappings,
                 ):
                     ohlc_interval = iv
                     break
@@ -630,7 +633,8 @@ class WhatIfService:
 
             # Replay OHLC bars
             new_pnl = self._replay_bars(
-                yahoo=yahoo,
+                symbol=symbol,
+                raw_symbol=raw_sym,
                 interval=ohlc_interval,
                 trade=t,
                 new_stop=new_stop,
@@ -640,6 +644,7 @@ class WhatIfService:
                 qty=qty,
                 fee=fee,
                 point_value=point_value,
+                market_data_mappings=market_data_mappings,
             )
 
             if new_pnl is None:
@@ -711,7 +716,8 @@ class WhatIfService:
 
     def _replay_bars(
         self,
-        yahoo: str,
+        symbol: str,
+        raw_symbol: str | None,
         interval: str,
         trade: dict,
         new_stop: float,
@@ -721,12 +727,14 @@ class WhatIfService:
         qty: int,
         fee: float,
         point_value: float,
+        market_data_mappings: dict | None = None,
     ) -> Optional[float]:
         """
         Replay 1-min bars to simulate wider stop outcome.
 
         Parameters:
-            yahoo: yfinance ticker.
+            symbol: Trade symbol.
+            raw_symbol: Original raw symbol.
             interval: OHLC interval.
             trade: Raw trade document.
             new_stop: Widened stop price.
@@ -752,16 +760,15 @@ class WhatIfService:
             ).date()
 
         # Get bars for trade day
-        cached = self.market_data_repo.find_cached(
-            yahoo, interval, day, day
+        bars = self.market_data_service.tick_data_service.read_bars_for_day(
+            symbol=symbol,
+            raw_symbol=raw_symbol,
+            interval=interval,
+            trading_day=day,
+            market_data_mappings=market_data_mappings,
         )
-        if not cached:
+        if not bars:
             return None
-
-        bars = []
-        for doc in cached:
-            bars.extend(doc.get("ohlc", []))
-        bars.sort(key=lambda b: b["time"])
 
         # Filter bars within trade window
         if isinstance(entry_time, datetime):

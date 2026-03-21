@@ -7,7 +7,7 @@ from config import TestingConfig
 
 
 @pytest.fixture
-def app():
+def app(patch_minio):
     application = create_app(TestingConfig)
     yield application
 
