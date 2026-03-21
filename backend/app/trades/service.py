@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 
 from bson import ObjectId
 
+from app.market_data.service import MarketDataService
 from app.storage import get_bucket, get_client
 from app.whatif.cache import clear_simulation_cache
 from app.models.trade import create_trade_doc
@@ -14,17 +15,14 @@ from app.repositories.account_repo import (
 from app.repositories.execution_repo import (
     ExecutionRepository,
 )
-from app.repositories.market_data_repo import (
-    MarketDataRepository,
-)
 from app.repositories.media_repo import MediaRepository
 from app.repositories.tag_repo import TagRepository
 from app.repositories.trade_repo import TradeRepository
 from app.repositories.user_repo import UserRepository
 from app.market_data.symbol_mapper import (
+    get_effective_market_data_mappings,
     get_effective_symbol_mappings,
     get_point_value,
-    map_to_yahoo,
 )
 from app.utils.datetime_utils import utc_now
 from app.utils.errors import NotFoundError, ValidationError
@@ -61,7 +59,7 @@ class TradeService:
         self.exec_repo = ExecutionRepository()
         self.account_repo = AccountRepository()
         self.tag_repo = TagRepository()
-        self.market_data_repo = MarketDataRepository()
+        self.market_data_service = MarketDataService()
         self.media_repo = MediaRepository()
         self.user_repo = UserRepository()
 
@@ -196,9 +194,10 @@ class TradeService:
         total = self.trade_repo.count_by_user(
             user_id, filters
         )
-        symbol_mappings = self._get_symbol_mappings(user_id)
-
-        market_cache: dict[tuple[str, datetime.date], bool] = {}
+        market_data_mappings = self._get_market_data_mappings(
+            user_id
+        )
+        market_cache: dict[tuple[str, str | None, datetime.date], bool] = {}
 
         serialized_trades = []
         for trade in trades:
@@ -214,19 +213,19 @@ class TradeService:
                     str(serialized.get("entry_time"))
                 ).date()
 
-            yahoo_symbol = map_to_yahoo(
+            cache_key = (
                 trade.get("symbol", ""),
                 trade.get("raw_symbol"),
-                symbol_mappings,
+                day_key,
             )
-
-            cache_key = (yahoo_symbol, day_key)
             if cache_key not in market_cache:
                 market_cache[cache_key] = (
-                    self.market_data_repo.has_cached_day(
-                        symbol=yahoo_symbol,
+                    self.market_data_service.tick_data_service.has_ohlc_for_day(
+                        symbol=trade.get("symbol", ""),
+                        raw_symbol=trade.get("raw_symbol"),
                         interval="5m",
-                        cache_date=day_key,
+                        trading_day=day_key,
+                        market_data_mappings=market_data_mappings,
                     )
                 )
 
@@ -387,6 +386,13 @@ class TradeService:
         user = self.user_repo.find_by_id(user_id)
         return get_effective_symbol_mappings(
             user.get("symbol_mappings") if user else None
+        )
+
+    def _get_market_data_mappings(self, user_id: str) -> dict:
+        """Return the effective market-data mappings for a user."""
+        user = self.user_repo.find_by_id(user_id)
+        return get_effective_market_data_mappings(
+            user.get("market_data_mappings") if user else None
         )
 
     def update_trade(

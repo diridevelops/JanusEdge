@@ -11,9 +11,10 @@ It provides the user-facing workflows for:
 - trade list and trade detail views
 - manual trade entry
 - CSV import
+- dedicated market-data import for NinjaTrader tick-data files
 - calendar and analytics pages
 - what-if analysis and Monte Carlo simulation
-- settings, symbol mappings, and backup restore
+- settings, point-value symbol mappings, and backup restore
 
 Important naming note: the current frontend display name is hard-coded as `Janus Edge` in `src/utils/constants.ts`. The `VITE_APP_NAME` environment variable exists in example files and Docker Compose, but the current frontend source does not read it.
 
@@ -91,6 +92,7 @@ The current application routes are defined in `src/App.tsx`.
 - `/trades/new`
 - `/trades/:id`
 - `/import`
+- `/market-data/import`
 - `/analytics`
 - `/calendar`
 - `/whatif`
@@ -169,6 +171,18 @@ The import page is a multi-step flow:
 
 The page explicitly mentions NinjaTrader and Quantower support.
 
+### Market Data Import
+
+The frontend now includes a dedicated `/market-data/import` flow for NinjaTrader tick-data `.txt` files.
+
+That page:
+
+- uploads a single tick-data text export
+- previews parsed trading dates and tick counts before ingestion
+- starts an authenticated background import batch
+- polls batch progress until completion or failure
+- uses the same backend market-data store consumed by trade charts and what-if analysis
+
 ### Trade Detail
 
 The trade detail page combines:
@@ -189,7 +203,7 @@ The settings page currently includes:
 - trading timezone
 - display timezone
 - starting equity
-- symbol mapping editor
+- base-symbol point-value editor
 - backup export and restore
 
 ## Local Development Workflow

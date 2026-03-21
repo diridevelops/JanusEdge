@@ -9,6 +9,7 @@ import json
 import zipfile
 
 from bson import ObjectId, json_util
+import pandas as pd
 import pytest
 
 from app import create_app
@@ -22,6 +23,7 @@ from app.models.media import create_media_doc
 from app.models.tag import create_tag_doc
 from app.models.trade import create_trade_doc
 from app.models.trade_account import create_trade_account_doc
+from app.tick_data.parquet_store import MarketDataParquetStore
 from app.utils.trade_fingerprint import (
     build_trade_fingerprint,
 )
@@ -97,11 +99,10 @@ class InMemoryMinio:
 
 
 @pytest.fixture
-def app():
-    """Create a Flask app with an in-memory MinIO stub."""
-    with patch("app.storage.Minio", new=InMemoryMinio):
-        application = create_app(TestingConfig)
-        yield application
+def app(patch_minio):
+    """Create a Flask app with the shared MinIO test stub."""
+    application = create_app(TestingConfig)
+    yield application
 
 
 @pytest.fixture
@@ -124,7 +125,8 @@ def clean_db(app):
             "trades",
             "executions",
             "media",
-            "market_data_cache",
+            "market_data_datasets",
+            "market_data_import_batches",
         ]:
             mongo.db[collection].delete_many({})
     yield
@@ -166,10 +168,61 @@ def _build_custom_symbol_mappings() -> dict:
     """Build a deterministic custom mapping set for backup tests."""
     symbol_mappings = get_default_symbol_mappings()
     symbol_mappings["MES"] = {
-        "yahoo_symbol": "MES-CUSTOM=F",
         "dollar_value_per_point": 9.5,
     }
     return symbol_mappings
+
+
+def _build_custom_market_data_mappings() -> dict:
+    """Build a deterministic custom market-data mapping set."""
+    return {"MES": "ES"}
+
+
+def _store_market_dataset(
+    app,
+    *,
+    symbol: str,
+    dataset_type: str,
+    trading_day: datetime,
+    rows: list[dict],
+    timeframe: str | None = None,
+    raw_symbol: str | None = None,
+) -> dict:
+    """Persist a market-data Parquet object and its metadata."""
+
+    with app.app_context():
+        frame = pd.DataFrame(rows)
+        key_parts = [symbol, dataset_type]
+        if timeframe is not None:
+            key_parts.append(timeframe)
+        key_parts.extend(
+            [
+                f"{trading_day.year:04d}",
+                f"{trading_day.month:02d}",
+                f"{trading_day.day:02d}.parquet",
+            ]
+        )
+        object_key = "/".join(key_parts)
+        byte_size = MarketDataParquetStore().write_dataframe(
+            object_key,
+            frame,
+        )
+        document = create_market_data_doc(
+            symbol=symbol,
+            raw_symbol=raw_symbol,
+            dataset_type=dataset_type,
+            timeframe=timeframe,
+            date=trading_day,
+            object_key=object_key,
+            row_count=len(frame.index),
+            byte_size=byte_size,
+            source_file_name="backup-test.txt",
+        )
+        document["_id"] = ObjectId()
+        from app.extensions import mongo
+
+        mongo.db.market_data_datasets.insert_one(document)
+        return document
 
 
 def _seed_portable_backup_graph(app, user_id: str) -> dict:
@@ -181,6 +234,7 @@ def _seed_portable_backup_graph(app, user_id: str) -> dict:
 
     user_oid = ObjectId(user_id)
     symbol_mappings = _build_custom_symbol_mappings()
+    market_data_mappings = _build_custom_market_data_mappings()
     with app.app_context():
         user_repo = UserRepository()
         user_repo.update_portable_settings(
@@ -189,6 +243,7 @@ def _seed_portable_backup_graph(app, user_id: str) -> dict:
             display_timezone="UTC",
             starting_equity=25000.0,
             symbol_mappings=symbol_mappings,
+            market_data_mappings=market_data_mappings,
         )
 
         account_one = create_trade_account_doc(
@@ -507,11 +562,14 @@ def _seed_portable_backup_graph(app, user_id: str) -> dict:
             deleted_media,
         ])
 
-        market_day_one_5m = create_market_data_doc(
-            symbol="MES-CUSTOM=F",
-            interval="5m",
-            date=datetime(2026, 1, 2),
-            ohlc=[
+        _store_market_dataset(
+            app,
+            symbol="MES 06-26",
+            raw_symbol="MES 06-26",
+            dataset_type="candles",
+            timeframe="5m",
+            trading_day=datetime(2026, 1, 2),
+            rows=[
                 {
                     "time": 1767364200,
                     "open": 5000.0,
@@ -521,14 +579,15 @@ def _seed_portable_backup_graph(app, user_id: str) -> dict:
                     "volume": 100,
                 }
             ],
-            bar_count=1,
         )
-        market_day_one_5m["_id"] = ObjectId()
-        market_day_one_1m = create_market_data_doc(
-            symbol="MES-CUSTOM=F",
-            interval="1m",
-            date=datetime(2026, 1, 2),
-            ohlc=[
+        _store_market_dataset(
+            app,
+            symbol="MES 06-26",
+            raw_symbol="MES 06-26",
+            dataset_type="candles",
+            timeframe="1m",
+            trading_day=datetime(2026, 1, 2),
+            rows=[
                 {
                     "time": 1767364200,
                     "open": 5000.0,
@@ -538,14 +597,15 @@ def _seed_portable_backup_graph(app, user_id: str) -> dict:
                     "volume": 50,
                 }
             ],
-            bar_count=1,
         )
-        market_day_one_1m["_id"] = ObjectId()
-        market_day_two_5m = create_market_data_doc(
-            symbol="MES-CUSTOM=F",
-            interval="5m",
-            date=datetime(2026, 1, 3),
-            ohlc=[
+        _store_market_dataset(
+            app,
+            symbol="MES 06-26",
+            raw_symbol="MES 06-26",
+            dataset_type="candles",
+            timeframe="5m",
+            trading_day=datetime(2026, 1, 3),
+            rows=[
                 {
                     "time": 1767452400,
                     "open": 5012.0,
@@ -555,14 +615,15 @@ def _seed_portable_backup_graph(app, user_id: str) -> dict:
                     "volume": 80,
                 }
             ],
-            bar_count=1,
         )
-        market_day_two_5m["_id"] = ObjectId()
-        unrelated_market = create_market_data_doc(
-            symbol="NQ=F",
-            interval="5m",
-            date=datetime(2026, 1, 2),
-            ohlc=[
+        _store_market_dataset(
+            app,
+            symbol="NQ 06-26",
+            raw_symbol="NQ 06-26",
+            dataset_type="candles",
+            timeframe="5m",
+            trading_day=datetime(2026, 1, 2),
+            rows=[
                 {
                     "time": 1767364200,
                     "open": 21000.0,
@@ -572,21 +633,14 @@ def _seed_portable_backup_graph(app, user_id: str) -> dict:
                     "volume": 70,
                 }
             ],
-            bar_count=1,
         )
-        unrelated_market["_id"] = ObjectId()
-        mongo.db.market_data_cache.insert_many([
-            market_day_one_5m,
-            market_day_one_1m,
-            market_day_two_5m,
-            unrelated_market,
-        ])
 
         return {
             "trade_one": trade_one,
             "trade_two": trade_two,
             "deleted_trade": deleted_trade,
             "symbol_mappings": symbol_mappings,
+            "market_data_mappings": market_data_mappings,
             "account_one": account_one,
             "account_two": account_two,
             "tag_one": tag_one,
@@ -628,16 +682,17 @@ def _parse_archive(archive_bytes: bytes) -> tuple[dict, dict, set[str]]:
 def _rewrite_archive_payload(
     archive_bytes: bytes, payload: dict
 ) -> bytes:
-    """Rewrite the backup payload while preserving archive media."""
+    """Rewrite the backup payload while preserving archive objects."""
     buffer = BytesIO()
     with zipfile.ZipFile(BytesIO(archive_bytes)) as source_archive:
         manifest = json.loads(
             source_archive.read("manifest.json").decode("utf-8")
         )
-        media_entries = {
+        preserved_entries = {
             name: source_archive.read(name)
             for name in source_archive.namelist()
             if name.startswith("media/")
+            or name.startswith("market-data/")
         }
 
     with zipfile.ZipFile(buffer, "w") as archive:
@@ -649,8 +704,8 @@ def _rewrite_archive_payload(
             "data.json",
             json_util.dumps(payload, indent=2).encode("utf-8"),
         )
-        for name, media_bytes in media_entries.items():
-            archive.writestr(name, media_bytes)
+        for name, entry_bytes in preserved_entries.items():
+            archive.writestr(name, entry_bytes)
 
     return buffer.getvalue()
 
@@ -689,13 +744,14 @@ def test_export_backup_is_complete_and_self_contained(
         "trades": 2,
         "executions": 3,
         "media": 2,
-        "market_data_cache": 3,
+        "market_data_datasets": 3,
     }
     assert payload["settings"] == {
         "timezone": "America/Chicago",
         "display_timezone": "UTC",
         "starting_equity": 25000.0,
         "symbol_mappings": seeded["symbol_mappings"],
+        "market_data_mappings": seeded["market_data_mappings"],
     }
 
     exported_trade_ids = {str(trade["_id"]) for trade in payload["trades"]}
@@ -707,13 +763,22 @@ def test_export_backup_is_complete_and_self_contained(
         batch["file_hash"] != "hash-deleted-trade"
         for batch in payload["import_batches"]
     )
-    assert {cache["interval"] for cache in payload["market_data_cache"]} == {
+    assert {
+        dataset["timeframe"]
+        for dataset in payload["market_data_datasets"]
+    } == {
         "1m",
         "5m",
     }
-    assert {cache["symbol"] for cache in payload["market_data_cache"]} == {
-        "MES-CUSTOM=F"
+    assert {
+        dataset["symbol"]
+        for dataset in payload["market_data_datasets"]
+    } == {
+        "MES 06-26"
     }
+    for dataset_doc in payload["market_data_datasets"]:
+        assert dataset_doc["archive_path"] in names
+        assert dataset_doc["archive_path"].startswith("market-data/")
 
     media_entries = payload["media"]
     assert len(media_entries) == 2
@@ -759,7 +824,10 @@ def test_restore_into_different_user_remaps_graph_and_media(
         "skipped": 0,
     }
     assert summary["media"] == {"created": 2, "skipped": 0}
-    assert summary["market_data_cache"] == {"upserted": 3}
+    assert summary["market_data_datasets"] == {
+        "upserted": 3,
+        "objects_restored": 3,
+    }
 
     with app.app_context():
         from app.extensions import mongo
@@ -775,6 +843,10 @@ def test_restore_into_different_user_remaps_graph_and_media(
         assert (
             restored_user["symbol_mappings"]
             == seeded["symbol_mappings"]
+        )
+        assert (
+            restored_user["market_data_mappings"]
+            == seeded["market_data_mappings"]
         )
         assert "password_hash" in restored_user
 
@@ -854,8 +926,8 @@ def test_restore_into_different_user_remaps_graph_and_media(
             assert stored in seeded["media_payloads"].values()
 
         restored_cache = list(
-            mongo.db.market_data_cache.find(
-                {"symbol": "MES-CUSTOM=F"}
+            mongo.db.market_data_datasets.find(
+                {"symbol": "MES 06-26"}
             )
         )
         assert len(restored_cache) == 3
@@ -883,13 +955,17 @@ def test_restore_merge_into_empty_user_creates_all_records(
         "trades": {"created": 2, "skipped": 0},
         "executions": {"created": 3, "skipped": 0},
         "media": {"created": 2, "skipped": 0},
-        "market_data_cache": {"upserted": 3},
+        "market_data_datasets": {
+            "upserted": 3,
+            "objects_restored": 3,
+        },
         "settings": {
             "updated": [
                 "timezone",
                 "display_timezone",
                 "starting_equity",
                 "symbol_mappings",
+                "market_data_mappings",
             ]
         },
     }
@@ -1119,6 +1195,31 @@ def test_restore_rejects_invalid_symbol_mappings(
     assert (
         response.get_json()["error"]["message"]
         == "Backup archive contains invalid symbol mappings."
+    )
+
+
+def test_restore_rejects_invalid_market_data_mappings(
+    client, app
+):
+    """Restore rejects archives with invalid market-data mappings."""
+    token, user_id = _register_and_login(
+        client, "invalid-market-data-mappings"
+    )
+    _seed_portable_backup_graph(app, user_id)
+    archive_bytes = _export_archive_bytes(client, token)
+    _, payload, _ = _parse_archive(archive_bytes)
+    payload["settings"]["market_data_mappings"]["MES"] = "   "
+
+    response = _restore_archive(
+        client,
+        token,
+        _rewrite_archive_payload(archive_bytes, payload),
+    )
+
+    assert response.status_code == 400
+    assert (
+        response.get_json()["error"]["message"]
+        == "Backup archive contains invalid market data mappings."
     )
 
 

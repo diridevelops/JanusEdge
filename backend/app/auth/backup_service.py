@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from datetime import timedelta
 from io import BytesIO
+from pathlib import Path
 from typing import Any, Dict, Iterable, List
 import json
 import zipfile
@@ -13,8 +14,10 @@ from bson import ObjectId, json_util
 
 from app.auth.schemas import BackupManifestSchema
 from app.market_data.symbol_mapper import (
+    get_effective_market_data_mappings,
     get_effective_symbol_mappings,
-    map_to_yahoo,
+    resolve_market_data_symbols,
+    validate_market_data_mappings,
     validate_symbol_mappings,
 )
 from app.media.service import MediaService
@@ -30,7 +33,11 @@ from app.repositories.media_repo import MediaRepository
 from app.repositories.tag_repo import TagRepository
 from app.repositories.trade_repo import TradeRepository
 from app.repositories.user_repo import UserRepository
-from app.storage import get_bucket, get_client
+from app.storage import (
+    get_bucket,
+    get_client,
+    get_market_data_bucket,
+)
 from app.utils.errors import ValidationError
 from app.utils.trade_fingerprint import (
     build_trade_fingerprint,
@@ -43,6 +50,7 @@ BACKUP_ARCHIVE_VERSION = "1.0"
 MANIFEST_PATH = "manifest.json"
 DATA_PATH = "data.json"
 MEDIA_PREFIX = "media"
+MARKET_DATA_PREFIX = "market-data"
 
 
 class PortableBackupService:
@@ -80,6 +88,10 @@ class PortableBackupService:
                 json_util.dumps(payload, indent=2).encode("utf-8"),
             )
             self._write_media_files(archive, payload["media"])
+            self._write_market_data_files(
+                archive,
+                payload["market_data_datasets"],
+            )
 
         archive_buffer.seek(0)
         filename = (
@@ -95,7 +107,12 @@ class PortableBackupService:
         if not archive_bytes:
             raise ValidationError("Backup archive is empty.")
 
-        manifest, payload, media_bytes = self._load_archive(
+        (
+            manifest,
+            payload,
+            media_bytes,
+            market_data_bytes,
+        ) = self._load_archive(
             archive_bytes
         )
         del manifest
@@ -115,6 +132,15 @@ class PortableBackupService:
                 destination_user.get("symbol_mappings")
             )
         )
+        restored_market_data_mappings = (
+            get_effective_market_data_mappings(
+                payload["settings"].get("market_data_mappings")
+            )
+            if "market_data_mappings" in payload["settings"]
+            else get_effective_market_data_mappings(
+                destination_user.get("market_data_mappings")
+            )
+        )
         self.user_repo.update_portable_settings(
             user_id=user_id,
             timezone=payload["settings"].get(
@@ -132,6 +158,7 @@ class PortableBackupService:
                 destination_user.get("starting_equity", 10000.0),
             ),
             symbol_mappings=restored_symbol_mappings,
+            market_data_mappings=restored_market_data_mappings,
         )
 
         settings_updated = [
@@ -141,6 +168,8 @@ class PortableBackupService:
         ]
         if "symbol_mappings" in payload["settings"]:
             settings_updated.append("symbol_mappings")
+        if "market_data_mappings" in payload["settings"]:
+            settings_updated.append("market_data_mappings")
 
         summary = {
             "accounts": {"created": 0, "reused": 0},
@@ -152,7 +181,10 @@ class PortableBackupService:
             "trades": {"created": 0, "skipped": 0},
             "executions": {"created": 0, "skipped": 0},
             "media": {"created": 0, "skipped": 0},
-            "market_data_cache": {"upserted": 0},
+            "market_data_datasets": {
+                "upserted": 0,
+                "objects_restored": 0,
+            },
             "settings": {"updated": settings_updated},
         }
 
@@ -201,7 +233,8 @@ class PortableBackupService:
             summary,
         )
         self._restore_market_data(
-            payload["market_data_cache"],
+            payload["market_data_datasets"],
+            market_data_bytes,
             summary,
         )
 
@@ -260,6 +293,11 @@ class PortableBackupService:
                         user.get("symbol_mappings")
                     )
                 ),
+                "market_data_mappings": (
+                    get_effective_market_data_mappings(
+                        user.get("market_data_mappings")
+                    )
+                ),
             },
             "accounts": self.account_repo.find_by_user(user_id),
             "tags": self.tag_repo.find_by_user(user_id),
@@ -269,9 +307,11 @@ class PortableBackupService:
             "trades": trades,
             "executions": executions,
             "media": payload_media,
-            "market_data_cache": self._collect_market_data(
+            "market_data_datasets": self._collect_market_data(
                 trades,
-                user.get("symbol_mappings"),
+                get_effective_market_data_mappings(
+                    user.get("market_data_mappings")
+                ),
             ),
         }
 
@@ -290,11 +330,40 @@ class PortableBackupService:
                 "trades": len(payload["trades"]),
                 "executions": len(payload["executions"]),
                 "media": len(payload["media"]),
-                "market_data_cache": len(
-                    payload["market_data_cache"]
+                "market_data_datasets": len(
+                    payload["market_data_datasets"]
                 ),
             },
         }
+
+    def _write_market_data_files(
+        self,
+        archive: zipfile.ZipFile,
+        dataset_docs: List[dict],
+    ) -> None:
+        """Write Parquet market-data objects into the ZIP archive."""
+
+        if not dataset_docs:
+            return
+
+        client = get_client()
+        bucket = get_market_data_bucket()
+
+        for dataset_doc in dataset_docs:
+            response = client.get_object(
+                bucket,
+                dataset_doc["object_key"],
+            )
+            try:
+                archive.writestr(
+                    dataset_doc["archive_path"],
+                    response.read(),
+                )
+            finally:
+                if hasattr(response, "close"):
+                    response.close()
+                if hasattr(response, "release_conn"):
+                    response.release_conn()
 
     def _write_media_files(
         self, archive: zipfile.ZipFile, media_docs: List[dict]
@@ -323,7 +392,7 @@ class PortableBackupService:
 
     def _load_archive(
         self, archive_bytes: bytes
-    ) -> tuple[dict, dict, dict[str, bytes]]:
+    ) -> tuple[dict, dict, dict[str, bytes], dict[str, bytes]]:
         """Load and validate the ZIP archive contents."""
         try:
             archive = zipfile.ZipFile(BytesIO(archive_bytes))
@@ -383,7 +452,23 @@ class PortableBackupService:
                     archive_path
                 )
 
-            return validated_manifest, payload, media_bytes
+            market_data_bytes: dict[str, bytes] = {}
+            for dataset_doc in payload["market_data_datasets"]:
+                archive_path = dataset_doc.get("archive_path")
+                if not archive_path or archive_path not in names:
+                    raise ValidationError(
+                        "Backup archive market-data content is incomplete."
+                    )
+                market_data_bytes[archive_path] = archive.read(
+                    archive_path
+                )
+
+            return (
+                validated_manifest,
+                payload,
+                media_bytes,
+                market_data_bytes,
+            )
 
     def _validate_payload_structure(self, payload: dict) -> None:
         """Validate the data payload shape before restore."""
@@ -395,7 +480,7 @@ class PortableBackupService:
             "trades",
             "executions",
             "media",
-            "market_data_cache",
+            "market_data_datasets",
         }
         if not isinstance(payload, dict) or not required_keys.issubset(
             payload
@@ -441,6 +526,19 @@ class PortableBackupService:
             except ValueError as exc:
                 raise ValidationError(
                     "Backup archive contains invalid symbol mappings."
+                ) from exc
+
+        market_data_mappings = settings.get(
+            "market_data_mappings"
+        )
+        if market_data_mappings is not None:
+            try:
+                validate_market_data_mappings(
+                    market_data_mappings
+                )
+            except ValueError as exc:
+                raise ValidationError(
+                    "Backup archive contains invalid market data mappings."
                 ) from exc
 
     def _restore_accounts(
@@ -659,34 +757,55 @@ class PortableBackupService:
             summary["media"]["created"] += 1
 
     def _restore_market_data(
-        self, market_data_docs: List[dict], summary: dict
+        self,
+        market_data_docs: List[dict],
+        market_data_bytes: dict[str, bytes],
+        summary: dict,
     ) -> None:
-        """Restore market data cache slices by natural cache key."""
+        """Restore market-data metadata and referenced Parquet objects."""
+
+        client = get_client()
+        bucket = get_market_data_bucket()
+
         for source_doc in market_data_docs:
+            archive_path = source_doc["archive_path"]
+            payload = market_data_bytes[archive_path]
+            client.put_object(
+                bucket,
+                source_doc["object_key"],
+                BytesIO(payload),
+                length=len(payload),
+                content_type="application/x-parquet",
+            )
+
             new_doc = deepcopy(source_doc)
+            new_doc.pop("archive_path", None)
             new_doc["_id"] = ObjectId()
             self.market_data_repo.upsert_document(new_doc)
-            summary["market_data_cache"]["upserted"] += 1
+            summary["market_data_datasets"]["upserted"] += 1
+            summary["market_data_datasets"][
+                "objects_restored"
+            ] += 1
 
     def _collect_market_data(
         self,
         trades: List[dict],
-        symbol_mappings: dict | None = None,
+        market_data_mappings: dict | None = None,
     ) -> List[dict]:
-        """Collect cached market data slices related to exported trades."""
+        """Collect market-data datasets related to exported trades."""
         if not trades:
             return []
 
-        symbols: set[str] = set()
+        symbols: list[str] = []
         dates = set()
         for trade in trades:
-            symbols.add(
-                map_to_yahoo(
-                    trade.get("symbol", ""),
-                    trade.get("raw_symbol"),
-                    symbol_mappings,
-                )
-            )
+            for resolved_symbol in resolve_market_data_symbols(
+                trade.get("symbol", ""),
+                trade.get("raw_symbol"),
+                market_data_mappings,
+            ):
+                if resolved_symbol not in symbols:
+                    symbols.append(resolved_symbol)
 
             entry_time = trade.get("entry_time")
             exit_time = trade.get("exit_time") or entry_time
@@ -696,10 +815,22 @@ class PortableBackupService:
                 dates.add(current_date)
                 current_date += timedelta(days=1)
 
-        return self.market_data_repo.find_by_symbols_and_dates(
+        datasets = self.market_data_repo.find_by_symbols_and_dates(
             symbols,
             dates,
         )
+        payload: list[dict] = []
+        for dataset in datasets:
+            dataset_copy = deepcopy(dataset)
+            dataset_copy["archive_path"] = (
+                f"{MARKET_DATA_PREFIX}/"
+                f"{self._sanitize_filename(dataset['symbol'])}/"
+                f"{dataset['dataset_type']}/"
+                f"{self._sanitize_filename(dataset.get('timeframe') or 'raw')}/"
+                f"{self._sanitize_filename(Path(dataset['object_key']).name)}"
+            )
+            payload.append(dataset_copy)
+        return payload
 
     @staticmethod
     def _sanitize_filename(filename: str) -> str:

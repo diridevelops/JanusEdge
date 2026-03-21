@@ -81,12 +81,28 @@ def init_db(db: Database) -> None:
         [("user_id", 1), ("category", 1)]
     )
 
-    # Market Data Cache
-    db.market_data_cache.create_index(
-        [("symbol", 1), ("interval", 1), ("date", 1)],
+    # Market data datasets
+    db.market_data_datasets.create_index(
+        [
+            ("symbol", 1),
+            ("dataset_type", 1),
+            ("timeframe", 1),
+            ("date", 1),
+        ],
         unique=True,
     )
-    db.market_data_cache.create_index([("fetched_at", 1)])
+    db.market_data_datasets.create_index(
+        [("dataset_type", 1), ("timeframe", 1), ("date", 1)]
+    )
+    db.market_data_datasets.create_index([("status", 1)])
+
+    # Market data import batches
+    db.market_data_import_batches.create_index(
+        [("user_id", 1), ("created_at", -1)]
+    )
+    db.market_data_import_batches.create_index(
+        [("user_id", 1), ("status", 1), ("created_at", -1)]
+    )
 
     # Audit Logs
     db.audit_logs.create_index(

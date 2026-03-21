@@ -156,10 +156,10 @@ The trade detail page shows a market-data error when OHLC data cannot be fetched
 Common causes visible in the code:
 
 - intraday data older than roughly two months is unavailable from the current source
-- the imported symbol does not resolve to the correct Yahoo symbol
-- no custom symbol mapping exists for that instrument
+- the imported symbol does not match any stored dataset symbol
+- an explicit market-data mapping is required but not configured
 
-Check the symbol mappings in the Settings page if a trade symbol does not line up with Yahoo Finance naming.
+Point-value symbol mappings do not change chart lookup. Check market-data mappings and dataset coverage if a trade symbol should resolve to another stored symbol.
 
 ## Resetting Local State
 

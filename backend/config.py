@@ -68,6 +68,10 @@ class Config:
     MINIO_BUCKET = _get_env(
         "MINIO_BUCKET", "janusedge-media"
     )
+    MINIO_MARKET_DATA_BUCKET = _get_env(
+        "MINIO_MARKET_DATA_BUCKET",
+        "janusedge-market-data",
+    )
     MINIO_USE_SSL = (
         _get_env("MINIO_USE_SSL", "false").lower()
         == "true"

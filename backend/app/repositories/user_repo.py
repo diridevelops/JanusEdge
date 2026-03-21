@@ -151,6 +151,33 @@ class UserRepository(BaseRepository):
             },
         )
 
+    def update_market_data_mappings(
+        self,
+        user_id: str,
+        market_data_mappings: dict,
+    ) -> bool:
+        """
+        Update a user's market-data mappings.
+
+        Parameters:
+            user_id: The user's ObjectId string.
+            market_data_mappings: New market-data mapping settings.
+
+        Returns:
+            True if updated successfully.
+        """
+        from app.utils.datetime_utils import utc_now
+
+        return self.update_one(
+            user_id,
+            {
+                "$set": {
+                    "market_data_mappings": market_data_mappings,
+                    "updated_at": utc_now(),
+                }
+            },
+        )
+
     def update_portable_settings(
         self,
         user_id: str,
@@ -158,6 +185,7 @@ class UserRepository(BaseRepository):
         display_timezone: str,
         starting_equity: float,
         symbol_mappings: dict,
+        market_data_mappings: dict,
     ) -> bool:
         """Update all portable user settings in one write."""
         from app.utils.datetime_utils import utc_now
@@ -170,6 +198,7 @@ class UserRepository(BaseRepository):
                     "display_timezone": display_timezone,
                     "starting_equity": starting_equity,
                     "symbol_mappings": symbol_mappings,
+                    "market_data_mappings": market_data_mappings,
                     "updated_at": utc_now(),
                 }
             },

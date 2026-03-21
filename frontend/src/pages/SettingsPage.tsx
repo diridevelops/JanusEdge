@@ -5,6 +5,7 @@ import {
     changePassword,
     exportBackup,
     restoreBackup,
+  updateMarketDataMappings,
     updateDisplayTimezone,
     updateStartingEquity,
     updateSymbolMappings,
@@ -13,7 +14,11 @@ import {
 import { PageHeader } from '../components/ui/PageHeader';
 import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
-import type { RestoreSummary, SymbolMappings } from '../types/auth.types';
+import type {
+  MarketDataMappings,
+  RestoreSummary,
+  SymbolMappings,
+} from '../types/auth.types';
 import { APP_NAME } from '../utils/constants';
 
 const TIMEZONES = [
@@ -64,11 +69,18 @@ function getErrorMessage(error: unknown, fallbackMessage: string): string {
 interface SymbolMappingRow {
   id: string;
   baseSymbol: string;
-  yahooSymbol: string;
   dollarValuePerPoint: string;
 }
 
+interface MarketDataMappingRow {
+  id: string;
+  sourceSymbol: string;
+  targetSymbol: string;
+}
+
 const EMPTY_SYMBOL_MAPPINGS: SymbolMappings = {};
+const EMPTY_MARKET_DATA_MAPPINGS: MarketDataMappings = {};
+const COMPACT_INPUT_CLASS_NAME = 'input-field h-9 px-3 py-1.5 text-sm';
 
 function createRowId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -80,14 +92,23 @@ function createRowId(): string {
 
 function createMappingRow(
   baseSymbol = '',
-  yahooSymbol = '',
   dollarValuePerPoint = ''
 ): SymbolMappingRow {
   return {
     id: createRowId(),
     baseSymbol,
-    yahooSymbol,
     dollarValuePerPoint,
+  };
+}
+
+function createMarketDataMappingRow(
+  sourceSymbol = '',
+  targetSymbol = ''
+): MarketDataMappingRow {
+  return {
+    id: createRowId(),
+    sourceSymbol,
+    targetSymbol,
   };
 }
 
@@ -95,7 +116,6 @@ function recordToMappingRows(entries: SymbolMappings): SymbolMappingRow[] {
   return Object.entries(entries).map(([baseSymbol, mapping]) =>
     createMappingRow(
       baseSymbol,
-      mapping.yahoo_symbol,
       String(mapping.dollar_value_per_point)
     )
   );
@@ -104,9 +124,26 @@ function recordToMappingRows(entries: SymbolMappings): SymbolMappingRow[] {
 function updateMappingRow(
   rows: SymbolMappingRow[],
   rowId: string,
-  field: 'baseSymbol' | 'yahooSymbol' | 'dollarValuePerPoint',
+  field: 'baseSymbol' | 'dollarValuePerPoint',
   value: string
 ): SymbolMappingRow[] {
+  return rows.map((row) => (row.id === rowId ? { ...row, [field]: value } : row));
+}
+
+function recordToMarketDataMappingRows(
+  entries: MarketDataMappings
+): MarketDataMappingRow[] {
+  return Object.entries(entries).map(([sourceSymbol, targetSymbol]) =>
+    createMarketDataMappingRow(sourceSymbol, targetSymbol)
+  );
+}
+
+function updateMarketDataMappingRow(
+  rows: MarketDataMappingRow[],
+  rowId: string,
+  field: 'sourceSymbol' | 'targetSymbol',
+  value: string
+): MarketDataMappingRow[] {
   return rows.map((row) => (row.id === rowId ? { ...row, [field]: value } : row));
 }
 
@@ -115,15 +152,14 @@ function buildSymbolMappings(rows: SymbolMappingRow[]): SymbolMappings {
 
   for (const row of rows) {
     const baseSymbol = row.baseSymbol.trim();
-    const yahooSymbol = row.yahooSymbol.trim();
     const dollarValuePerPoint = row.dollarValuePerPoint.trim();
 
-    if (!baseSymbol && !yahooSymbol && !dollarValuePerPoint) {
+    if (!baseSymbol && !dollarValuePerPoint) {
       continue;
     }
 
-    if (!baseSymbol || !yahooSymbol || !dollarValuePerPoint) {
-      throw new Error('Each symbol mapping row must include all three fields.');
+    if (!baseSymbol || !dollarValuePerPoint) {
+      throw new Error('Each symbol mapping row must include a base symbol and dollar value per point.');
     }
 
     const normalizedBaseSymbol = baseSymbol.toUpperCase();
@@ -139,9 +175,38 @@ function buildSymbolMappings(rows: SymbolMappingRow[]): SymbolMappings {
     }
 
     result[normalizedBaseSymbol] = {
-      yahoo_symbol: yahooSymbol,
       dollar_value_per_point: numericDollarValuePerPoint,
     };
+  }
+
+  return result;
+}
+
+function buildMarketDataMappings(
+  rows: MarketDataMappingRow[]
+): MarketDataMappings {
+  const result: MarketDataMappings = {};
+
+  for (const row of rows) {
+    const sourceSymbol = row.sourceSymbol.trim();
+    const targetSymbol = row.targetSymbol.trim();
+
+    if (!sourceSymbol && !targetSymbol) {
+      continue;
+    }
+
+    if (!sourceSymbol || !targetSymbol) {
+      throw new Error('Each market-data mapping row must include both a source symbol and a target symbol.');
+    }
+
+    const normalizedSourceSymbol = sourceSymbol.toUpperCase();
+    const normalizedTargetSymbol = targetSymbol.toUpperCase();
+
+    if (Object.prototype.hasOwnProperty.call(result, normalizedSourceSymbol)) {
+      throw new Error(`Duplicate market-data source symbol: ${normalizedSourceSymbol}`);
+    }
+
+    result[normalizedSourceSymbol] = normalizedTargetSymbol;
   }
 
   return result;
@@ -177,7 +242,11 @@ export function SettingsPage() {
 
   // Symbol mappings
   const [symbolMappingRows, setSymbolMappingRows] = useState<SymbolMappingRow[]>([]);
-  const [mappingsLoading, setMappingsLoading] = useState(false);
+  const [symbolMappingsLoading, setSymbolMappingsLoading] = useState(false);
+
+  // Market-data mappings
+  const [marketDataMappingRows, setMarketDataMappingRows] = useState<MarketDataMappingRow[]>([]);
+  const [marketDataMappingsLoading, setMarketDataMappingsLoading] = useState(false);
 
   // Backup / restore
   const [exportLoading, setExportLoading] = useState(false);
@@ -197,6 +266,11 @@ export function SettingsPage() {
     const symbolMappings = user?.symbol_mappings ?? EMPTY_SYMBOL_MAPPINGS;
     setSymbolMappingRows(recordToMappingRows(symbolMappings));
   }, [user?.symbol_mappings]);
+
+  useEffect(() => {
+    const marketDataMappings = user?.market_data_mappings ?? EMPTY_MARKET_DATA_MAPPINGS;
+    setMarketDataMappingRows(recordToMarketDataMappingRows(marketDataMappings));
+  }, [user?.market_data_mappings]);
 
   async function handleChangePassword(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -292,7 +366,7 @@ export function SettingsPage() {
       return;
     }
 
-    setMappingsLoading(true);
+    setSymbolMappingsLoading(true);
     try {
       await updateSymbolMappings(symbolMappings);
       addToast('success', 'Symbol mappings updated successfully.');
@@ -300,7 +374,35 @@ export function SettingsPage() {
     } catch (err: unknown) {
       addToast('error', getErrorMessage(err, 'Failed to update symbol mappings.'));
     } finally {
-      setMappingsLoading(false);
+      setSymbolMappingsLoading(false);
+    }
+  }
+
+  async function handleUpdateMarketDataMappings(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+
+    let marketDataMappings: MarketDataMappings;
+    try {
+      marketDataMappings = buildMarketDataMappings(marketDataMappingRows);
+    } catch (error: unknown) {
+      addToast(
+        'error',
+        error instanceof Error
+          ? error.message
+          : 'Failed to validate market-data mappings.'
+      );
+      return;
+    }
+
+    setMarketDataMappingsLoading(true);
+    try {
+      await updateMarketDataMappings(marketDataMappings);
+      addToast('success', 'Market-data mappings updated successfully.');
+      await refreshProfile();
+    } catch (err: unknown) {
+      addToast('error', getErrorMessage(err, 'Failed to update market-data mappings.'));
+    } finally {
+      setMarketDataMappingsLoading(false);
     }
   }
 
@@ -486,10 +588,10 @@ export function SettingsPage() {
             Symbol Mappings
           </h2>
           <p className="text-xs text-gray-500 dark:text-gray-400">
-            Configure normalized base symbols that match imported symbols by prefix. When an imported symbol starts with a configured base symbol, {APP_NAME} uses the mapped Yahoo Finance symbol and dollar value per point.
+            Configure normalized base symbols that match imported symbols by prefix. When an imported symbol starts with a configured base symbol, {APP_NAME} uses the configured dollar value per point for analytics and trade calculations.
           </p>
           <p className="text-xs text-gray-500 dark:text-gray-400">
-            Changes apply to future market data downloads, chart refreshes, and backup exports.
+            Changes apply to future trade imports, stop-analysis calculations, and backup exports.
           </p>
         </div>
 
@@ -506,87 +608,84 @@ export function SettingsPage() {
               </div>
             </div>
 
-            <div className="space-y-3">
-              {symbolMappingRows.length > 0 ? (
-                symbolMappingRows.map((row) => (
-                  <div
-                    key={row.id}
-                    className="grid gap-3 rounded-md border border-gray-200 bg-gray-50 p-3 dark:border-gray-700 dark:bg-gray-900/30 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto]"
-                  >
-                    <div>
-                      <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">
-                        Normalized Base Symbol
-                      </label>
-                      <input
-                        type="text"
-                        className="input-field mt-1"
-                        value={row.baseSymbol}
-                        onChange={(event) => {
-                          setSymbolMappingRows((current) =>
-                            updateMappingRow(current, row.id, 'baseSymbol', event.target.value)
-                          );
-                        }}
-                        placeholder="MES"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">
-                        Yahoo Finance Symbol
-                      </label>
-                      <input
-                        type="text"
-                        className="input-field mt-1"
-                        value={row.yahooSymbol}
-                        onChange={(event) => {
-                          setSymbolMappingRows((current) =>
-                            updateMappingRow(current, row.id, 'yahooSymbol', event.target.value)
-                          );
-                        }}
-                        placeholder="MES=F"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">
-                        Dollar Value Per Point
-                      </label>
-                      <input
-                        type="number"
-                        min="0"
-                        step="any"
-                        className="input-field mt-1"
-                        value={row.dollarValuePerPoint}
-                        onChange={(event) => {
-                          setSymbolMappingRows((current) =>
-                            updateMappingRow(
-                              current,
-                              row.id,
-                              'dollarValuePerPoint',
-                              event.target.value
-                            )
-                          );
-                        }}
-                        placeholder="5"
-                      />
-                    </div>
-                    <div className="lg:pt-6">
-                      <button
-                        type="button"
-                        className="inline-flex items-center gap-1.5 text-sm font-medium text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
-                        onClick={() => {
-                          setSymbolMappingRows((current) => current.filter((item) => item.id !== row.id));
-                        }}
+            <div className="overflow-auto rounded-lg border border-gray-200 dark:border-gray-700">
+              <table className="min-w-full divide-y divide-gray-200 text-sm dark:divide-gray-700">
+                <thead className="bg-gray-50 dark:bg-gray-800">
+                  <tr>
+                    <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                      Normalized Base Symbol
+                    </th>
+                    <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                      Dollar Value Per Point
+                    </th>
+                    <th className="w-24 px-3 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                      Action
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                  {symbolMappingRows.length > 0 ? (
+                    symbolMappingRows.map((row) => (
+                      <tr key={row.id} className="bg-white align-top dark:bg-gray-800">
+                        <td className="px-3 py-2">
+                          <input
+                            type="text"
+                            className={COMPACT_INPUT_CLASS_NAME}
+                            value={row.baseSymbol}
+                            onChange={(event) => {
+                              setSymbolMappingRows((current) =>
+                                updateMappingRow(current, row.id, 'baseSymbol', event.target.value)
+                              );
+                            }}
+                            placeholder="MES"
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            type="number"
+                            min="0"
+                            step="any"
+                            className={COMPACT_INPUT_CLASS_NAME}
+                            value={row.dollarValuePerPoint}
+                            onChange={(event) => {
+                              setSymbolMappingRows((current) =>
+                                updateMappingRow(
+                                  current,
+                                  row.id,
+                                  'dollarValuePerPoint',
+                                  event.target.value
+                                )
+                              );
+                            }}
+                            placeholder="5"
+                          />
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <button
+                            type="button"
+                            className="inline-flex h-9 items-center gap-1.5 text-sm font-medium text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+                            onClick={() => {
+                              setSymbolMappingRows((current) => current.filter((item) => item.id !== row.id));
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" aria-hidden="true" />
+                            Remove
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr className="bg-white dark:bg-gray-800">
+                      <td
+                        colSpan={3}
+                        className="px-3 py-4 text-xs text-gray-500 dark:text-gray-400"
                       >
-                        <Trash2 className="h-4 w-4" aria-hidden="true" />
-                        Remove
-                      </button>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <p className="rounded-md border border-dashed border-gray-300 px-3 py-4 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
-                  No base symbol rules configured.
-                </p>
-              )}
+                        No base symbol rules configured.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
 
             <div>
@@ -601,8 +700,123 @@ export function SettingsPage() {
             </div>
           </div>
 
-          <button type="submit" className="btn-primary" disabled={mappingsLoading}>
-            {mappingsLoading ? 'Saving…' : 'Save Symbol Mappings'}
+          <button type="submit" className="btn-primary" disabled={symbolMappingsLoading}>
+            {symbolMappingsLoading ? 'Saving…' : 'Save Symbol Mappings'}
+          </button>
+        </form>
+      </div>
+
+      {/* Market Data Mappings */}
+      <div className="card p-4">
+        <div className="space-y-2">
+          <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+            Market Data Mappings
+          </h2>
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            By default, each symbol maps to itself. Add an explicit mapping when charts, backtesting, or related market-data features should resolve one symbol through another stored symbol.
+          </p>
+          <p className="text-xs text-gray-500 dark:text-gray-400">
+            Example: adding MES -&gt; ES makes {APP_NAME} use ES market data for MES.
+          </p>
+        </div>
+
+        <form onSubmit={handleUpdateMarketDataMappings} className="mt-4 space-y-6">
+          <div className="overflow-auto rounded-lg border border-gray-200 dark:border-gray-700">
+            <table className="min-w-full divide-y divide-gray-200 text-sm dark:divide-gray-700">
+              <thead className="bg-gray-50 dark:bg-gray-800">
+                <tr>
+                  <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    Source Symbol
+                  </th>
+                  <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    Use Market Data From
+                  </th>
+                  <th className="w-24 px-3 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    Action
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                {marketDataMappingRows.length > 0 ? (
+                  marketDataMappingRows.map((row) => (
+                    <tr key={row.id} className="bg-white align-top dark:bg-gray-800">
+                      <td className="px-3 py-2">
+                        <input
+                          type="text"
+                          className={COMPACT_INPUT_CLASS_NAME}
+                          value={row.sourceSymbol}
+                          onChange={(event) => {
+                            setMarketDataMappingRows((current) =>
+                              updateMarketDataMappingRow(
+                                current,
+                                row.id,
+                                'sourceSymbol',
+                                event.target.value
+                              )
+                            );
+                          }}
+                          placeholder="MES"
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          type="text"
+                          className={COMPACT_INPUT_CLASS_NAME}
+                          value={row.targetSymbol}
+                          onChange={(event) => {
+                            setMarketDataMappingRows((current) =>
+                              updateMarketDataMappingRow(
+                                current,
+                                row.id,
+                                'targetSymbol',
+                                event.target.value
+                              )
+                            );
+                          }}
+                          placeholder="ES"
+                        />
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <button
+                          type="button"
+                          className="inline-flex h-9 items-center gap-1.5 text-sm font-medium text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+                          onClick={() => {
+                            setMarketDataMappingRows((current) => current.filter((item) => item.id !== row.id));
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" aria-hidden="true" />
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr className="bg-white dark:bg-gray-800">
+                    <td
+                      colSpan={3}
+                      className="px-3 py-4 text-xs text-gray-500 dark:text-gray-400"
+                    >
+                      No explicit market-data mappings configured.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <div>
+            <button
+              type="button"
+              className="btn-secondary inline-flex items-center gap-2"
+              onClick={() => setMarketDataMappingRows((current) => [...current, createMarketDataMappingRow()])}
+            >
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              Add Row
+            </button>
+          </div>
+
+          <button type="submit" className="btn-primary" disabled={marketDataMappingsLoading}>
+            {marketDataMappingsLoading ? 'Saving…' : 'Save Market Data Mappings'}
           </button>
         </form>
       </div>

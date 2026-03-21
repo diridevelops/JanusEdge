@@ -5,8 +5,11 @@ from flask_jwt_extended import create_access_token
 
 from app.auth.backup_service import PortableBackupService
 from app.market_data.symbol_mapper import (
+    get_effective_market_data_mappings,
     get_effective_symbol_mappings,
+    get_default_market_data_mappings,
     get_default_symbol_mappings,
+    validate_market_data_mappings,
 )
 from app.models.user import create_user_doc
 from app.repositories.user_repo import UserRepository
@@ -68,6 +71,7 @@ class AuthService:
             password_hash=password_hash,
             timezone=timezone,
             symbol_mappings=get_default_symbol_mappings(),
+            market_data_mappings=get_default_market_data_mappings(),
         )
         user_id = self.user_repo.insert_one(user_doc)
 
@@ -313,6 +317,49 @@ class AuthService:
         updated_user["symbol_mappings"] = normalized_mappings
         return self._serialize_user_profile(updated_user)
 
+    def update_market_data_mappings(
+        self,
+        user_id: str,
+        market_data_mappings: dict,
+    ) -> dict:
+        """
+        Update a user's market-data mappings.
+
+        Parameters:
+            user_id: The user's ObjectId string.
+            market_data_mappings: Replacement mapping configuration.
+
+        Returns:
+            Updated user profile dict.
+
+        Raises:
+            AuthenticationError: If user not found.
+            ValidationError: If mappings are invalid.
+        """
+        user = self.user_repo.find_by_id(user_id)
+        if not user:
+            raise AuthenticationError("User not found.")
+
+        try:
+            normalized_mappings = (
+                validate_market_data_mappings(
+                    market_data_mappings
+                )
+            )
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from exc
+
+        self.user_repo.update_market_data_mappings(
+            user_id,
+            normalized_mappings,
+        )
+
+        updated_user = dict(user)
+        updated_user["market_data_mappings"] = (
+            normalized_mappings
+        )
+        return self._serialize_user_profile(updated_user)
+
     def export_backup(
         self, user_id: str
     ) -> tuple[object, str]:
@@ -344,5 +391,10 @@ class AuthService:
             ),
             "symbol_mappings": get_effective_symbol_mappings(
                 user.get("symbol_mappings")
+            ),
+            "market_data_mappings": (
+                get_effective_market_data_mappings(
+                    user.get("market_data_mappings")
+                )
             ),
         }

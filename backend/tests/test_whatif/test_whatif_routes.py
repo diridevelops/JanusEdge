@@ -13,7 +13,7 @@ from config import TestingConfig
 
 
 @pytest.fixture
-def app():
+def app(patch_minio):
     application = create_app(TestingConfig)
     yield application
 
@@ -32,7 +32,8 @@ def clean_db(app):
         for col in [
             "users", "trades", "executions",
             "trade_accounts", "tags",
-            "market_data_cache",
+            "market_data_datasets",
+            "market_data_import_batches",
         ]:
             mongo.db[col].delete_many({})
     yield
@@ -67,6 +68,18 @@ def _update_symbol_mappings(client, token, symbol_mappings):
     response = client.put(
         "/api/auth/symbol-mappings",
         json={"symbol_mappings": symbol_mappings},
+        headers=_auth(token),
+    )
+    assert response.status_code == 200
+
+
+def _update_market_data_mappings(
+    client, token, market_data_mappings
+):
+    """Persist market-data mappings for the authenticated test user."""
+    response = client.put(
+        "/api/auth/market-data-mappings",
+        json={"market_data_mappings": market_data_mappings},
         headers=_auth(token),
     )
     assert response.status_code == 200
@@ -452,7 +465,7 @@ class TestSimulate:
         assert data["what_if"]["profit_factor"] == expected_pf
 
     def test_winners_are_skipped_and_converted_are_not_simulated(
-        self, client, app
+        self, client, app, seed_market_data_dataset
     ):
         """Winner trades count as skipped; converted trades do not."""
         token = _register_and_login(client)
@@ -469,35 +482,31 @@ class TestSimulate:
         )
         assert update_resp.status_code == 200
 
-        with app.app_context():
-            from app.extensions import mongo
-
-            mongo.db.market_data_cache.insert_one({
-                "symbol": "MES=F",
-                "interval": "1m",
-                "date": datetime(2026, 1, 5),
-                "ohlc": [
-                    {
-                        "time": int(
-                            datetime(
-                                2026,
-                                1,
-                                5,
-                                10,
-                                0,
-                                tzinfo=timezone.utc,
-                            ).timestamp()
-                        ),
-                        "open": 5000.0,
-                        "high": 5006.0,
-                        "low": 4990.0,
-                        "close": 5004.0,
-                    }
-                ],
-                "bar_count": 1,
-                "fetched_at": datetime(2026, 1, 5),
-                "source": "test",
-            })
+        seed_market_data_dataset(
+            symbol="MES",
+            dataset_type="candles",
+            timeframe="1m",
+            trading_day=datetime(2026, 1, 5).date(),
+            rows=[
+                {
+                    "time": int(
+                        datetime(
+                            2026,
+                            1,
+                            5,
+                            10,
+                            0,
+                            tzinfo=timezone.utc,
+                        ).timestamp()
+                    ),
+                    "open": 5000.0,
+                    "high": 5006.0,
+                    "low": 4990.0,
+                    "close": 5004.0,
+                    "volume": 1,
+                }
+            ],
+        )
 
         resp = client.post(
             "/api/whatif/simulate?symbol=MES",
@@ -524,7 +533,7 @@ class TestSimulate:
         assert converted_detail["converted"] is True
 
     def test_market_replay_can_convert_with_smaller_widening_than_wish_stop(
-        self, client, app
+        self, client, app, seed_market_data_dataset
     ):
         """Conversion must be based on OHLC replay, not wish-stop alone."""
         token = _register_and_login(client)
@@ -540,35 +549,31 @@ class TestSimulate:
         )
         assert update_resp.status_code == 200
 
-        with app.app_context():
-            from app.extensions import mongo
-
-            mongo.db.market_data_cache.insert_one({
-                "symbol": "MES=F",
-                "interval": "1m",
-                "date": datetime(2026, 1, 5),
-                "ohlc": [
-                    {
-                        "time": int(
-                            datetime(
-                                2026,
-                                1,
-                                5,
-                                10,
-                                0,
-                                tzinfo=timezone.utc,
-                            ).timestamp()
-                        ),
-                        "open": 5000.0,
-                        "high": 5006.0,
-                        "low": 4986.5,
-                        "close": 5004.0,
-                    }
-                ],
-                "bar_count": 1,
-                "fetched_at": datetime(2026, 1, 5),
-                "source": "test",
-            })
+        seed_market_data_dataset(
+            symbol="MES",
+            dataset_type="candles",
+            timeframe="1m",
+            trading_day=datetime(2026, 1, 5).date(),
+            rows=[
+                {
+                    "time": int(
+                        datetime(
+                            2026,
+                            1,
+                            5,
+                            10,
+                            0,
+                            tzinfo=timezone.utc,
+                        ).timestamp()
+                    ),
+                    "open": 5000.0,
+                    "high": 5006.0,
+                    "low": 4986.5,
+                    "close": 5004.0,
+                    "volume": 1,
+                }
+            ],
+        )
 
         resp = client.post(
             "/api/whatif/simulate?symbol=MES",
@@ -586,13 +591,12 @@ class TestSimulate:
         assert detail["new_pnl"] > 0
 
     def test_simulate_uses_user_symbol_mapping_point_value(
-        self, client, app
+        self, client, app, seed_market_data_dataset
     ):
         """Simulation replay uses the user's configured point value."""
         token = _register_and_login(client)
         symbol_mappings = get_default_symbol_mappings()
         symbol_mappings["MES"] = {
-            "yahoo_symbol": "MES-CUSTOM=F",
             "dollar_value_per_point": 10.0,
         }
         _update_symbol_mappings(client, token, symbol_mappings)
@@ -605,35 +609,31 @@ class TestSimulate:
         )
         assert update_resp.status_code == 200
 
-        with app.app_context():
-            from app.extensions import mongo
-
-            mongo.db.market_data_cache.insert_one({
-                "symbol": "MES-CUSTOM=F",
-                "interval": "1m",
-                "date": datetime(2026, 1, 5),
-                "ohlc": [
-                    {
-                        "time": int(
-                            datetime(
-                                2026,
-                                1,
-                                5,
-                                10,
-                                0,
-                                tzinfo=timezone.utc,
-                            ).timestamp()
-                        ),
-                        "open": 5000.0,
-                        "high": 5006.0,
-                        "low": 4990.0,
-                        "close": 5004.0,
-                    }
-                ],
-                "bar_count": 1,
-                "fetched_at": datetime(2026, 1, 5),
-                "source": "test",
-            })
+        seed_market_data_dataset(
+            symbol="MES",
+            dataset_type="candles",
+            timeframe="1m",
+            trading_day=datetime(2026, 1, 5).date(),
+            rows=[
+                {
+                    "time": int(
+                        datetime(
+                            2026,
+                            1,
+                            5,
+                            10,
+                            0,
+                            tzinfo=timezone.utc,
+                        ).timestamp()
+                    ),
+                    "open": 5000.0,
+                    "high": 5006.0,
+                    "low": 4990.0,
+                    "close": 5004.0,
+                    "volume": 1,
+                }
+            ],
+        )
 
         resp = client.post(
             "/api/whatif/simulate?symbol=MES",
@@ -645,6 +645,63 @@ class TestSimulate:
         detail = resp.get_json()["details"][0]
         assert detail["trade_id"] == loser["id"]
         assert detail["new_pnl"] == 50.0
+
+    def test_simulate_replays_with_market_data_mapping(
+        self, client, seed_market_data_dataset
+    ):
+        """Simulation replay resolves OHLC datasets via market-data mappings."""
+        token = _register_and_login(client)
+        _update_market_data_mappings(
+            client,
+            token,
+            {"MES": "ES"},
+        )
+
+        loser = _create_trade(client, token, initial_risk=100.0)
+        update_resp = client.put(
+            f"/api/trades/{loser['id']}",
+            json={"target_price": 5005.0},
+            headers=_auth(token),
+        )
+        assert update_resp.status_code == 200
+
+        seed_market_data_dataset(
+            symbol="ES",
+            raw_symbol="ES",
+            dataset_type="candles",
+            timeframe="1m",
+            trading_day=datetime(2026, 1, 5).date(),
+            rows=[
+                {
+                    "time": int(
+                        datetime(
+                            2026,
+                            1,
+                            5,
+                            10,
+                            0,
+                            tzinfo=timezone.utc,
+                        ).timestamp()
+                    ),
+                    "open": 5000.0,
+                    "high": 5006.0,
+                    "low": 4990.0,
+                    "close": 5004.0,
+                    "volume": 1,
+                }
+            ],
+        )
+
+        resp = client.post(
+            "/api/whatif/simulate?symbol=MES",
+            json={"r_widening": 0.5},
+            headers=_auth(token),
+        )
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["trades_converted"] == 1
+        assert data["details"][0]["status"] == "simulated"
 
     def test_simulate_filters_by_tag(self, client, app):
         """Simulation respects the selected tag filter."""

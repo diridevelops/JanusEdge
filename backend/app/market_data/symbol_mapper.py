@@ -1,47 +1,37 @@
-"""Symbol mapper helpers for ticker resolution and point values."""
+"""Symbol helpers for market-data lookup and point values."""
 
 from typing import Any, Mapping
 
-# Normalized base symbol -> Yahoo ticker and dollar value per point.
+# Normalized base symbol -> dollar value per point.
 DEFAULT_BASE_SYMBOL_MAP = {
     "MES": {
-        "yahoo_symbol": "MES=F",
         "dollar_value_per_point": 5.0,
     },
     "ES": {
-        "yahoo_symbol": "ES=F",
         "dollar_value_per_point": 50.0,
     },
     "MNQ": {
-        "yahoo_symbol": "MNQ=F",
         "dollar_value_per_point": 2.0,
     },
     "NQ": {
-        "yahoo_symbol": "NQ=F",
         "dollar_value_per_point": 20.0,
     },
     "MYM": {
-        "yahoo_symbol": "MYM=F",
         "dollar_value_per_point": 0.5,
     },
     "YM": {
-        "yahoo_symbol": "YM=F",
         "dollar_value_per_point": 5.0,
     },
     "MCL": {
-        "yahoo_symbol": "MCL=F",
         "dollar_value_per_point": 100.0,
     },
     "CL": {
-        "yahoo_symbol": "CL=F",
         "dollar_value_per_point": 1000.0,
     },
     "GC": {
-        "yahoo_symbol": "GC=F",
         "dollar_value_per_point": 100.0,
     },
     "MGC": {
-        "yahoo_symbol": "MGC=F",
         "dollar_value_per_point": 10.0,
     },
 }
@@ -53,6 +43,11 @@ def get_default_symbol_mappings() -> dict[str, dict[str, Any]]:
         symbol: dict(mapping)
         for symbol, mapping in DEFAULT_BASE_SYMBOL_MAP.items()
     }
+
+
+def get_default_market_data_mappings() -> dict[str, str]:
+    """Return the default market-data mapping configuration."""
+    return {}
 
 
 def validate_symbol_mappings(
@@ -80,12 +75,6 @@ def validate_symbol_mappings(
             )
 
         normalized_base_symbols[normalized_symbol] = {
-            "yahoo_symbol": _normalize_mapping_string(
-                mapping.get("yahoo_symbol"),
-                field_name=(
-                    f"{normalized_symbol} yahoo_symbol"
-                ),
-            ),
             "dollar_value_per_point": _normalize_mapping_number(
                 mapping.get("dollar_value_per_point"),
                 field_name=(
@@ -95,6 +84,36 @@ def validate_symbol_mappings(
         }
 
     return normalized_base_symbols
+
+
+def validate_market_data_mappings(
+    market_data_mappings: Mapping[str, Any]
+) -> dict[str, str]:
+    """Validate and normalize market-data prefix mappings."""
+    if not isinstance(market_data_mappings, Mapping):
+        raise ValueError(
+            "Market data mappings must be an object."
+        )
+
+    normalized_mappings: dict[str, str] = {}
+    for source_symbol, target_symbol in market_data_mappings.items():
+        normalized_source = _normalize_symbol_candidate(
+            _normalize_mapping_string(
+                source_symbol,
+                field_name="market data mapping source",
+            )
+        )
+        normalized_target = _normalize_symbol_candidate(
+            _normalize_mapping_string(
+                target_symbol,
+                field_name=(
+                    f"{normalized_source} market data mapping target"
+                ),
+            )
+        )
+        normalized_mappings[normalized_source] = normalized_target
+
+    return normalized_mappings
 
 
 def get_effective_symbol_mappings(
@@ -112,6 +131,21 @@ def get_effective_symbol_mappings(
         return effective_mappings
     except ValueError:
         return effective_mappings
+
+
+def get_effective_market_data_mappings(
+    market_data_mappings: Mapping[str, Any] | None,
+) -> dict[str, str]:
+    """Return validated user market-data mappings or an empty mapping."""
+    if market_data_mappings is None:
+        return get_default_market_data_mappings()
+
+    try:
+        return validate_market_data_mappings(
+            market_data_mappings
+        )
+    except ValueError:
+        return get_default_market_data_mappings()
 
 
 def get_point_value(
@@ -136,33 +170,66 @@ def get_point_value(
     return float(mapping_entry["dollar_value_per_point"])
 
 
-def map_to_yahoo(
+def resolve_market_data_symbol(
     symbol: str,
     raw_symbol: str | None = None,
-    symbol_mappings: Mapping[str, Any] | None = None,
+    market_data_mappings: Mapping[str, Any] | None = None,
 ) -> str:
-    """
-    Map a platform symbol to a yfinance ticker.
+    """Resolve the symbol key used for stored market data."""
 
-    Parameters:
-        symbol: Normalized symbol (e.g. 'MES').
-        raw_symbol: Original platform symbol.
-        symbol_mappings: User-configurable mapping settings.
+    effective_mappings = get_effective_market_data_mappings(
+        market_data_mappings
+    )
 
-    Returns:
-        yfinance ticker string (e.g. 'MES=F').
-
-    """
-    mapping_entry = _find_mapping_entry(
+    for candidate in _iter_symbol_candidates(
         symbol,
         raw_symbol,
-        symbol_mappings,
-    )
-    if mapping_entry is not None:
-        return str(mapping_entry["yahoo_symbol"])
+    ):
+        return _resolve_market_data_mapping(
+            candidate,
+            effective_mappings,
+        )
 
-    clean = _normalize_symbol_candidate(symbol)
-    return f"{clean}=F"
+    return _resolve_market_data_mapping(
+        _normalize_symbol_candidate(symbol),
+        effective_mappings,
+    )
+
+
+def resolve_market_data_symbols(
+    symbol: str,
+    raw_symbol: str | None = None,
+    market_data_mappings: Mapping[str, Any] | None = None,
+) -> list[str]:
+    """Return preferred and fallback market-data keys in priority order."""
+
+    resolved_symbols: list[str] = []
+    seen: set[str] = set()
+    effective_mappings = get_effective_market_data_mappings(
+        market_data_mappings
+    )
+
+    for candidate in _iter_symbol_candidates(symbol, raw_symbol):
+        for resolved_candidate in (
+            _resolve_market_data_mapping(
+                candidate,
+                effective_mappings,
+            ),
+            candidate,
+        ):
+            if not resolved_candidate or resolved_candidate in seen:
+                continue
+            resolved_symbols.append(resolved_candidate)
+            seen.add(resolved_candidate)
+
+    if resolved_symbols:
+        return resolved_symbols
+
+    fallback = _resolve_market_data_mapping(
+        _normalize_symbol_candidate(symbol),
+        effective_mappings,
+    )
+    return [fallback] if fallback else []
 
 
 def _find_mapping_entry(
@@ -227,7 +294,38 @@ def _iter_symbol_candidates(
 
 def _normalize_symbol_candidate(value: str) -> str:
     """Normalize a symbol string for prefix matching."""
-    return value.strip().upper()
+    return " ".join(value.strip().upper().split())
+
+
+def _resolve_market_data_mapping(
+    value: str,
+    market_data_mappings: Mapping[str, str],
+) -> str:
+    """Apply the best matching market-data mapping to a symbol."""
+    normalized = _normalize_symbol_candidate(value)
+    if not normalized:
+        return normalized
+
+    for source_symbol in sorted(
+        market_data_mappings,
+        key=len,
+        reverse=True,
+    ):
+        if not normalized.startswith(source_symbol):
+            continue
+
+        suffix = normalized[len(source_symbol):]
+        if suffix and not suffix.startswith(" "):
+            return (
+                f"{market_data_mappings[source_symbol]}"
+                f"{suffix}"
+            )
+        return (
+            f"{market_data_mappings[source_symbol]}"
+            f"{suffix}"
+        )
+
+    return normalized
 
 
 def _normalize_mapping_string(

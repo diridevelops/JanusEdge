@@ -8,7 +8,7 @@ The backend is a Flask application in `backend/` that provides the repository's 
 - CSV import and trade reconstruction
 - trade CRUD and search
 - analytics aggregation and Monte Carlo simulation
-- market-data retrieval and caching
+- tick-data import, candle generation, and market-data retrieval
 - media upload and download helpers
 - portable backup export and restore
 
@@ -38,6 +38,7 @@ graph TB
 		TradeSvc[Trade service]
 		AuthSvc[Auth service]
 		MarketSvc[Market data service]
+		TickDataSvc[Tick-data service]
 		AnalyticsSvc[Analytics service]
 		MediaSvc[Media service]
 		WhatIfSvc[What-if service]
@@ -47,7 +48,6 @@ graph TB
 		Repos[Repositories]
 		Mongo[(MongoDB)]
 		MinIO[(MinIO)]
-		Yahoo[Yahoo Finance]
 	end
 
 	App --> Extensions
@@ -56,7 +56,9 @@ graph TB
 	Blueprints --> Services
 	Services --> Repos
 	Repos --> Mongo
-	MarketSvc --> Yahoo
+	MarketSvc --> TickDataSvc
+	TickDataSvc --> MinIO
+	TickDataSvc --> Mongo
 	MediaSvc --> MinIO
 	AuthSvc --> MinIO
 ```
@@ -79,10 +81,10 @@ On startup, the backend does the following:
 4. Initializes PyMongo, JWT, and CORS.
 5. Registers global error handlers.
 6. Registers all Flask blueprints.
-7. Attempts to initialize MinIO storage and create the configured bucket.
+7. Attempts to initialize MinIO storage and create the configured media and market-data buckets.
 8. Attempts to create MongoDB indexes through `app/db.py`.
 
-If MinIO is unavailable, the app logs a warning and continues booting, but media uploads will not work.
+If MinIO is unavailable, the app logs a warning and continues booting, but media uploads and tick-data backed market-data reads will not work.
 
 ## Blueprint Modules
 
@@ -181,15 +183,32 @@ flowchart LR
 
 ## Market Data
 
-Market data is fetched through `yfinance` and cached in MongoDB.
+Market data is derived from imported NinjaTrader tick exports.
 
-The cache key is based on:
+The backend stores:
 
-- resolved Yahoo symbol
-- interval
-- trading day
+- raw daily ticks as Snappy-compressed Parquet objects in MinIO
+- precomputed daily candle datasets for `1m`, `5m`, `15m`, and `1h` in MinIO
+- dataset metadata in the `market_data_datasets` collection in MongoDB
+- import progress in the `market_data_import_batches` collection in MongoDB
 
-The backend stores daily slices in the `market_data_cache` collection, not a single large time-series document per symbol.
+Market-data lookup and point-value lookup are configured separately:
+
+- `symbol_mappings` controls dollar value per point by normalized base symbol.
+- `market_data_mappings` controls explicit cross-symbol market-data lookup.
+- When no `market_data_mappings` entry matches, the backend looks up the imported symbol as-is. There are no built-in cross-symbol defaults.
+
+The resolved market-data key prefers `raw_symbol` when present and otherwise falls back to the normalized trade symbol. Each dataset metadata document includes the symbol, raw symbol, dataset type, timeframe, trading date, MinIO object key, row count, byte size, source file name, import batch id, and timestamps.
+
+Authenticated tick-data endpoints:
+
+- `POST /api/market-data/tick-imports/preview`: validate a NinjaTrader text export and return a daily summary
+- `POST /api/market-data/tick-imports`: store the upload, start a background import, and create a progress-tracked batch
+- `GET /api/market-data/tick-imports/:batch_id`: poll the current progress and status for an import batch
+
+`GET /api/market-data/ohlc` still returns `{ ohlc_data: [...] }` with the
+existing bar shape. `force_refresh=true` now regenerates candle datasets
+from stored raw ticks instead of refetching from an external provider.
 
 ## Media Handling
 
@@ -214,7 +233,7 @@ Current behavior:
 - account and tag reuse is based on natural keys
 - import batches reuse `file_hash`
 - trade duplicates are skipped using a stable fingerprint
-- market-data cache is upserted by symbol, interval, and date
+- market-data datasets and referenced Parquet objects are included in the archive and restored idempotently by natural dataset key
 
 ## Development Commands
 
@@ -324,7 +343,9 @@ graph TB
 		Repos --> DB[(MongoDB)]
 	end
     
-	MarketDataSvc --> Yahoo["Yahoo Finance<br/>yfinance library"]
+	MarketDataSvc --> TickImportSvc["TickDataService<br/>Parquet read + refresh"]
+	TickImportSvc --> MarketBucket[(MinIO market-data bucket)]
+	TickImportSvc --> MarketMeta[(MongoDB market_data_datasets)]
 ```
 
 ### Source CSV Parser Architecture
@@ -423,32 +444,20 @@ flowchart TB
 sequenceDiagram
 	participant Route as API Route
 	participant Service as MarketDataService
-	participant Mapper as SymbolMapper
-	participant Repo as MarketDataCacheRepo
+	participant TickSvc as TickDataService
+	participant Repo as MarketDataRepository
 	participant DB as MongoDB
-	participant YF as yfinance
+	participant Bucket as MinIO market-data bucket
 
 	Route->>Service: get_ohlc(user_id, platform_symbol, interval, start, end)
-	Service->>Service: load user's symbol_mappings or defaults
-	Service->>Mapper: map_to_yahoo(platform_symbol, raw_symbol, symbol_mappings)
-	Mapper-->>Service: yahoo_ticker (e.g., "MES=F")
-    
-	Service->>Repo: find_cached(yahoo_ticker, interval, start_date, end_date)
-	Repo->>DB: Query market_data_cache
-    
-	alt Full Cache Hit
-		DB-->>Repo: cached OHLC data
-		Repo-->>Service: ohlc_data
-	else Partial or No Cache
-		Service->>Service: Calculate missing date ranges
-		Service->>YF: yfinance.download(yahoo_ticker, start, end, interval)
-		YF-->>Service: DataFrame with OHLC
-		Service->>Service: Convert DataFrame to list[dict]
-		Service->>Repo: upsert_cache(yahoo_ticker, interval, dates, ohlc_data)
-		Repo->>DB: Upsert to market_data_cache
-		Service->>Repo: find_cached(yahoo_ticker, interval, start_date, end_date)
-		Repo-->>Service: Complete ohlc_data
-	end
+	Service->>TickSvc: get_ohlc(symbol, raw_symbol, interval, start_dt, end_dt)
+	TickSvc->>Repo: find_cached(symbol, interval, start_date, end_date)
+	Repo->>DB: Query market_data_datasets
+	DB-->>Repo: dataset metadata
+	Repo-->>TickSvc: object keys per trading day
+	TickSvc->>Bucket: read Parquet candle objects
+	Bucket-->>TickSvc: per-day candle frames
+	TickSvc->>TickSvc: merge, sort, and filter requested bars
     
 	Service-->>Route: ohlc_data JSON response
 ```

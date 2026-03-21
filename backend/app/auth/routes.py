@@ -13,6 +13,7 @@ from app.auth.schemas import (
     RegisterSchema,
     RestoreArchiveSchema,
     ChangePasswordSchema,
+    UpdateMarketDataMappingsSchema,
     UpdateSymbolMappingsSchema,
     UpdateTimezoneSchema,
     UpdateDisplayTimezoneSchema,
@@ -29,6 +30,9 @@ update_timezone_schema = UpdateTimezoneSchema()
 update_display_timezone_schema = UpdateDisplayTimezoneSchema()
 update_starting_equity_schema = UpdateStartingEquitySchema()
 update_symbol_mappings_schema = UpdateSymbolMappingsSchema()
+update_market_data_mappings_schema = (
+    UpdateMarketDataMappingsSchema()
+)
 restore_archive_schema = RestoreArchiveSchema()
 
 
@@ -259,6 +263,38 @@ def update_symbol_mappings():
     profile = auth_service.update_symbol_mappings(
         user_id=user_id,
         symbol_mappings=validated["symbol_mappings"],
+    )
+    return jsonify(profile), 200
+
+
+@auth_bp.route("/market-data-mappings", methods=["PUT"])
+@jwt_required()
+def update_market_data_mappings():
+    """
+    Update the current user's market-data mappings.
+
+    Expects JSON: {market_data_mappings}
+    Returns: {user}
+    """
+    data = request.get_json()
+    if not data:
+        raise ValidationError("Request body is required.")
+
+    try:
+        validated = update_market_data_mappings_schema.load(
+            data
+        )
+    except MarshmallowError as e:
+        raise ValidationError(
+            "Validation failed.", details=e.messages
+        )
+
+    user_id = get_jwt_identity()
+    profile = auth_service.update_market_data_mappings(
+        user_id=user_id,
+        market_data_mappings=validated[
+            "market_data_mappings"
+        ],
     )
     return jsonify(profile), 200
 

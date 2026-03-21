@@ -59,9 +59,6 @@ def create_app(config_class=None):
         logging.getLogger("urllib3").setLevel(
             logging.WARNING
         )
-        logging.getLogger("yfinance").setLevel(
-            logging.WARNING
-        )
 
     # Initialize extensions
     from app.extensions import mongo, jwt, cors
@@ -90,10 +87,13 @@ def create_app(config_class=None):
     from app.executions import executions_bp
     from app.accounts import accounts_bp
     from app.tags import tags_bp
+    from app.market_data import routes as market_data_routes
     from app.market_data import market_data_bp
     from app.analytics import analytics_bp
     from app.media import media_bp
     from app.whatif import whatif_bp
+
+    del market_data_routes
 
     app.register_blueprint(auth_bp)
     app.register_blueprint(imports_bp)

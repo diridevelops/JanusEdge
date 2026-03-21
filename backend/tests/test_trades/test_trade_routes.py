@@ -1,5 +1,7 @@
 """Tests for trade API routes."""
 
+from datetime import date
+
 import pytest
 
 from app import create_app
@@ -11,7 +13,7 @@ from config import TestingConfig
 
 
 @pytest.fixture
-def app():
+def app(patch_minio):
     application = create_app(TestingConfig)
     yield application
 
@@ -64,6 +66,18 @@ def _update_symbol_mappings(client, token, symbol_mappings):
     response = client.put(
         "/api/auth/symbol-mappings",
         json={"symbol_mappings": symbol_mappings},
+        headers=_auth_header(token),
+    )
+    assert response.status_code == 200
+
+
+def _update_market_data_mappings(
+    client, token, market_data_mappings
+):
+    """Persist market-data mappings for the authenticated test user."""
+    response = client.put(
+        "/api/auth/market-data-mappings",
+        json={"market_data_mappings": market_data_mappings},
         headers=_auth_header(token),
     )
     assert response.status_code == 200
@@ -124,7 +138,6 @@ def test_create_manual_trade_uses_user_symbol_mapping_point_value(client):
     token = _register_and_login(client)
     symbol_mappings = get_default_symbol_mappings()
     symbol_mappings["MES"] = {
-        "yahoo_symbol": "MES-CUSTOM=F",
         "dollar_value_per_point": 10.0,
     }
     _update_symbol_mappings(client, token, symbol_mappings)
@@ -160,6 +173,49 @@ def test_list_trades_with_data(client):
     data = resp.get_json()
     assert data["total"] == 1
     assert len(data["trades"]) == 1
+
+
+def test_list_trades_market_data_cached_uses_explicit_mapping(
+    client,
+    seed_market_data_dataset,
+):
+    token = _register_and_login(client)
+    _update_market_data_mappings(
+        client,
+        token,
+        {"MES": "ES"},
+    )
+    _create_trade(
+        client,
+        token,
+        entry_time="2026-01-05T10:00:00",
+        exit_time="2026-01-05T10:05:00",
+    )
+    seed_market_data_dataset(
+        symbol="ES",
+        raw_symbol="ES",
+        dataset_type="candles",
+        timeframe="5m",
+        trading_day=date(2026, 1, 5),
+        rows=[
+            {
+                "time": int(1736071200),
+                "open": 5000.0,
+                "high": 5006.0,
+                "low": 4998.0,
+                "close": 5004.0,
+                "volume": 10,
+            }
+        ],
+    )
+
+    resp = client.get(
+        "/api/trades",
+        headers=_auth_header(token),
+    )
+
+    assert resp.status_code == 200
+    assert resp.get_json()["trades"][0]["market_data_cached"] is True
 
 
 def test_list_trades_date_to_includes_selected_day(client):
