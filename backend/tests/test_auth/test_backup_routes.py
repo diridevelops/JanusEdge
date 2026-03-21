@@ -776,6 +776,14 @@ def test_export_backup_is_complete_and_self_contained(
     } == {
         "MES 06-26"
     }
+    assert {
+        dataset["archive_path"]
+        for dataset in payload["market_data_datasets"]
+    } == {
+        "market-data/MES 06-26/candles/1m/2026/01/02.parquet",
+        "market-data/MES 06-26/candles/5m/2026/01/02.parquet",
+        "market-data/MES 06-26/candles/5m/2026/01/03.parquet",
+    }
     for dataset_doc in payload["market_data_datasets"]:
         assert dataset_doc["archive_path"] in names
         assert dataset_doc["archive_path"].startswith("market-data/")
@@ -793,6 +801,78 @@ def test_export_backup_is_complete_and_self_contained(
                 media_bytes
                 == seeded["media_payloads"][str(media_doc["_id"])]
             )
+
+
+def test_export_backup_market_data_archive_paths_include_year_month_day(
+    client, app
+):
+    """Market-data archive paths remain unique for same day numbers across months."""
+
+    token, user_id = _register_and_login(client, "source-export-paths")
+    _seed_portable_backup_graph(app, user_id)
+
+    _store_market_dataset(
+        app,
+        symbol="MES 06-26",
+        raw_symbol="MES 06-26",
+        dataset_type="candles",
+        timeframe="1h",
+        trading_day=datetime(2026, 2, 19),
+        rows=[
+            {
+                "time": 1771495200,
+                "open": 5020.0,
+                "high": 5022.0,
+                "low": 5018.0,
+                "close": 5021.0,
+                "volume": 40,
+            }
+        ],
+    )
+
+    with app.app_context():
+        from app.extensions import mongo
+
+        mongo.db.trades.insert_one(
+            create_trade_doc(
+                user_id=ObjectId(user_id),
+                trade_account_id=mongo.db.trade_accounts.find_one(
+                    {"user_id": ObjectId(user_id)}
+                )["_id"],
+                import_batch_id=None,
+                symbol="MES",
+                raw_symbol="MES 06-26",
+                side="Long",
+                total_quantity=1,
+                max_quantity=1,
+                avg_entry_price=5020.0,
+                avg_exit_price=5021.0,
+                gross_pnl=5.0,
+                fee=0.0,
+                fee_source="imported",
+                net_pnl=5.0,
+                initial_risk=5.0,
+                entry_time=datetime(2026, 2, 19, 15, 0),
+                exit_time=datetime(2026, 2, 19, 15, 5),
+                holding_time_seconds=300,
+                execution_count=2,
+                source="import",
+                status="closed",
+            )
+        )
+
+    archive_bytes = _export_archive_bytes(client, token)
+    _, payload, _ = _parse_archive(archive_bytes)
+
+    archive_paths = {
+        dataset["archive_path"]
+        for dataset in payload["market_data_datasets"]
+        if dataset["timeframe"] == "1h"
+    }
+
+    assert archive_paths == {
+        "market-data/MES 06-26/candles/1h/2026/02/19.parquet"
+    }
 
 
 def test_restore_into_different_user_remaps_graph_and_media(

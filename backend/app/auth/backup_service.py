@@ -822,12 +822,17 @@ class PortableBackupService:
         payload: list[dict] = []
         for dataset in datasets:
             dataset_copy = deepcopy(dataset)
+            dataset_date = dataset.get("date")
+            if hasattr(dataset_date, "date"):
+                dataset_date = dataset_date.date()
             dataset_copy["archive_path"] = (
                 f"{MARKET_DATA_PREFIX}/"
                 f"{self._sanitize_filename(dataset['symbol'])}/"
                 f"{dataset['dataset_type']}/"
                 f"{self._sanitize_filename(dataset.get('timeframe') or 'raw')}/"
-                f"{self._sanitize_filename(Path(dataset['object_key']).name)}"
+                f"{dataset_date.year:04d}/"
+                f"{dataset_date.month:02d}/"
+                f"{dataset_date.day:02d}.parquet"
             )
             payload.append(dataset_copy)
         return payload
