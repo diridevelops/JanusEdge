@@ -1,7 +1,8 @@
+import axios from 'axios';
 import { Save, X } from 'lucide-react';
 import { useState } from 'react';
 import { listTags } from '../../api/tags.api';
-import { updateTrade } from '../../api/trades.api';
+import { detectWishStop, updateTrade } from '../../api/trades.api';
 import { useToast } from '../../hooks/useToast';
 import type { Trade, UpdateTradeRequest } from '../../types/trade.types';
 import { InfoTooltip } from '../ui/InfoTooltip';
@@ -12,12 +13,29 @@ interface StopAnalysisFieldsProps {
   onSaved?: () => void;
 }
 
+function getErrorMessage(error: unknown, fallbackMessage: string): string {
+  if (axios.isAxiosError(error)) {
+    const apiMessage =
+      error.response?.data?.error?.message ?? error.response?.data?.message;
+    if (typeof apiMessage === 'string' && apiMessage.trim()) {
+      return apiMessage;
+    }
+  }
+
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+
+  return fallbackMessage;
+}
+
 /**
  * Editable "Wishful stop" and "Target price" fields for stop analysis.
  * Setting a wishful stop auto-manages the wicked-out tag.
  */
 export function StopAnalysisFields({ tradeId, trade, onSaved }: StopAnalysisFieldsProps) {
   const isWinningTrade = trade.net_pnl > 0;
+  const canDetectWishStop = trade.net_pnl < 0;
 
   // Auto-default target_price to avg_exit_price for winning trades
   const defaultTarget =
@@ -33,6 +51,7 @@ export function StopAnalysisFields({ tradeId, trade, onSaved }: StopAnalysisFiel
   const [targetPrice, setTargetPrice] = useState(defaultTarget);
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isDetecting, setIsDetecting] = useState(false);
   const { addToast } = useToast();
 
   const origWish = trade.wish_stop_price != null ? String(trade.wish_stop_price) : '';
@@ -79,6 +98,19 @@ export function StopAnalysisFields({ tradeId, trade, onSaved }: StopAnalysisFiel
       addToast('error', 'Failed to save');
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  async function handleDetectWishStop() {
+    setIsDetecting(true);
+    try {
+      const detectedWishStop = await detectWishStop(tradeId);
+      setWishStop(String(detectedWishStop));
+      addToast('success', 'Wishful stop detected');
+    } catch (error) {
+      addToast('error', getErrorMessage(error, 'Failed to detect wishful stop'));
+    } finally {
+      setIsDetecting(false);
     }
   }
 
@@ -129,7 +161,7 @@ export function StopAnalysisFields({ tradeId, trade, onSaved }: StopAnalysisFiel
             <label className="text-xs font-medium text-gray-500 dark:text-gray-400 flex items-center gap-1">
               Wishful stop
               <InfoTooltip
-                text="Where you wish your stop had been. If you got stopped out but the price then reversed and hit your target, enter the price that would have kept you in the trade. Used in the What-if page to analyze stop placement."
+                text="Where you wish your stop had been. If you got stopped out but the price then reversed and hit your target, enter the price that would have kept you in the trade. On losing trades, Detect suggests this value from the stored 1-minute OHLC data for the trade day by scanning the first completed adverse excursion after entry. Used in the What-if page to analyze stop placement."
                 widthClass="w-72"
               />
             </label>
@@ -147,15 +179,27 @@ export function StopAnalysisFields({ tradeId, trade, onSaved }: StopAnalysisFiel
             })()}
           </div>
           {isEditing ? (
-            <input
-              type="number"
-              step="any"
-              value={wishStop}
-              onChange={(e) => setWishStop(e.target.value)}
-              disabled={isWinningTrade}
-              placeholder="e.g. 5200.50"
-              className="input-field text-sm disabled:cursor-not-allowed disabled:opacity-60"
-            />
+            <div className="flex gap-2">
+              <input
+                type="number"
+                step="any"
+                value={wishStop}
+                onChange={(e) => setWishStop(e.target.value)}
+                disabled={isWinningTrade}
+                placeholder="e.g. 5200.50"
+                className="input-field flex-1 text-sm disabled:cursor-not-allowed disabled:opacity-60"
+              />
+              {canDetectWishStop && (
+                <button
+                  type="button"
+                  onClick={handleDetectWishStop}
+                  disabled={isDetecting || isSaving}
+                  className="shrink-0 rounded-md border border-gray-300 px-3 py-2 text-sm font-medium text-gray-700 transition hover:border-brand-400 hover:text-brand-700 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:text-gray-200 dark:hover:border-brand-500 dark:hover:text-brand-300"
+                >
+                  {isDetecting ? 'Detecting...' : 'Detect'}
+                </button>
+              )}
+            </div>
           ) : (
             <p className="text-sm text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-700 rounded p-3">
               {origWish || <span className="text-gray-400 dark:text-gray-500 italic">Not set</span>}

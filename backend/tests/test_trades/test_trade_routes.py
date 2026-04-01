@@ -1,6 +1,7 @@
 """Tests for trade API routes."""
 
-from datetime import date
+from datetime import date, datetime, timezone
+from decimal import Decimal
 
 import pytest
 
@@ -8,6 +9,7 @@ from app import create_app
 from app.market_data.symbol_mapper import (
     get_default_symbol_mappings,
 )
+from app.trades.service import TradeService
 from app.whatif.cache import _sim_cache
 from config import TestingConfig
 
@@ -32,6 +34,8 @@ def clean_db(app):
         for col in [
             "users", "trades", "executions",
             "trade_accounts", "tags",
+            "market_data_datasets",
+            "market_data_import_batches",
         ]:
             mongo.db[col].delete_many({})
     yield
@@ -99,6 +103,34 @@ def _create_trade(client, token, **overrides):
         "/api/trades",
         json=data,
         headers=_auth_header(token),
+    )
+
+
+def _to_epoch_seconds(timestamp: str) -> int:
+    """Convert an ISO timestamp into epoch seconds."""
+    return int(
+        datetime.fromisoformat(
+            timestamp.replace("Z", "+00:00")
+        ).astimezone(timezone.utc).timestamp()
+    )
+
+
+def _seed_ohlc_dataset(
+    seed_market_data_dataset,
+    *,
+    trading_day: date,
+    bars: list[dict],
+    symbol: str = "MES",
+    raw_symbol: str = "MES",
+):
+    """Store a 1-minute candle dataset for a trade day."""
+    seed_market_data_dataset(
+        symbol=symbol,
+        raw_symbol=raw_symbol,
+        dataset_type="candles",
+        timeframe="1m",
+        trading_day=trading_day,
+        rows=bars,
     )
 
 
@@ -335,6 +367,437 @@ def test_update_trade_notes(client):
     trade = resp.get_json()["trade"]
     assert trade["post_trade_notes"] == "Good entry."
     assert trade["strategy"] == "Breakout"
+
+
+def test_detect_wish_stop_long_from_first_completed_adverse_excursion(
+    client,
+    seed_market_data_dataset,
+):
+    token = _register_and_login(client)
+    create_resp = _create_trade(
+        client,
+        token,
+        entry_price=10.0,
+        exit_price=9.0,
+        entry_time="2026-01-01T10:00:00",
+        exit_time="2026-01-01T10:05:00",
+    )
+    trade_id = create_resp.get_json()["trade"]["id"]
+    _seed_ohlc_dataset(
+        seed_market_data_dataset,
+        trading_day=date(2026, 1, 1),
+        bars=[
+            {
+                "time": _to_epoch_seconds(
+                    "2026-01-01T10:00:00Z"
+                ),
+                "open": 10.0,
+                "high": 10.0,
+                "low": 8.0,
+                "close": 9.75,
+                "volume": 10,
+            },
+            {
+                "time": _to_epoch_seconds(
+                    "2026-01-01T10:01:00Z"
+                ),
+                "open": 9.75,
+                "high": 10.0,
+                "low": 9.75,
+                "close": 10.0,
+                "volume": 10,
+            },
+        ],
+    )
+
+    resp = client.post(
+        f"/api/trades/{trade_id}/detect-wish-stop",
+        headers=_auth_header(token),
+    )
+
+    assert resp.status_code == 200
+    assert (
+        resp.get_json()["wish_stop_price"] == 7.75
+    )
+
+
+def test_detect_wish_stop_long_after_favorable_move_then_recovery(
+    client,
+    seed_market_data_dataset,
+):
+    token = _register_and_login(client)
+    create_resp = _create_trade(
+        client,
+        token,
+        entry_price=10.0,
+        exit_price=9.0,
+        entry_time="2026-01-01T10:00:00",
+        exit_time="2026-01-01T10:05:00",
+    )
+    trade_id = create_resp.get_json()["trade"]["id"]
+    _seed_ohlc_dataset(
+        seed_market_data_dataset,
+        trading_day=date(2026, 1, 1),
+        bars=[
+            {
+                "time": _to_epoch_seconds(
+                    "2026-01-01T10:00:00Z"
+                ),
+                "open": 10.0,
+                "high": 10.5,
+                "low": 10.0,
+                "close": 10.25,
+                "volume": 10,
+            },
+            {
+                "time": _to_epoch_seconds(
+                    "2026-01-01T10:01:00Z"
+                ),
+                "open": 10.25,
+                "high": 10.25,
+                "low": 8.0,
+                "close": 8.25,
+                "volume": 10,
+            },
+            {
+                "time": _to_epoch_seconds(
+                    "2026-01-01T10:02:00Z"
+                ),
+                "open": 8.25,
+                "high": 10.0,
+                "low": 8.25,
+                "close": 10.0,
+                "volume": 10,
+            },
+        ],
+    )
+
+    resp = client.post(
+        f"/api/trades/{trade_id}/detect-wish-stop",
+        headers=_auth_header(token),
+    )
+
+    assert resp.status_code == 200
+    assert (
+        resp.get_json()["wish_stop_price"] == 7.75
+    )
+
+
+def test_detect_wish_stop_short_after_favorable_move_then_recovery(
+    client,
+    seed_market_data_dataset,
+):
+    token = _register_and_login(client)
+    create_resp = _create_trade(
+        client,
+        token,
+        side="Short",
+        entry_price=10.0,
+        exit_price=11.0,
+        entry_time="2026-01-01T10:00:00",
+        exit_time="2026-01-01T10:05:00",
+    )
+    trade_id = create_resp.get_json()["trade"]["id"]
+    _seed_ohlc_dataset(
+        seed_market_data_dataset,
+        trading_day=date(2026, 1, 1),
+        bars=[
+            {
+                "time": _to_epoch_seconds(
+                    "2026-01-01T10:00:00Z"
+                ),
+                "open": 10.0,
+                "high": 10.0,
+                "low": 9.5,
+                "close": 9.75,
+                "volume": 10,
+            },
+            {
+                "time": _to_epoch_seconds(
+                    "2026-01-01T10:01:00Z"
+                ),
+                "open": 9.75,
+                "high": 12.0,
+                "low": 9.75,
+                "close": 11.5,
+                "volume": 10,
+            },
+            {
+                "time": _to_epoch_seconds(
+                    "2026-01-01T10:02:00Z"
+                ),
+                "open": 11.5,
+                "high": 11.75,
+                "low": 10.0,
+                "close": 10.0,
+                "volume": 10,
+            },
+        ],
+    )
+
+    resp = client.post(
+        f"/api/trades/{trade_id}/detect-wish-stop",
+        headers=_auth_header(token),
+    )
+
+    assert resp.status_code == 200
+    assert (
+        resp.get_json()["wish_stop_price"] == 12.25
+    )
+
+
+def test_detect_wish_stop_uses_market_data_mapping(
+    client,
+    seed_market_data_dataset,
+):
+    token = _register_and_login(client)
+    _update_market_data_mappings(
+        client,
+        token,
+        {"MES": "ES"},
+    )
+    create_resp = _create_trade(
+        client,
+        token,
+        entry_price=10.0,
+        exit_price=9.0,
+        entry_time="2026-01-01T10:00:00",
+        exit_time="2026-01-01T10:05:00",
+    )
+    trade_id = create_resp.get_json()["trade"]["id"]
+    _seed_ohlc_dataset(
+        seed_market_data_dataset,
+        trading_day=date(2026, 1, 1),
+        symbol="ES",
+        raw_symbol="ES",
+        bars=[
+            {
+                "time": _to_epoch_seconds(
+                    "2026-01-01T10:00:00Z"
+                ),
+                "open": 10.0,
+                "high": 10.0,
+                "low": 8.0,
+                "close": 9.75,
+                "volume": 10,
+            },
+            {
+                "time": _to_epoch_seconds(
+                    "2026-01-01T10:01:00Z"
+                ),
+                "open": 9.75,
+                "high": 10.0,
+                "low": 9.75,
+                "close": 10.0,
+                "volume": 10,
+            },
+        ],
+    )
+
+    resp = client.post(
+        f"/api/trades/{trade_id}/detect-wish-stop",
+        headers=_auth_header(token),
+    )
+
+    assert resp.status_code == 200
+    assert (
+        resp.get_json()["wish_stop_price"] == 7.75
+    )
+
+
+def test_detect_wish_stop_errors_when_ohlc_data_is_missing(
+    client,
+):
+    token = _register_and_login(client)
+    create_resp = _create_trade(
+        client,
+        token,
+        entry_price=10.0,
+        exit_price=9.0,
+    )
+    trade_id = create_resp.get_json()["trade"]["id"]
+
+    resp = client.post(
+        f"/api/trades/{trade_id}/detect-wish-stop",
+        headers=_auth_header(token),
+    )
+
+    assert resp.status_code == 400
+    assert (
+        resp.get_json()["error"]["message"]
+        == "No OHLC data is available for this trade day."
+    )
+
+
+def test_detect_wish_stop_errors_when_no_bars_after_entry(
+    client,
+    seed_market_data_dataset,
+):
+    token = _register_and_login(client)
+    create_resp = _create_trade(
+        client,
+        token,
+        entry_price=10.0,
+        exit_price=9.0,
+    )
+    trade_id = create_resp.get_json()["trade"]["id"]
+    _seed_ohlc_dataset(
+        seed_market_data_dataset,
+        trading_day=date(2026, 1, 1),
+        bars=[
+            {
+                "time": _to_epoch_seconds(
+                    "2026-01-01T09:58:00Z"
+                ),
+                "open": 10.0,
+                "high": 10.0,
+                "low": 9.75,
+                "close": 9.75,
+                "volume": 10,
+            },
+            {
+                "time": _to_epoch_seconds(
+                    "2026-01-01T09:59:00Z"
+                ),
+                "open": 9.75,
+                "high": 10.0,
+                "low": 9.75,
+                "close": 10.0,
+                "volume": 10,
+            },
+        ],
+    )
+
+    resp = client.post(
+        f"/api/trades/{trade_id}/detect-wish-stop",
+        headers=_auth_header(token),
+    )
+
+    assert resp.status_code == 400
+    assert (
+        resp.get_json()["error"]["message"]
+        == "No OHLC bars are available at or after the trade entry time."
+    )
+
+
+def test_detect_wish_stop_errors_when_no_adverse_excursion_exists(
+    client,
+    seed_market_data_dataset,
+):
+    token = _register_and_login(client)
+    create_resp = _create_trade(
+        client,
+        token,
+        entry_price=10.0,
+        exit_price=9.0,
+    )
+    trade_id = create_resp.get_json()["trade"]["id"]
+    _seed_ohlc_dataset(
+        seed_market_data_dataset,
+        trading_day=date(2026, 1, 1),
+        bars=[
+            {
+                "time": _to_epoch_seconds(
+                    "2026-01-01T10:00:00Z"
+                ),
+                "open": 10.0,
+                "high": 10.5,
+                "low": 10.0,
+                "close": 10.25,
+                "volume": 10,
+            },
+            {
+                "time": _to_epoch_seconds(
+                    "2026-01-01T10:01:00Z"
+                ),
+                "open": 10.25,
+                "high": 10.5,
+                "low": 10.25,
+                "close": 10.5,
+                "volume": 10,
+            },
+        ],
+    )
+
+    resp = client.post(
+        f"/api/trades/{trade_id}/detect-wish-stop",
+        headers=_auth_header(token),
+    )
+
+    assert resp.status_code == 400
+    assert (
+        resp.get_json()["error"]["message"]
+        == "No adverse excursion was found after the trade entry."
+    )
+
+
+def test_detect_wish_stop_errors_when_price_never_recovers_to_entry(
+    client,
+    seed_market_data_dataset,
+):
+    token = _register_and_login(client)
+    create_resp = _create_trade(
+        client,
+        token,
+        entry_price=10.0,
+        exit_price=9.0,
+    )
+    trade_id = create_resp.get_json()["trade"]["id"]
+    _seed_ohlc_dataset(
+        seed_market_data_dataset,
+        trading_day=date(2026, 1, 1),
+        bars=[
+            {
+                "time": _to_epoch_seconds(
+                    "2026-01-01T10:00:00Z"
+                ),
+                "open": 10.0,
+                "high": 10.0,
+                "low": 9.75,
+                "close": 9.75,
+                "volume": 10,
+            },
+            {
+                "time": _to_epoch_seconds(
+                    "2026-01-01T10:01:00Z"
+                ),
+                "open": 9.75,
+                "high": 9.75,
+                "low": 8.0,
+                "close": 8.25,
+                "volume": 10,
+            },
+        ],
+    )
+
+    resp = client.post(
+        f"/api/trades/{trade_id}/detect-wish-stop",
+        headers=_auth_header(token),
+    )
+
+    assert resp.status_code == 400
+    assert (
+        resp.get_json()["error"]["message"]
+        == "Price moved to the adverse side after entry but did not recover back to the entry price on that trade day."
+    )
+
+
+def test_detect_wish_stop_tick_size_falls_back_to_one_cent():
+    service = TradeService()
+
+    assert (
+        service._infer_tick_size_from_bars(
+            [
+                {
+                    "open": 10.0,
+                    "high": 10.0,
+                    "low": 10.0,
+                    "close": 10.0,
+                }
+            ]
+        )
+        == Decimal("0.01")
+    )
 
 
 def test_delete_trade_removes_completely(client):

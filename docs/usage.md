@@ -356,6 +356,16 @@ In practical terms:
 
 These values help the app analyze whether a wider stop could have kept you in the trade.
 
+For losing trades, the panel also includes a `Detect` button next to the wishful stop field. It reads the stored `1m` OHLC data for the trade day, finds the first completed adverse excursion after entry, and fills the wishful stop with one inferred tick beyond that adverse extreme.
+
+Detection behavior:
+
+- `Long`: waits for a bar low below entry, tracks the lowest low, and stops when a later bar high reaches back to entry or higher
+- `Short`: waits for a bar high above entry, tracks the highest high, and stops when a later bar low reaches back to entry or lower
+- the check is limited to stored `1m` OHLC bars on the trade entry day
+- the detected value is only suggested in the form until you click `Save`
+- if OHLC data is missing, there are no bars after entry, price never moves to the adverse side, or price never gets back to entry, the app shows an error instead of filling the field
+
 ### Executions
 
 This section shows every execution that belongs to the trade, including:
@@ -636,7 +646,7 @@ You must enter:
 4. Add tags.
 5. Fill in Pre-Trade Plan and Post-Trade Review.
 6. Upload screenshots or videos if helpful.
-7. Add wishful stop and target price if you want to use stop-management analysis later.
+7. Add wishful stop and target price if you want to use stop-management analysis later. On losing trades, you can use `Detect` to fill the wishful stop from the stored OHLC data before saving.
 
 ### Check A Bad Trading Day Quickly
 
