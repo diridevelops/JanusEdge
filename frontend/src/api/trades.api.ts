@@ -52,6 +52,14 @@ export async function updateTrade(
   return res.data.trade;
 }
 
+/** Detect a suggested wishful stop from stored OHLC data. */
+export async function detectWishStop(id: string): Promise<number> {
+  const res = await apiClient.post<{ wish_stop_price: number }>(
+    `/trades/${id}/detect-wish-stop`
+  );
+  return res.data.wish_stop_price;
+}
+
 /** Permanently delete a trade. */
 export async function deleteTrade(id: string): Promise<void> {
   await apiClient.delete(`/trades/${id}`);

@@ -92,6 +92,7 @@ If you need an exact stable schema here, treat it as TODO because the preview re
 | GET | `/api/trades/:trade_id` | Yes | Get one trade with executions | Path parameter `trade_id` | `{ trade, executions }` |
 | POST | `/api/trades` | Yes | Create a manual trade | JSON with `symbol`, `side`, `total_quantity`, `entry_price`, `exit_price`, `entry_time`, `exit_time`, optional `fee`, `initial_risk`, `account`, `tags`, `notes` | `{ trade }` |
 | PUT | `/api/trades/:trade_id` | Yes | Update journaling and risk fields on a trade | JSON may include `fee`, `fee_source`, `initial_risk`, `strategy`, `pre_trade_notes`, `post_trade_notes`, `tag_ids`, `wish_stop_price`, `target_price` | `{ trade }` |
+| POST | `/api/trades/:trade_id/detect-wish-stop` | Yes | Detect a suggested wishful stop from stored 1-minute OHLC data for the trade day | Path parameter `trade_id` | `{ wish_stop_price }` |
 | DELETE | `/api/trades/:trade_id` | Yes | Delete a trade and related data | Path parameter `trade_id` | `{ "message": "Trade deleted." }` |
 | POST | `/api/trades/:trade_id/restore` | Yes | Restore a trade with `status: deleted` | Path parameter `trade_id` | `{ trade }` |
 | GET | `/api/trades/search` | Yes | Full-text trade search | Query param `q` | `{ trades: [...] }` |
@@ -103,6 +104,17 @@ If you need an exact stable schema here, treat it as TODO because the preview re
 - `account` can be either an account ObjectId or an account name.
 - `tag` can be either a tag ObjectId or a tag name.
 - each returned trade includes a computed `market_data_cached` boolean based on stored candle metadata.
+
+### Wishful stop detection notes
+
+- `POST /api/trades/:trade_id/detect-wish-stop` does not persist anything. It returns a suggested `wish_stop_price` for the user to review and save from the Trade Detail page.
+- Detection reads stored `1m` OHLC data for the trade entry day only.
+- The detector looks for the first completed adverse excursion after entry:
+  - `Long`: first bar low below entry, lowest low during that excursion, then a bar high back to `>= entry`
+  - `Short`: first bar high above entry, highest high during that excursion, then a bar low back to `<= entry`
+- The suggested wishful stop is one inferred tick beyond that adverse extreme.
+- Tick size is inferred from the smallest positive same-day increment found across OHLC prices, with a fallback of `0.01` when no increment can be inferred.
+- The endpoint returns a validation error when the trade day has no OHLC data, no OHLC bars at or after entry, no adverse excursion, or no recovery back to entry.
 
 ### Delete and restore note
 

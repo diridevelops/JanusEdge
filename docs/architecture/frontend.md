@@ -204,6 +204,11 @@ The trade detail page combines:
 - stop-analysis fields
 - media attachments
 
+For losing trades, the stop-analysis editor includes a `Detect` action for the
+wishful stop field. It requests an OHLC-based suggestion from the backend,
+fills the local form value, and still requires the user to click `Save` to
+persist it.
+
 ### Settings
 
 The settings page currently includes:

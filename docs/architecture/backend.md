@@ -220,6 +220,13 @@ OHLC replay is the default mode and approximates intrabar path from the candle.
 Tick replay is the higher-precision mode because it processes the stored ticks
 in order.
 
+The Trade Detail stop-analysis panel uses the stored `1m` candle dataset for
+the trade entry day to suggest a wishful stop. The detector scans the first
+completed adverse excursion after entry from candle highs and lows, then
+places the suggestion one inferred tick beyond that excursion's extreme. Tick
+size is inferred from the smallest positive same-day increment found across
+OHLC prices, with a fallback of `0.01` when no increment can be inferred.
+
 ## Media Handling
 
 The backend supports image and video uploads for trades.

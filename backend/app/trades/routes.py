@@ -118,6 +118,19 @@ def update_trade(trade_id):
     return jsonify({"trade": trade}), 200
 
 
+@trades_bp.route(
+    "/<trade_id>/detect-wish-stop", methods=["POST"]
+)
+@jwt_required()
+def detect_wish_stop(trade_id):
+    """Detect a suggested wishful stop from stored OHLC bars."""
+    user_id = get_jwt_identity()
+    result = trade_service.detect_wish_stop(
+        user_id, trade_id
+    )
+    return jsonify(result), 200
+
+
 @trades_bp.route("/<trade_id>", methods=["DELETE"])
 @jwt_required()
 def delete_trade(trade_id):

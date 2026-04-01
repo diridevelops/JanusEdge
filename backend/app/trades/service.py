@@ -1,7 +1,8 @@
 """Trade service — business logic for trades."""
 
 import logging
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
+from decimal import Decimal, InvalidOperation
 
 from bson import ObjectId
 
@@ -24,7 +25,7 @@ from app.market_data.symbol_mapper import (
     get_effective_symbol_mappings,
     get_point_value,
 )
-from app.utils.datetime_utils import utc_now
+from app.utils.datetime_utils import to_utc, utc_now
 from app.utils.errors import NotFoundError, ValidationError
 from app.utils.trade_metrics import (
     calculate_initial_risk_no_fees,
@@ -394,6 +395,249 @@ class TradeService:
         return get_effective_market_data_mappings(
             user.get("market_data_mappings") if user else None
         )
+
+    @staticmethod
+    def _get_trade_day(entry_time) -> date:
+        """Return the UTC trading day for the trade entry."""
+        if isinstance(entry_time, datetime):
+            return entry_time.date()
+        return datetime.fromisoformat(str(entry_time)).date()
+
+    @staticmethod
+    def _get_entry_datetime(entry_time) -> datetime:
+        """Return the trade entry as a timezone-aware UTC datetime."""
+        if isinstance(entry_time, datetime):
+            return to_utc(entry_time)
+        return to_utc(datetime.fromisoformat(str(entry_time)))
+
+    @staticmethod
+    def _infer_tick_size_from_bars(
+        bars: list[dict],
+    ) -> Decimal:
+        """Infer the minimum observed positive price increment from OHLC bars."""
+        prices: list[Decimal] = []
+        for bar in bars:
+            for field_name in ("open", "high", "low", "close"):
+                price_value = bar.get(field_name)
+                if price_value is None:
+                    continue
+                try:
+                    prices.append(Decimal(str(price_value)))
+                except InvalidOperation:
+                    continue
+
+        unique_prices = sorted(set(prices))
+        if len(unique_prices) < 2:
+            return Decimal("0.01")
+
+        positive_increments = [
+            current - previous
+            for previous, current in zip(
+                unique_prices,
+                unique_prices[1:],
+            )
+            if current > previous
+        ]
+        if not positive_increments:
+            return Decimal("0.01")
+
+        return min(positive_increments).normalize()
+
+    @staticmethod
+    def _round_price_to_tick(
+        price: Decimal, tick_size: Decimal
+    ) -> float:
+        """Round a price to the detected tick precision."""
+        normalized_tick = tick_size.normalize()
+        decimal_places = max(
+            0,
+            -normalized_tick.as_tuple().exponent,
+        )
+        rounded = price.quantize(normalized_tick)
+        return round(float(rounded), decimal_places)
+
+    def _detect_wish_stop_from_bars(
+        self,
+        *,
+        bars: list[dict],
+        side: str,
+        entry_price: float,
+        tick_size: Decimal,
+        entry_ts: int,
+    ) -> float:
+        """Detect wishful stop from the first completed adverse excursion."""
+        entry_decimal = Decimal(str(entry_price))
+        adverse_started = False
+        adverse_extreme: Decimal | None = None
+
+        for bar in bars:
+            bar_time = int(bar["time"])
+            is_entry_bar = (
+                bar_time <= entry_ts < bar_time + 60
+            )
+
+            if side == "Long":
+                if not adverse_started:
+                    bar_low = bar.get("low")
+                    if bar_low is None:
+                        continue
+                    low_price = Decimal(str(bar_low))
+                    if low_price < entry_decimal:
+                        adverse_started = True
+                        adverse_extreme = low_price
+                        bar_high = bar.get("high")
+                        if (
+                            not is_entry_bar
+                            and bar_high is not None
+                            and Decimal(str(bar_high))
+                            >= entry_decimal
+                        ):
+                            return self._round_price_to_tick(
+                                adverse_extreme - tick_size,
+                                tick_size,
+                            )
+                    continue
+
+                bar_low = bar.get("low")
+                if bar_low is not None:
+                    low_price = Decimal(str(bar_low))
+                    if (
+                        adverse_extreme is None
+                        or low_price < adverse_extreme
+                    ):
+                        adverse_extreme = low_price
+
+                bar_high = bar.get("high")
+                if (
+                            bar_high is not None
+                            and Decimal(str(bar_high))
+                            >= entry_decimal
+                        ):
+                            return self._round_price_to_tick(
+                                adverse_extreme - tick_size,
+                                tick_size,
+                            )
+            elif side == "Short":
+                if not adverse_started:
+                    bar_high = bar.get("high")
+                    if bar_high is None:
+                        continue
+                    high_price = Decimal(str(bar_high))
+                    if high_price > entry_decimal:
+                        adverse_started = True
+                        adverse_extreme = high_price
+                        bar_low = bar.get("low")
+                        if (
+                            not is_entry_bar
+                            and bar_low is not None
+                            and Decimal(str(bar_low))
+                            <= entry_decimal
+                        ):
+                            return self._round_price_to_tick(
+                                adverse_extreme + tick_size,
+                                tick_size,
+                            )
+                    continue
+
+                bar_high = bar.get("high")
+                if bar_high is not None:
+                    high_price = Decimal(str(bar_high))
+                    if (
+                        adverse_extreme is None
+                        or high_price > adverse_extreme
+                    ):
+                        adverse_extreme = high_price
+
+                bar_low = bar.get("low")
+                if (
+                            bar_low is not None
+                            and Decimal(str(bar_low))
+                            <= entry_decimal
+                        ):
+                            return self._round_price_to_tick(
+                                adverse_extreme + tick_size,
+                                tick_size,
+                            )
+            else:
+                raise ValidationError(
+                    "Wishful stop detection only supports Long and Short trades."
+                )
+
+        if adverse_started:
+            raise ValidationError(
+                "Price moved to the adverse side after entry but did not recover back to the entry price on that trade day."
+            )
+
+        raise ValidationError(
+            "No adverse excursion was found after the trade entry."
+        )
+
+    def detect_wish_stop(
+        self, user_id: str, trade_id: str
+    ) -> dict:
+        """Detect a suggested wishful stop from stored 1-minute OHLC bars."""
+        trade = self.trade_repo.find_by_id(trade_id)
+        if not trade:
+            raise NotFoundError("Trade not found.")
+        if str(trade["user_id"]) != user_id:
+            raise NotFoundError("Trade not found.")
+        if trade.get("status") == "deleted":
+            raise NotFoundError("Trade not found.")
+        if trade.get("net_pnl", 0) >= 0:
+            raise ValidationError(
+                "Wishful stop detection is only available for losing trades."
+            )
+
+        entry_time = trade.get("entry_time")
+        entry_price = trade.get("avg_entry_price")
+        symbol = trade.get("symbol", "")
+        raw_symbol = trade.get("raw_symbol")
+
+        if entry_time is None or entry_price is None:
+            raise ValidationError(
+                "Trade entry data is required to detect a wishful stop."
+            )
+
+        trade_day = self._get_trade_day(entry_time)
+        market_data_mappings = self._get_market_data_mappings(
+            user_id
+        )
+        bars = (
+            self.market_data_service.tick_data_service.read_bars_for_day(
+                symbol=symbol,
+                raw_symbol=raw_symbol,
+                interval="1m",
+                trading_day=trade_day,
+                market_data_mappings=market_data_mappings,
+            )
+        )
+        if not bars:
+            raise ValidationError(
+                "No OHLC data is available for this trade day."
+            )
+
+        entry_dt = self._get_entry_datetime(entry_time)
+        entry_ts = int(entry_dt.timestamp())
+        trade_bars = [
+            bar
+            for bar in bars
+            if int(bar["time"]) + 60 > entry_ts
+        ]
+        if not trade_bars:
+            raise ValidationError(
+                "No OHLC bars are available at or after the trade entry time."
+            )
+
+        tick_size = self._infer_tick_size_from_bars(bars)
+        wish_stop_price = self._detect_wish_stop_from_bars(
+            bars=trade_bars,
+            side=trade.get("side", ""),
+            entry_price=entry_price,
+            tick_size=tick_size,
+            entry_ts=entry_ts,
+        )
+
+        return {"wish_stop_price": wish_stop_price}
 
     def update_trade(
         self, user_id: str, trade_id: str, data: dict

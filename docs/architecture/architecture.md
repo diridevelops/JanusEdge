@@ -224,7 +224,7 @@ graph TB
 			Login[Login / Register]
 			Dashboard[Dashboard]
 			TradeList[Trade List]
-			TradeDetail[Trade Detail + Chart]
+			TradeDetail[Trade Detail + Chart + Stop Analysis]
 			Import[CSV Import Wizard]
 			Analytics[Analytics Dashboard]
 			Settings[Settings]
@@ -471,12 +471,23 @@ sequenceDiagram
     
 	MDS-->>API: OHLC data array
 	API-->>FE: OHLC JSON response
-    
+     
 	FE->>Chart: createChart(container)
 	FE->>Chart: addSeries(CandlestickSeries)
 	FE->>Chart: setData(ohlc_data)
 	FE->>Chart: Add entry/exit markers
 	Chart-->>User: Rendered chart with markers
+
+	opt User clicks Detect on wishful stop
+		FE->>API: POST /api/trades/{id}/detect-wish-stop
+		API->>MDS: read stored 1m candle data for trade day
+		MDS->>Repo: find candle dataset metadata
+		Repo-->>MDS: candle dataset metadata
+		MDS->>MinIO: Read Parquet candle object
+		MinIO-->>MDS: ordered candle rows
+		MDS-->>API: replayable OHLC bars
+		API-->>FE: { wish_stop_price }
+	end
 ```
 
 ### Source Sequence Diagram: Authentication
