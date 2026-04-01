@@ -44,7 +44,7 @@ export interface WickedOutTrade {
   net_pnl: number;
   wish_stop_price: number | null;
   target_price: number | null;
-  has_ohlc_data: boolean;
+  has_tick_data: boolean;
 }
 
 export interface WickedOutTradesResponse {

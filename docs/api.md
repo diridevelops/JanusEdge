@@ -102,7 +102,7 @@ If you need an exact stable schema here, treat it as TODO because the preview re
 - `sort_by=r_multiple` is handled specially in the backend.
 - `account` can be either an account ObjectId or an account name.
 - `tag` can be either a tag ObjectId or a tag name.
-- each returned trade currently includes a computed `market_data_cached` boolean based on stored candle metadata.
+- each returned trade includes a computed `market_data_cached` boolean based on stored candle metadata.
 
 ### Delete and restore note
 
@@ -122,7 +122,7 @@ The restore route exists, but the current delete implementation permanently remo
 | GET | `/api/executions` | Yes | List executions with pagination | Query params: `trade_id`, `symbol`, `date_from`, `date_to`, `page`, `per_page` | `{ executions, total, page, per_page }` |
 | GET | `/api/executions/:execution_id` | Yes | Get one execution | Path parameter `execution_id` | `{ execution }` |
 
-Note: the route docstring mentions an `account` query parameter, but the current implementation does not apply any account filter in code. Treat account filtering here as TODO.
+Note: the route docstring mentions an `account` query parameter, but the code does not apply any account filter. Treat account filtering here as TODO.
 
 ## Tags
 
@@ -250,7 +250,7 @@ What-if endpoints use the same filter set as trades and analytics: `account`, `s
 | Method | Path | Auth | Purpose | Request | Response |
 | --- | --- | --- | --- | --- | --- |
 | GET | `/api/whatif/stop-analysis` | Yes | Return R-normalized stop-overshoot statistics | Query filters; symbol is effectively required by the backend logic | Stop-analysis object |
-| GET | `/api/whatif/wicked-out-trades` | Yes | List wicked-out trades and whether OHLC data exists | Query filters | `{ trades: [...] }` |
+| GET | `/api/whatif/wicked-out-trades` | Yes | List wicked-out trades and whether raw tick data exists | Query filters | `{ trades: [...] }` |
 | POST | `/api/whatif/simulate` | Yes | Run wider-stop simulation | JSON body with `r_widening`; query filters still apply | Simulation response |
 
 ### Stop-analysis response
@@ -274,6 +274,12 @@ The frontend currently expects fields like:
 ```
 
 ### Simulation request and response
+
+The stop-management simulator replays stored raw ticks only.
+
+- trades with a target price and usable raw tick data are replayed tick by tick
+- trades without usable raw tick data are skipped with detail status `no_data`
+- the wicked-out trade list exposes `has_tick_data` instead of `has_ohlc_data`
 
 Request body:
 

@@ -206,9 +206,14 @@ Authenticated tick-data endpoints:
 - `POST /api/market-data/tick-imports`: store the upload, start a background import, and create a progress-tracked batch
 - `GET /api/market-data/tick-imports/:batch_id`: poll the current progress and status for an import batch
 
-`GET /api/market-data/ohlc` still returns `{ ohlc_data: [...] }` with the
-existing bar shape. `force_refresh=true` now regenerates candle datasets
-from stored raw ticks instead of refetching from an external provider.
+`GET /api/market-data/ohlc` returns `{ ohlc_data: [...] }` with the
+existing bar shape. `force_refresh=true` regenerates candle datasets
+from stored raw ticks.
+
+The What-If stop-management flow also uses this stored market-data system.
+It checks for raw daily tick datasets and replays `last_price` tick by tick
+for wider-stop simulation. Derived candles are not used as a fallback for
+that replay path.
 
 ## Media Handling
 

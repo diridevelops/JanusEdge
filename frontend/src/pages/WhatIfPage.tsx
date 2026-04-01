@@ -11,11 +11,11 @@ import { PageHeader } from '../components/ui/PageHeader';
 import { useToast } from '../hooks/useToast';
 import type { AnalyticsSummary } from '../types/analytics.types';
 import type {
-    ConfidenceInterval,
-    SimulationDetail,
-    SimulationResponse,
-    StopAnalysisResponse,
-    WickedOutTrade,
+  ConfidenceInterval,
+  SimulationDetail,
+  SimulationResponse,
+  StopAnalysisResponse,
+  WickedOutTrade,
 } from '../types/whatif.types';
 import { formatCurrency, formatPnL } from '../utils/formatters';
 
@@ -208,7 +208,7 @@ function getSimulationStatusLabel(status: string) {
   switch (status) {
     case 'no_target':
       return 'Skipped: no target';
-    case 'no_ohlc':
+    case 'no_data':
       return 'Skipped: no market data';
     case 'no_risk':
       return 'Skipped: no risk';
@@ -490,7 +490,7 @@ export function WhatIfPage() {
   }
 
   // Wicked-out summary counts
-  const woWithData = woTrades.filter((t) => t.has_ohlc_data).length;
+  const woWithData = woTrades.filter((t) => t.has_tick_data).length;
   const woMissing = woTrades.length - woWithData;
   const overshootByTradeId = new Map(
     (analysis?.details ?? []).map((detail) => [detail.trade_id, detail.overshoot_r]),
@@ -576,7 +576,7 @@ export function WhatIfPage() {
                 {woLoading ? (
                   'Loading…'
                 ) : (
-                  `${woTrades.length} trade${woTrades.length !== 1 ? 's' : ''} (${woWithData} with market data, ${woMissing} missing market data)`
+                  `${woTrades.length} trade${woTrades.length !== 1 ? 's' : ''} (${woWithData} with tick data, ${woMissing} missing tick data)`
                 )}
               </span>
             </button>
@@ -603,7 +603,7 @@ export function WhatIfPage() {
                           <th className="px-4 py-2 text-right">Wishful Stop</th>
                           <th className="px-4 py-2 text-right">Target</th>
                           <th className="px-4 py-2 text-right">Overshoot</th>
-                          <th className="px-4 py-2 text-center">Market Data</th>
+                          <th className="px-4 py-2 text-center">Tick Data</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -648,7 +648,7 @@ export function WhatIfPage() {
                                 {overshoot != null ? `${overshoot.toFixed(2)}R` : '—'}
                               </td>
                               <td className="px-4 py-2 text-center">
-                                {t.has_ohlc_data ? (
+                                {t.has_tick_data ? (
                                   <span className="text-green-600 dark:text-green-400" title="Market data available">✓</span>
                                 ) : (
                                   <span className="text-amber-500 dark:text-amber-400" title="Missing market data">⚠</span>
@@ -748,8 +748,9 @@ export function WhatIfPage() {
                 text={
                   'Simulate widening your stop across all trades:\n' +
                   '- Winners keep their P&L.\n' +
-                  '- Losers with a target price and stored market data ' +
-                  'are replayed with the wider stop to check if they would have reached the target.'
+                  '- Losers with a target price and stored tick data ' +
+                  'are replayed tick by tick with the wider stop to check if they would have reached the target.\n' +
+                  '- Trades without usable tick data are skipped.'
                 }
                 widthClass="w-80"
               />

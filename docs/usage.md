@@ -484,7 +484,7 @@ It helps you review:
 - wishful stop
 - target price
 - overshoot in R
-- whether 1-minute OHLC data is available
+- whether raw tick data is available
 
 #### Overshoot In R
 
@@ -506,6 +506,10 @@ Use this to estimate whether your stops are often too tight.
 This tool simulates the effect of widening your stop.
 
 Use it to estimate how results might change if stopped-out trades had more room.
+
+It replays stored raw tick data for losing trades that have a target price.
+
+If usable tick data is missing for the trade day, the trade is skipped and shown as `Skipped: no data`.
 
 ## Settings
 

@@ -4,15 +4,13 @@
 
 Janus Edge is a web application for importing futures execution exports, reconstructing trades, journaling them, attaching media, and analyzing results.
 
-The current codebase is organized as a monorepo with:
+The codebase is organized as a monorepo with:
 
 - a React and TypeScript frontend in `frontend/`
 - a Flask backend in `backend/`
 - MongoDB for persisted application data
 - MinIO for media object storage
 - Docker Compose for local orchestration
-
-An additional external dependency is Yahoo Finance, accessed through `yfinance` in the backend for OHLC market data.
 
 ## System Diagram
 
@@ -23,16 +21,17 @@ graph TB
 	Backend[Backend API<br/>Flask]
 	Mongo[(MongoDB)]
 	MinIO[(MinIO)]
-	Yahoo[Yahoo Finance via yfinance]
 	CSV[NinjaTrader or Quantower CSV]
+	TickExport[NinjaTrader Tick Export]
 
 	Trader --> Frontend
 	Frontend -->|REST /api| Backend
 	Trader -->|Upload| CSV
+	Trader -->|Upload| TickExport
 	CSV -->|multipart upload| Frontend
+	TickExport -->|multipart upload| Frontend
 	Backend --> Mongo
 	Backend --> MinIO
-	Backend --> Yahoo
 ```
 
 ## Runtime Topology
@@ -94,7 +93,7 @@ graph LR
 ### Analytics and What-If
 
 - Analytics endpoints aggregate trade data from MongoDB.
-- What-if endpoints reuse persisted trade and market-data information to calculate stop overshoot statistics and wider-stop simulations.
+- What-if endpoints reuse persisted trade and stored market-data information to calculate stop overshoot statistics and wider-stop simulations. The stop-management simulator replays raw ticks, not candles.
 - Monte Carlo simulation is computed in the backend and rendered by the frontend.
 
 ### Backup and Restore
@@ -148,7 +147,7 @@ flowchart LR
 - `app/imports/`: CSV upload, parsing, reconstruction, and import finalization
 - `app/trades/`: trade CRUD and search
 - `app/analytics/`: reporting and Monte Carlo simulation
-- `app/market_data/`: OHLC retrieval and cache access
+- `app/market_data/`: stored market-data retrieval and candle access
 - `app/media/`: upload, listing, URL generation, and deletion for trade media
 - `app/whatif/`: stop analysis and simulation endpoints
 - `app/repositories/`: MongoDB data-access layer
@@ -166,7 +165,7 @@ MongoDB stores the application records for:
 - executions
 - trades
 - tags
-- market-data cache slices
+- market-data dataset metadata
 - media metadata
 - audit logs
 
@@ -199,17 +198,18 @@ C4Context
 
 	System(janusedge, "Janus Edge Web App", "Trade journaling and analytics platform. React SPA + Flask API + MongoDB")
 
-	System_Ext(yahoo, "Yahoo Finance API", "Provides historical OHLC market data via yfinance library")
 	System_Ext(ninjatrader, "NinjaTrader", "Trading platform that exports execution-level CSV files")
+	System_Ext(ninjatraderticks, "NinjaTrader Tick Export", "Text exports containing raw tick market data")
 	System_Ext(quantower, "Quantower", "Trading platform that exports execution-level CSV files")
 
 	Rel(trader, janusedge, "Uses browser to", "HTTPS")
 	Rel(trader, ninjatrader, "Exports CSV files from")
+	Rel(trader, ninjatraderticks, "Exports tick data from")
 	Rel(trader, quantower, "Exports CSV files from")
 	Rel(trader, janusedge, "Uploads CSV files to")
+	Rel(trader, janusedge, "Uploads tick data to")
 	Rel(trader, janusedge, "Downloads portable backups from")
 	Rel(trader, janusedge, "Restores portable backups into")
-	Rel(janusedge, yahoo, "Fetches OHLC data", "HTTPS/yfinance")
 ```
 
 ### Source Component Architecture Diagram
@@ -270,7 +270,8 @@ graph TB
 		subgraph Services_BE ["Business Services"]
 			CSVParser[CSV Parser Service<br/>Platform detection & parsing]
 			TradeReconstructor[Trade Reconstruction Engine<br/>FIFO/LIFO/Weighted Avg]
-			MarketDataService[Market Data Service<br/>yfinance + caching]
+			MarketDataService[Market Data Service<br/>stored candles + datasets]
+			TickDataService[Tick Data Service<br/>tick import + replay data]
 			AnalyticsEngine[Analytics Engine<br/>Metrics computation]
 			ImportService[Import Service<br/>Batch management]
 			BackupService[Portable Backup Service<br/>ZIP export + merge restore]
@@ -282,7 +283,7 @@ graph TB
 			ExecutionRepo[Execution Repository]
 			ImportBatchRepo[Import Batch Repository]
 			AccountRepo[Account Repository]
-			MarketDataRepo[Market Data Cache Repository]
+			MarketDataRepo[Market Data Dataset Repository]
 			AuditRepo[Audit Log Repository]
 		end
         
@@ -298,14 +299,15 @@ graph TB
 		ExecutionsCol[(executions)]
 		ImportBatchesCol[(import_batches)]
 		TradeAccountsCol[(trade_accounts)]
-		MarketDataCacheCol[(market_data_cache)]
+		MarketDataDatasetsCol[(market_data_datasets)]
 		AuditLogsCol[(audit_logs)]
 		TagsCol[(tags)]
 	end
     
 	Services_FE -->|REST API| FlaskApp
 	Repositories --> Database
-	MarketDataService -->|yfinance| Yahoo["Yahoo Finance API"]
+	MarketDataService --> MinIOStore["MinIO market-data objects"]
+	TickDataService --> MinIOStore
 ```
 
 ### Source Deployment Architecture Diagram
@@ -340,7 +342,6 @@ graph TB
 		Vite -->|"Proxy /api → backend:5000"| Flask
 		Flask -->|"mongo:27017"| MongoDB
 		Flask -->|"minio:9000"| MinIO
-		Flask -->|yfinance| YahooAPI["Yahoo Finance API"]
 		MongoDB --> PersistentData
 		MinIO --> ObjectData
 	end
@@ -387,13 +388,12 @@ flowchart TB
 	end
     
 	subgraph MarketData ["Market Data Flow"]
-		N[User opens Trade Detail] --> O{Is OHLC data<br/>cached?}
-		O -->|Yes| P[Read from<br/>market_data_cache]
-		O -->|No| Q[Fetch from yfinance<br/>symbol + interval + range]
-		Q --> R[Store in<br/>market_data_cache]
-		R --> P
-		P --> S[Return OHLC to frontend]
-		S --> T[Render candlestick chart<br/>+ entry/exit markers]
+		N[User uploads tick export] --> O[Parse and validate tick rows]
+		O --> P[Store raw ticks in MinIO]
+		P --> Q[Derive candle datasets]
+		Q --> R[Write dataset metadata to MongoDB]
+		R --> S[Return tick and candle availability to frontend]
+		S --> T[Use candles for charts and ticks for What-If replay]
 	end
     
 	subgraph Analytics ["Analytics Flow"]
@@ -450,8 +450,8 @@ sequenceDiagram
 	participant Chart as Lightweight Charts
 	participant API as Flask API
 	participant MDS as Market Data Service
-	participant Cache as MongoDB Cache
-	participant Yahoo as Yahoo Finance
+	participant Repo as Dataset Metadata Repository
+	participant MinIO as MinIO
 
 	User->>FE: Navigate to trade detail
 	FE->>API: GET /api/trades/{id}
@@ -459,14 +459,14 @@ sequenceDiagram
     
 	FE->>API: GET /api/market-data/ohlc?symbol=MES&interval=5m&start=...&end=...
 	API->>MDS: get_ohlc(symbol, interval, start, end)
-	MDS->>Cache: Check cache for symbol/interval/range
+	MDS->>Repo: Find candle datasets for symbol/interval/range
     
-	alt Cache Hit
-		Cache-->>MDS: cached OHLC data
-	else Cache Miss
-		MDS->>Yahoo: yfinance.download(ticker, start, end, interval)
-		Yahoo-->>MDS: OHLC DataFrame
-		MDS->>Cache: Store OHLC data
+	alt Datasets found
+		Repo-->>MDS: dataset metadata
+		MDS->>MinIO: Read Parquet candle objects
+		MinIO-->>MDS: candle rows
+	else No datasets
+		Repo-->>MDS: no matching datasets
 	end
     
 	MDS-->>API: OHLC data array
@@ -602,14 +602,21 @@ erDiagram
 		datetime created_at
 	}
     
-	MARKET_DATA_CACHE {
+	MARKET_DATA_DATASETS {
 		ObjectId _id PK
 		string symbol
-		string interval "1m|5m|15m|1h|1d"
+		string raw_symbol
+		string dataset_type "ticks|candles"
+		string timeframe "1m|5m|15m|1h|null"
 		date date
-		object[] ohlc "time,open,high,low,close,volume"
-		datetime fetched_at
-		string source "yfinance"
+		string object_key
+		int row_count
+		int byte_size
+		string source_file_name
+		string import_batch_id
+		string status
+		datetime created_at
+		datetime updated_at
 	}
     
 	AUDIT_LOGS {

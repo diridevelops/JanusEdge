@@ -64,9 +64,9 @@ def stop_analysis():
 @jwt_required()
 def wicked_out_trades():
     """
-    List wicked-out trades with OHLC availability.
+    List wicked-out trades with tick-data availability.
 
-    Returns trade summaries with has_ohlc_data flag.
+    Returns trade summaries with has_tick_data flag.
 
     Query parameters:
         symbol: Optional instrument filter.
@@ -94,7 +94,7 @@ def simulate():
     Run what-if stop widening simulation.
 
     Accepts r_widening and optional filters. Replays
-    1-min OHLC bars for losing trades with target prices
+    raw ticks for losing trades with target prices
     to simulate wider stop outcomes.
 
     JSON body:

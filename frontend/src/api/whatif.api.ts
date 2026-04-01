@@ -16,7 +16,7 @@ export async function getStopAnalysis(
   return res.data;
 }
 
-/** Fetch wicked-out trades with OHLC availability. */
+/** Fetch wicked-out trades with tick-data availability. */
 export async function getWickedOutTrades(
   params: Record<string, string>,
 ): Promise<WickedOutTradesResponse> {
