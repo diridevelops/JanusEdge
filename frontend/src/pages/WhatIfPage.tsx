@@ -11,11 +11,11 @@ import { PageHeader } from '../components/ui/PageHeader';
 import { useToast } from '../hooks/useToast';
 import type { AnalyticsSummary } from '../types/analytics.types';
 import type {
-    ConfidenceInterval,
-    SimulationDetail,
-    SimulationResponse,
-    StopAnalysisResponse,
-    WickedOutTrade,
+  ConfidenceInterval,
+  SimulationDetail,
+  SimulationResponse,
+  StopAnalysisResponse,
+  WickedOutTrade,
 } from '../types/whatif.types';
 import { formatCurrency, formatPnL } from '../utils/formatters';
 
@@ -208,7 +208,7 @@ function getSimulationStatusLabel(status: string) {
   switch (status) {
     case 'no_target':
       return 'Skipped: no target';
-    case 'no_ohlc':
+    case 'no_data':
       return 'Skipped: no market data';
     case 'no_risk':
       return 'Skipped: no risk';
@@ -331,6 +331,7 @@ function ResultSection({
 /* ------------------------------------------------------------------ */
 
 type WhatIfTab = 'simulator' | 'stop-management';
+type WhatIfReplayMode = 'ohlc' | 'tick';
 
 /** What-if page: stop analysis, wicked-out trades, and simulation. */
 export function WhatIfPage() {
@@ -374,6 +375,7 @@ export function WhatIfPage() {
 
   // ---- Simulation ----
   const [rWidening, setRWidening] = useState('0.5');
+  const [replayMode, setReplayMode] = useState<WhatIfReplayMode>('ohlc');
   const [simLoading, setSimLoading] = useState(false);
   const [simResult, setSimResult] = useState<ReturnType<typeof buildSimulationViewModel> | null>(null);
   const [resultSectionsExpanded, setResultSectionsExpanded] = useState({
@@ -447,6 +449,10 @@ export function WhatIfPage() {
     void fetchSummary(apiFilters);
   }, [fetchSummary, filters.symbol, filters.side, filters.account, filters.tag, filters.date_from, filters.date_to]);
 
+  useEffect(() => {
+    setSimResult(null);
+  }, [replayMode]);
+
   // Simulation handler
   async function handleSimulate() {
     const rVal = parseFloat(rWidening);
@@ -455,7 +461,7 @@ export function WhatIfPage() {
       return;
     }
 
-    const cacheKey = `${rVal}_${JSON.stringify(apiFilters)}`;
+    const cacheKey = `${rVal}_${replayMode}_${JSON.stringify(apiFilters)}`;
     const cached = simCache.current.get(cacheKey);
     if (cached) {
       setSimResult(cached);
@@ -466,7 +472,7 @@ export function WhatIfPage() {
     simulationRequestIdRef.current = requestId;
     setSimLoading(true);
     try {
-      const response = await runSimulation(rVal, apiFilters);
+      const response = await runSimulation(rVal, replayMode, apiFilters);
       if (requestId !== simulationRequestIdRef.current) {
         return;
       }
@@ -490,7 +496,7 @@ export function WhatIfPage() {
   }
 
   // Wicked-out summary counts
-  const woWithData = woTrades.filter((t) => t.has_ohlc_data).length;
+  const woWithData = woTrades.filter((t) => t.has_tick_data).length;
   const woMissing = woTrades.length - woWithData;
   const overshootByTradeId = new Map(
     (analysis?.details ?? []).map((detail) => [detail.trade_id, detail.overshoot_r]),
@@ -576,7 +582,7 @@ export function WhatIfPage() {
                 {woLoading ? (
                   'Loading…'
                 ) : (
-                  `${woTrades.length} trade${woTrades.length !== 1 ? 's' : ''} (${woWithData} with market data, ${woMissing} missing market data)`
+                  `${woTrades.length} trade${woTrades.length !== 1 ? 's' : ''} (${woWithData} with tick data, ${woMissing} missing tick data)`
                 )}
               </span>
             </button>
@@ -603,7 +609,7 @@ export function WhatIfPage() {
                           <th className="px-4 py-2 text-right">Wishful Stop</th>
                           <th className="px-4 py-2 text-right">Target</th>
                           <th className="px-4 py-2 text-right">Overshoot</th>
-                          <th className="px-4 py-2 text-center">Market Data</th>
+                          <th className="px-4 py-2 text-center">Tick Data</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -648,7 +654,7 @@ export function WhatIfPage() {
                                 {overshoot != null ? `${overshoot.toFixed(2)}R` : '—'}
                               </td>
                               <td className="px-4 py-2 text-center">
-                                {t.has_ohlc_data ? (
+                                {t.has_tick_data ? (
                                   <span className="text-green-600 dark:text-green-400" title="Market data available">✓</span>
                                 ) : (
                                   <span className="text-amber-500 dark:text-amber-400" title="Missing market data">⚠</span>
@@ -748,8 +754,10 @@ export function WhatIfPage() {
                 text={
                   'Simulate widening your stop across all trades:\n' +
                   '- Winners keep their P&L.\n' +
-                  '- Losers with a target price and stored market data ' +
-                  'are replayed with the wider stop to check if they would have reached the target.'
+                  '- Calculation mode lets you choose OHLC or Tick replay.\n' +
+                  '- OHLC uses stored 1-minute candles generated from tick data and is the default. It is faster, but intrabar price order is approximated.\n' +
+                  '- Tick uses stored raw ticks for more precise but slower replay.\n' +
+                  '- Trades without usable data for the selected mode are skipped.'
                 }
                 widthClass="w-80"
               />
@@ -769,6 +777,19 @@ export function WhatIfPage() {
                   onChange={(e) => setRWidening(e.target.value)}
                   className="input-field text-sm w-28"
                 />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
+                  Calculation Mode
+                </label>
+                <select
+                  value={replayMode}
+                  onChange={(e) => setReplayMode(e.target.value as WhatIfReplayMode)}
+                  className="input-field text-sm w-32"
+                >
+                  <option value="ohlc">OHLC (1m)</option>
+                  <option value="tick">Tick</option>
+                </select>
               </div>
               <button
                 type="button"

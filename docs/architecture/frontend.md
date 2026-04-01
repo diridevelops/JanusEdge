@@ -173,7 +173,7 @@ The page explicitly mentions NinjaTrader and Quantower support.
 
 ### Market Data Import
 
-The frontend now includes a dedicated `/market-data/import` flow for NinjaTrader tick-data `.txt` files.
+The frontend includes a dedicated `/market-data/import` flow for NinjaTrader tick-data `.txt` files.
 
 That page:
 
@@ -182,6 +182,15 @@ That page:
 - starts an authenticated background import batch
 - polls batch progress until completion or failure
 - uses the same backend market-data store consumed by trade charts and what-if analysis
+
+On the What-if stop-management tab, the frontend shows tick-data availability
+in the wicked-out list and lets the user choose the What-If replay source:
+
+- `OHLC (1m)` for replay from stored 1-minute candles
+- `Tick` for replay from stored raw ticks
+
+If the selected replay source is unavailable for a trade day, the What-If
+Calculator skips that trade.
 
 ### Trade Detail
 

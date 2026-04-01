@@ -16,7 +16,7 @@ export async function getStopAnalysis(
   return res.data;
 }
 
-/** Fetch wicked-out trades with OHLC availability. */
+/** Fetch wicked-out trades with tick-data availability. */
 export async function getWickedOutTrades(
   params: Record<string, string>,
 ): Promise<WickedOutTradesResponse> {
@@ -30,11 +30,12 @@ export async function getWickedOutTrades(
 /** Run what-if stop widening simulation. */
 export async function runSimulation(
   rWidening: number,
+  replayMode: 'ohlc' | 'tick',
   params: Record<string, string>,
 ): Promise<SimulationResponse> {
   const res = await apiClient.post<SimulationResponse>(
     '/whatif/simulate',
-    { r_widening: rWidening },
+    { r_widening: rWidening, replay_mode: replayMode },
     { params },
   );
   return res.data;

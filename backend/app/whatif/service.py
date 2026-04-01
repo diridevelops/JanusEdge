@@ -31,6 +31,15 @@ from app.whatif.bootstrap import (
 )
 
 
+_BAR_INTERVAL_SECONDS = {
+    "1m": 60,
+    "5m": 300,
+    "15m": 900,
+    "1h": 3600,
+    "1d": 86400,
+}
+
+
 def _parse_date_from(value: str) -> datetime:
     """Parse date_from as inclusive lower bound."""
     return datetime.fromisoformat(value)
@@ -105,7 +114,10 @@ def _build_match(
 
 
 def _cache_key(
-    user_id: str, filters: dict, r_widening: float
+    user_id: str,
+    filters: dict,
+    r_widening: float,
+    replay_mode: str,
 ) -> str:
     """Generate a stable cache key."""
     raw = json.dumps(
@@ -116,6 +128,7 @@ def _cache_key(
                 if v is not None
             },
             "r_widening": r_widening,
+            "replay_mode": replay_mode,
         },
         sort_keys=True,
         default=str,
@@ -252,7 +265,7 @@ class WhatIfService:
         filters: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
-        List wicked-out trades with OHLC data availability.
+        List wicked-out trades with tick-data availability.
 
         Parameters:
             user_id: User ObjectId string.
@@ -280,7 +293,7 @@ class WhatIfService:
             user_id
         )
 
-        ohlc_cache: Dict[
+        tick_cache: Dict[
             Tuple[str, Any], bool
         ] = {}
         results: List[Dict[str, Any]] = []
@@ -298,16 +311,14 @@ class WhatIfService:
                 ).date()
 
             cache_key = (symbol, raw_sym, day)
-            if cache_key not in ohlc_cache:
-                ohlc_cache[cache_key] = any(
-                    self.market_data_service.tick_data_service.has_ohlc_for_day(
+            if cache_key not in tick_cache:
+                tick_cache[cache_key] = (
+                    self.market_data_service.tick_data_service.has_ticks_for_day(
                         symbol=symbol,
                         raw_symbol=raw_sym,
-                        interval=iv,
                         trading_day=day,
                         market_data_mappings=market_data_mappings,
                     )
-                    for iv in ("1m", "5m")
                 )
 
             results.append({
@@ -331,7 +342,7 @@ class WhatIfService:
                     "wish_stop_price"
                 ),
                 "target_price": t.get("target_price"),
-                "has_ohlc_data": ohlc_cache[cache_key],
+                "has_tick_data": tick_cache[cache_key],
             })
 
         return {"trades": results}
@@ -340,22 +351,24 @@ class WhatIfService:
         self,
         user_id: str,
         r_widening: float,
+        replay_mode: str = "ohlc",
         filters: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Simulate widening stops by xR across losing trades.
 
-        For each losing trade with target_price and OHLC data:
-        replay 1-min bars to determine if wider stop would
+        For each losing trade with target_price and market data:
+        replay either 1-minute candles or raw ticks to determine if wider stop would
         have reached the target.
 
         Winners: keep original P&L, recalculate R with wider stop.
-        Losers with target + OHLC: replay bars to check conversion.
-        Losers without target or OHLC: keep original P&L.
+        Losers with target + market data: replay the selected dataset.
+        Losers without target or usable market data: keep original P&L.
 
         Parameters:
             user_id: User ObjectId string.
             r_widening: Stop widening factor in R units.
+            replay_mode: 'ohlc' or 'tick'.
             filters: Optional query filters.
 
         Returns:
@@ -365,7 +378,9 @@ class WhatIfService:
             filters = {}
 
         # Check cache
-        ck = _cache_key(user_id, filters, r_widening)
+        ck = _cache_key(
+            user_id, filters, r_widening, replay_mode
+        )
         if ck in _sim_cache:
             ts, result = _sim_cache[ck]
             if time.time() - ts < _CACHE_TTL:
@@ -501,15 +516,12 @@ class WhatIfService:
                     str(entry_time)
                 ).date()
 
-            has_market_data = any(
-                self.market_data_service.tick_data_service.has_ohlc_for_day(
-                    symbol=symbol,
-                    raw_symbol=raw_sym,
-                    interval=iv,
-                    trading_day=day,
-                    market_data_mappings=market_data_mappings,
-                )
-                for iv in ("1m", "5m")
+            has_market_data = self._has_replay_data_for_day(
+                replay_mode=replay_mode,
+                symbol=symbol,
+                raw_symbol=raw_sym,
+                trading_day=day,
+                market_data_mappings=market_data_mappings,
             )
 
             target = t.get("target_price")
@@ -525,7 +537,7 @@ class WhatIfService:
                         net_pnl,
                         net_pnl,
                         False,
-                        "no_ohlc",
+                        "no_data",
                         initial_risk,
                         fee,
                         widened_risk,
@@ -597,21 +609,7 @@ class WhatIfService:
             else:
                 new_stop = exit_p + widening_pts
 
-            # Check OHLC data
-            # Pick best available OHLC interval
-            ohlc_interval = None
-            for iv in ("1m", "5m"):
-                if self.market_data_service.tick_data_service.has_ohlc_for_day(
-                    symbol=symbol,
-                    raw_symbol=raw_sym,
-                    interval=iv,
-                    trading_day=day,
-                    market_data_mappings=market_data_mappings,
-                ):
-                    ohlc_interval = iv
-                    break
-
-            if ohlc_interval is None:
+            if not has_market_data:
                 whatif_pnls.append(net_pnl)
                 whatif_grosses.append(gross_pnl)
                 if widened_risk:
@@ -623,7 +621,7 @@ class WhatIfService:
                         net_pnl,
                         net_pnl,
                         False,
-                        "no_ohlc",
+                        "no_data",
                         initial_risk,
                         fee,
                         widened_risk,
@@ -631,24 +629,38 @@ class WhatIfService:
                 )
                 continue
 
-            # Replay OHLC bars
-            new_pnl = self._replay_bars(
-                symbol=symbol,
-                raw_symbol=raw_sym,
-                interval=ohlc_interval,
-                trade=t,
-                new_stop=new_stop,
-                target=target,
-                side=side,
-                entry=entry,
-                qty=qty,
-                fee=fee,
-                point_value=point_value,
-                market_data_mappings=market_data_mappings,
-            )
+            if replay_mode == "tick":
+                new_pnl = self._replay_ticks(
+                    symbol=symbol,
+                    raw_symbol=raw_sym,
+                    trade=t,
+                    new_stop=new_stop,
+                    target=target,
+                    side=side,
+                    entry=entry,
+                    qty=qty,
+                    fee=fee,
+                    point_value=point_value,
+                    market_data_mappings=market_data_mappings,
+                )
+            else:
+                new_pnl = self._replay_bars(
+                    symbol=symbol,
+                    raw_symbol=raw_sym,
+                    interval="1m",
+                    trade=t,
+                    new_stop=new_stop,
+                    target=target,
+                    side=side,
+                    entry=entry,
+                    qty=qty,
+                    fee=fee,
+                    point_value=point_value,
+                    market_data_mappings=market_data_mappings,
+                )
 
             if new_pnl is None:
-                # Bars don't cover trade entry — skip
+                # Ticks don't cover trade entry — skip
                 whatif_pnls.append(net_pnl)
                 whatif_grosses.append(gross_pnl)
                 if widened_risk:
@@ -660,7 +672,7 @@ class WhatIfService:
                         net_pnl,
                         net_pnl,
                         False,
-                        "no_ohlc",
+                        "no_data",
                         initial_risk,
                         fee,
                         widened_risk,
@@ -714,6 +726,33 @@ class WhatIfService:
 
         return result
 
+    def _has_replay_data_for_day(
+        self,
+        *,
+        replay_mode: str,
+        symbol: str,
+        raw_symbol: str | None,
+        trading_day,
+        market_data_mappings: dict | None = None,
+    ) -> bool:
+        """Return True when the selected replay source exists for a day."""
+
+        if replay_mode == "tick":
+            return self.market_data_service.tick_data_service.has_ticks_for_day(
+                symbol=symbol,
+                raw_symbol=raw_symbol,
+                trading_day=trading_day,
+                market_data_mappings=market_data_mappings,
+            )
+
+        return self.market_data_service.tick_data_service.has_ohlc_for_day(
+            symbol=symbol,
+            raw_symbol=raw_symbol,
+            interval="1m",
+            trading_day=trading_day,
+            market_data_mappings=market_data_mappings,
+        )
+
     def _replay_bars(
         self,
         symbol: str,
@@ -730,27 +769,13 @@ class WhatIfService:
         market_data_mappings: dict | None = None,
     ) -> Optional[float]:
         """
-        Replay 1-min bars to simulate wider stop outcome.
-
-        Parameters:
-            symbol: Trade symbol.
-            raw_symbol: Original raw symbol.
-            interval: OHLC interval.
-            trade: Raw trade document.
-            new_stop: Widened stop price.
-            target: Target price.
-            side: 'Long' or 'Short'.
-            entry: Entry price.
-            qty: Trade quantity.
-            fee: Trade fee.
-            point_value: Dollar per point.
+        Replay OHLC bars to simulate wider stop outcome.
 
         Returns:
             Simulated net PnL, or None if bars
             don't cover the trade entry time.
         """
         entry_time = trade.get("entry_time")
-        exit_time = trade.get("exit_time")
 
         if isinstance(entry_time, datetime):
             day = entry_time.date()
@@ -759,7 +784,6 @@ class WhatIfService:
                 str(entry_time)
             ).date()
 
-        # Get bars for trade day
         bars = self.market_data_service.tick_data_service.read_bars_for_day(
             symbol=symbol,
             raw_symbol=raw_symbol,
@@ -770,36 +794,37 @@ class WhatIfService:
         if not bars:
             return None
 
-        # Filter bars within trade window
+        interval_seconds = _BAR_INTERVAL_SECONDS.get(
+            interval, 60
+        )
+
         if isinstance(entry_time, datetime):
-            # MongoDB stores UTC datetimes as naive; attach tzinfo
-            # so .timestamp() converts correctly.
             utc_entry = entry_time.replace(tzinfo=timezone.utc)
             entry_ts = int(utc_entry.timestamp())
         else:
-            entry_ts = 0
-        if isinstance(exit_time, datetime):
-            utc_exit = exit_time.replace(tzinfo=timezone.utc)
-            exit_ts = int(utc_exit.timestamp())
-        else:
-            exit_ts = float("inf")
+            entry_ts = int(
+                datetime.fromisoformat(
+                    str(entry_time)
+                ).replace(tzinfo=timezone.utc).timestamp()
+            )
 
-        # Include bars from entry to end of day
-        # (wider stop might keep us in longer)
+        # Include the bar that contains the trade entry time,
+        # not just bars that start after it. Otherwise a mid-bar
+        # entry can incorrectly skip adverse movement that
+        # happened later inside the same candle.
         trade_bars = [
-            b for b in bars if b["time"] >= entry_ts
+            bar
+            for bar in bars
+            if bar["time"] + interval_seconds > entry_ts
         ]
-
         if not trade_bars:
             return None
 
-        # Replay
         for bar in trade_bars:
             high = bar["high"]
             low = bar["low"]
 
             if side == "Long":
-                # Check stop hit first (worst case)
                 if low <= new_stop:
                     exit_price = new_stop
                     gross = (
@@ -808,7 +833,6 @@ class WhatIfService:
                         * point_value
                     )
                     return round(gross - fee, 2)
-                # Check target hit
                 if high >= target:
                     exit_price = target
                     gross = (
@@ -818,7 +842,6 @@ class WhatIfService:
                     )
                     return round(gross - fee, 2)
             else:
-                # Short
                 if high >= new_stop:
                     exit_price = new_stop
                     gross = (
@@ -836,8 +859,6 @@ class WhatIfService:
                     )
                     return round(gross - fee, 2)
 
-        # Neither stop nor target hit by EOD —
-        # exit at last bar close
         last_close = trade_bars[-1]["close"]
         if side == "Long":
             gross = (
@@ -848,6 +869,132 @@ class WhatIfService:
         else:
             gross = (
                 (entry - last_close)
+                * qty
+                * point_value
+            )
+        return round(gross - fee, 2)
+
+    def _replay_ticks(
+        self,
+        symbol: str,
+        raw_symbol: str | None,
+        trade: dict,
+        new_stop: float,
+        target: float,
+        side: str,
+        entry: float,
+        qty: int,
+        fee: float,
+        point_value: float,
+        market_data_mappings: dict | None = None,
+    ) -> Optional[float]:
+        """
+        Replay raw ticks to simulate wider stop outcome.
+
+        Parameters:
+            symbol: Trade symbol.
+            raw_symbol: Original raw symbol.
+            trade: Raw trade document.
+            new_stop: Widened stop price.
+            target: Target price.
+            side: 'Long' or 'Short'.
+            entry: Entry price.
+            qty: Trade quantity.
+            fee: Trade fee.
+            point_value: Dollar per point.
+
+        Returns:
+            Simulated net PnL, or None if ticks
+            don't cover the trade entry time.
+        """
+        entry_time = trade.get("entry_time")
+
+        if isinstance(entry_time, datetime):
+            day = entry_time.date()
+        else:
+            day = datetime.fromisoformat(
+                str(entry_time)
+            ).date()
+
+        # Get ticks for trade day
+        ticks = self.market_data_service.tick_data_service.read_ticks_for_day(
+            symbol=symbol,
+            raw_symbol=raw_symbol,
+            trading_day=day,
+            market_data_mappings=market_data_mappings,
+        )
+        if not ticks:
+            return None
+
+        if isinstance(entry_time, datetime):
+            utc_entry = entry_time.replace(tzinfo=timezone.utc)
+            entry_dt = utc_entry
+        else:
+            entry_dt = datetime.fromisoformat(
+                str(entry_time)
+            ).replace(tzinfo=timezone.utc)
+
+        # Include ticks from entry to end of day.
+        trade_ticks = [
+            tick
+            for tick in ticks
+            if tick["timestamp"] >= entry_dt
+        ]
+
+        if not trade_ticks:
+            return None
+
+        # Replay
+        for tick in trade_ticks:
+            last_price = tick["last_price"]
+
+            if side == "Long":
+                if last_price <= new_stop:
+                    exit_price = new_stop
+                    gross = (
+                        (exit_price - entry)
+                        * qty
+                        * point_value
+                    )
+                    return round(gross - fee, 2)
+                if last_price >= target:
+                    exit_price = target
+                    gross = (
+                        (exit_price - entry)
+                        * qty
+                        * point_value
+                    )
+                    return round(gross - fee, 2)
+            else:
+                if last_price >= new_stop:
+                    exit_price = new_stop
+                    gross = (
+                        (entry - exit_price)
+                        * qty
+                        * point_value
+                    )
+                    return round(gross - fee, 2)
+                if last_price <= target:
+                    exit_price = target
+                    gross = (
+                        (entry - exit_price)
+                        * qty
+                        * point_value
+                    )
+                    return round(gross - fee, 2)
+
+        # Neither stop nor target hit by EOD —
+        # exit at last tick price.
+        last_price = trade_ticks[-1]["last_price"]
+        if side == "Long":
+            gross = (
+                (last_price - entry)
+                * qty
+                * point_value
+            )
+        else:
+            gross = (
+                (entry - last_price)
                 * qty
                 * point_value
             )

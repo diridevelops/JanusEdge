@@ -370,6 +370,31 @@ class TickDataService:
                 )
             current_day += timedelta(days=1)
 
+    def has_ticks_for_day(
+        self,
+        *,
+        symbol: str,
+        raw_symbol: str | None,
+        trading_day: date,
+        market_data_mappings: Mapping[str, str] | None = None,
+    ) -> bool:
+        """Return True when raw tick data is available for a day."""
+
+        dataset_symbols = resolve_market_data_symbols(
+            symbol,
+            raw_symbol,
+            market_data_mappings,
+        )
+        return (
+            self.dataset_repo.find_dataset(
+                dataset_symbols,
+                "ticks",
+                trading_day,
+                None,
+            )
+            is not None
+        )
+
     def read_bars_for_day(
         self,
         *,
@@ -395,6 +420,35 @@ class TickDataService:
             end_dt=end_dt,
             market_data_mappings=market_data_mappings,
         )
+
+    def read_ticks_for_day(
+        self,
+        *,
+        symbol: str,
+        raw_symbol: str | None,
+        trading_day: date,
+        market_data_mappings: Mapping[str, str] | None = None,
+    ) -> list[dict]:
+        """Read all raw ticks for one UTC trading day."""
+
+        dataset_symbols = resolve_market_data_symbols(
+            symbol,
+            raw_symbol,
+            market_data_mappings,
+        )
+        tick_document = self.dataset_repo.find_dataset(
+            dataset_symbols,
+            "ticks",
+            trading_day,
+            None,
+        )
+        if tick_document is None:
+            return []
+
+        frame = self.parquet_store.read_dataframe(
+            tick_document["object_key"]
+        )
+        return self._frame_to_tick_records(frame)
 
     def _decode_lines(self, file_stream: BinaryIO) -> list[str]:
         """Decode the uploaded file as UTF-8 text lines."""
@@ -770,6 +824,41 @@ class TickDataService:
                 }
             )
         records.sort(key=lambda item: item["time"])
+        return records
+
+    def _frame_to_tick_records(
+        self,
+        frame: pd.DataFrame,
+    ) -> list[dict]:
+        """Convert a tick DataFrame into replayable records."""
+
+        if frame.empty:
+            return []
+
+        normalized = frame.copy()
+        normalized["timestamp"] = pd.to_datetime(
+            normalized["timestamp"],
+            utc=True,
+        )
+        normalized = normalized.sort_values("timestamp")
+
+        records: list[dict] = []
+        for row in normalized.to_dict(orient="records"):
+            records.append(
+                {
+                    "timestamp": row["timestamp"].to_pydatetime(),
+                    "last_price": round(
+                        float(row["last_price"]), 6
+                    ),
+                    "bid_price": round(
+                        float(row["bid_price"]), 6
+                    ),
+                    "ask_price": round(
+                        float(row["ask_price"]), 6
+                    ),
+                    "size": int(row.get("size", 0)),
+                }
+            )
         return records
 
     def _filter_bars_by_range(
