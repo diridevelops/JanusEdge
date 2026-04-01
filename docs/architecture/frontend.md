@@ -183,10 +183,14 @@ That page:
 - polls batch progress until completion or failure
 - uses the same backend market-data store consumed by trade charts and what-if analysis
 
-On the What-if stop-management tab, the frontend treats raw tick data as
-the authoritative replay source. The wicked-out list reports tick-data
-availability, and the What-If Calculator skips trades that do not have usable
-stored ticks for replay.
+On the What-if stop-management tab, the frontend shows tick-data availability
+in the wicked-out list and lets the user choose the What-If replay source:
+
+- `OHLC (1m)` for replay from stored 1-minute candles
+- `Tick` for replay from stored raw ticks
+
+If the selected replay source is unavailable for a trade day, the What-If
+Calculator skips that trade.
 
 ### Trade Detail
 

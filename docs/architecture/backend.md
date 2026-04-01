@@ -211,9 +211,14 @@ existing bar shape. `force_refresh=true` regenerates candle datasets
 from stored raw ticks.
 
 The What-If stop-management flow also uses this stored market-data system.
-It checks for raw daily tick datasets and replays `last_price` tick by tick
-for wider-stop simulation. Derived candles are not used as a fallback for
-that replay path.
+It supports two replay sources for wider-stop simulation:
+
+- stored `1m` candle datasets generated from imported ticks
+- stored raw tick datasets replayed by `last_price`
+
+OHLC replay is the default mode and approximates intrabar path from the candle.
+Tick replay is the higher-precision mode because it processes the stored ticks
+in order.
 
 ## Media Handling
 

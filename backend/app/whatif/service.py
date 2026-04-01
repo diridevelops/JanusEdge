@@ -31,6 +31,15 @@ from app.whatif.bootstrap import (
 )
 
 
+_BAR_INTERVAL_SECONDS = {
+    "1m": 60,
+    "5m": 300,
+    "15m": 900,
+    "1h": 3600,
+    "1d": 86400,
+}
+
+
 def _parse_date_from(value: str) -> datetime:
     """Parse date_from as inclusive lower bound."""
     return datetime.fromisoformat(value)
@@ -105,7 +114,10 @@ def _build_match(
 
 
 def _cache_key(
-    user_id: str, filters: dict, r_widening: float
+    user_id: str,
+    filters: dict,
+    r_widening: float,
+    replay_mode: str,
 ) -> str:
     """Generate a stable cache key."""
     raw = json.dumps(
@@ -116,6 +128,7 @@ def _cache_key(
                 if v is not None
             },
             "r_widening": r_widening,
+            "replay_mode": replay_mode,
         },
         sort_keys=True,
         default=str,
@@ -338,22 +351,24 @@ class WhatIfService:
         self,
         user_id: str,
         r_widening: float,
+        replay_mode: str = "ohlc",
         filters: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Simulate widening stops by xR across losing trades.
 
-        For each losing trade with target_price and tick data:
-        replay raw ticks to determine if wider stop would
+        For each losing trade with target_price and market data:
+        replay either 1-minute candles or raw ticks to determine if wider stop would
         have reached the target.
 
         Winners: keep original P&L, recalculate R with wider stop.
-        Losers with target + tick data: replay ticks to check conversion.
-        Losers without target or tick data: keep original P&L.
+        Losers with target + market data: replay the selected dataset.
+        Losers without target or usable market data: keep original P&L.
 
         Parameters:
             user_id: User ObjectId string.
             r_widening: Stop widening factor in R units.
+            replay_mode: 'ohlc' or 'tick'.
             filters: Optional query filters.
 
         Returns:
@@ -363,7 +378,9 @@ class WhatIfService:
             filters = {}
 
         # Check cache
-        ck = _cache_key(user_id, filters, r_widening)
+        ck = _cache_key(
+            user_id, filters, r_widening, replay_mode
+        )
         if ck in _sim_cache:
             ts, result = _sim_cache[ck]
             if time.time() - ts < _CACHE_TTL:
@@ -499,13 +516,12 @@ class WhatIfService:
                     str(entry_time)
                 ).date()
 
-            has_market_data = (
-                self.market_data_service.tick_data_service.has_ticks_for_day(
-                    symbol=symbol,
-                    raw_symbol=raw_sym,
-                    trading_day=day,
-                    market_data_mappings=market_data_mappings,
-                )
+            has_market_data = self._has_replay_data_for_day(
+                replay_mode=replay_mode,
+                symbol=symbol,
+                raw_symbol=raw_sym,
+                trading_day=day,
+                market_data_mappings=market_data_mappings,
             )
 
             target = t.get("target_price")
@@ -613,20 +629,35 @@ class WhatIfService:
                 )
                 continue
 
-            # Replay raw ticks
-            new_pnl = self._replay_ticks(
-                symbol=symbol,
-                raw_symbol=raw_sym,
-                trade=t,
-                new_stop=new_stop,
-                target=target,
-                side=side,
-                entry=entry,
-                qty=qty,
-                fee=fee,
-                point_value=point_value,
-                market_data_mappings=market_data_mappings,
-            )
+            if replay_mode == "tick":
+                new_pnl = self._replay_ticks(
+                    symbol=symbol,
+                    raw_symbol=raw_sym,
+                    trade=t,
+                    new_stop=new_stop,
+                    target=target,
+                    side=side,
+                    entry=entry,
+                    qty=qty,
+                    fee=fee,
+                    point_value=point_value,
+                    market_data_mappings=market_data_mappings,
+                )
+            else:
+                new_pnl = self._replay_bars(
+                    symbol=symbol,
+                    raw_symbol=raw_sym,
+                    interval="1m",
+                    trade=t,
+                    new_stop=new_stop,
+                    target=target,
+                    side=side,
+                    entry=entry,
+                    qty=qty,
+                    fee=fee,
+                    point_value=point_value,
+                    market_data_mappings=market_data_mappings,
+                )
 
             if new_pnl is None:
                 # Ticks don't cover trade entry — skip
@@ -694,6 +725,154 @@ class WhatIfService:
         _sim_cache[ck] = (time.time(), result)
 
         return result
+
+    def _has_replay_data_for_day(
+        self,
+        *,
+        replay_mode: str,
+        symbol: str,
+        raw_symbol: str | None,
+        trading_day,
+        market_data_mappings: dict | None = None,
+    ) -> bool:
+        """Return True when the selected replay source exists for a day."""
+
+        if replay_mode == "tick":
+            return self.market_data_service.tick_data_service.has_ticks_for_day(
+                symbol=symbol,
+                raw_symbol=raw_symbol,
+                trading_day=trading_day,
+                market_data_mappings=market_data_mappings,
+            )
+
+        return self.market_data_service.tick_data_service.has_ohlc_for_day(
+            symbol=symbol,
+            raw_symbol=raw_symbol,
+            interval="1m",
+            trading_day=trading_day,
+            market_data_mappings=market_data_mappings,
+        )
+
+    def _replay_bars(
+        self,
+        symbol: str,
+        raw_symbol: str | None,
+        interval: str,
+        trade: dict,
+        new_stop: float,
+        target: float,
+        side: str,
+        entry: float,
+        qty: int,
+        fee: float,
+        point_value: float,
+        market_data_mappings: dict | None = None,
+    ) -> Optional[float]:
+        """
+        Replay OHLC bars to simulate wider stop outcome.
+
+        Returns:
+            Simulated net PnL, or None if bars
+            don't cover the trade entry time.
+        """
+        entry_time = trade.get("entry_time")
+
+        if isinstance(entry_time, datetime):
+            day = entry_time.date()
+        else:
+            day = datetime.fromisoformat(
+                str(entry_time)
+            ).date()
+
+        bars = self.market_data_service.tick_data_service.read_bars_for_day(
+            symbol=symbol,
+            raw_symbol=raw_symbol,
+            interval=interval,
+            trading_day=day,
+            market_data_mappings=market_data_mappings,
+        )
+        if not bars:
+            return None
+
+        interval_seconds = _BAR_INTERVAL_SECONDS.get(
+            interval, 60
+        )
+
+        if isinstance(entry_time, datetime):
+            utc_entry = entry_time.replace(tzinfo=timezone.utc)
+            entry_ts = int(utc_entry.timestamp())
+        else:
+            entry_ts = int(
+                datetime.fromisoformat(
+                    str(entry_time)
+                ).replace(tzinfo=timezone.utc).timestamp()
+            )
+
+        # Include the bar that contains the trade entry time,
+        # not just bars that start after it. Otherwise a mid-bar
+        # entry can incorrectly skip adverse movement that
+        # happened later inside the same candle.
+        trade_bars = [
+            bar
+            for bar in bars
+            if bar["time"] + interval_seconds > entry_ts
+        ]
+        if not trade_bars:
+            return None
+
+        for bar in trade_bars:
+            high = bar["high"]
+            low = bar["low"]
+
+            if side == "Long":
+                if low <= new_stop:
+                    exit_price = new_stop
+                    gross = (
+                        (exit_price - entry)
+                        * qty
+                        * point_value
+                    )
+                    return round(gross - fee, 2)
+                if high >= target:
+                    exit_price = target
+                    gross = (
+                        (exit_price - entry)
+                        * qty
+                        * point_value
+                    )
+                    return round(gross - fee, 2)
+            else:
+                if high >= new_stop:
+                    exit_price = new_stop
+                    gross = (
+                        (entry - exit_price)
+                        * qty
+                        * point_value
+                    )
+                    return round(gross - fee, 2)
+                if low <= target:
+                    exit_price = target
+                    gross = (
+                        (entry - exit_price)
+                        * qty
+                        * point_value
+                    )
+                    return round(gross - fee, 2)
+
+        last_close = trade_bars[-1]["close"]
+        if side == "Long":
+            gross = (
+                (last_close - entry)
+                * qty
+                * point_value
+            )
+        else:
+            gross = (
+                (entry - last_close)
+                * qty
+                * point_value
+            )
+        return round(gross - fee, 2)
 
     def _replay_ticks(
         self,

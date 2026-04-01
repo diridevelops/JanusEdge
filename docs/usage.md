@@ -507,9 +507,16 @@ This tool simulates the effect of widening your stop.
 
 Use it to estimate how results might change if stopped-out trades had more room.
 
-It replays stored raw tick data for losing trades that have a target price.
+It has two calculation modes:
 
-If usable tick data is missing for the trade day, the trade is skipped and shown as `Skipped: no data`.
+- `OHLC (1m)`: replays stored 1-minute candles generated from imported tick data
+- `Tick`: replays stored raw ticks directly
+
+OHLC mode is the default and is faster, but it is less precise because each candle only preserves open, high, low, and close.
+
+Tick mode is more precise because it replays the stored ticks in order.
+
+If usable data is missing for the selected mode, the trade is skipped and shown as `Skipped: no data`.
 
 ## Settings
 

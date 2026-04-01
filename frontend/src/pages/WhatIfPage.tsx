@@ -331,6 +331,7 @@ function ResultSection({
 /* ------------------------------------------------------------------ */
 
 type WhatIfTab = 'simulator' | 'stop-management';
+type WhatIfReplayMode = 'ohlc' | 'tick';
 
 /** What-if page: stop analysis, wicked-out trades, and simulation. */
 export function WhatIfPage() {
@@ -374,6 +375,7 @@ export function WhatIfPage() {
 
   // ---- Simulation ----
   const [rWidening, setRWidening] = useState('0.5');
+  const [replayMode, setReplayMode] = useState<WhatIfReplayMode>('ohlc');
   const [simLoading, setSimLoading] = useState(false);
   const [simResult, setSimResult] = useState<ReturnType<typeof buildSimulationViewModel> | null>(null);
   const [resultSectionsExpanded, setResultSectionsExpanded] = useState({
@@ -447,6 +449,10 @@ export function WhatIfPage() {
     void fetchSummary(apiFilters);
   }, [fetchSummary, filters.symbol, filters.side, filters.account, filters.tag, filters.date_from, filters.date_to]);
 
+  useEffect(() => {
+    setSimResult(null);
+  }, [replayMode]);
+
   // Simulation handler
   async function handleSimulate() {
     const rVal = parseFloat(rWidening);
@@ -455,7 +461,7 @@ export function WhatIfPage() {
       return;
     }
 
-    const cacheKey = `${rVal}_${JSON.stringify(apiFilters)}`;
+    const cacheKey = `${rVal}_${replayMode}_${JSON.stringify(apiFilters)}`;
     const cached = simCache.current.get(cacheKey);
     if (cached) {
       setSimResult(cached);
@@ -466,7 +472,7 @@ export function WhatIfPage() {
     simulationRequestIdRef.current = requestId;
     setSimLoading(true);
     try {
-      const response = await runSimulation(rVal, apiFilters);
+      const response = await runSimulation(rVal, replayMode, apiFilters);
       if (requestId !== simulationRequestIdRef.current) {
         return;
       }
@@ -748,9 +754,10 @@ export function WhatIfPage() {
                 text={
                   'Simulate widening your stop across all trades:\n' +
                   '- Winners keep their P&L.\n' +
-                  '- Losers with a target price and stored tick data ' +
-                  'are replayed tick by tick with the wider stop to check if they would have reached the target.\n' +
-                  '- Trades without usable tick data are skipped.'
+                  '- Calculation mode lets you choose OHLC or Tick replay.\n' +
+                  '- OHLC uses stored 1-minute candles generated from tick data and is the default. It is faster, but intrabar price order is approximated.\n' +
+                  '- Tick uses stored raw ticks for more precise but slower replay.\n' +
+                  '- Trades without usable data for the selected mode are skipped.'
                 }
                 widthClass="w-80"
               />
@@ -770,6 +777,19 @@ export function WhatIfPage() {
                   onChange={(e) => setRWidening(e.target.value)}
                   className="input-field text-sm w-28"
                 />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
+                  Calculation Mode
+                </label>
+                <select
+                  value={replayMode}
+                  onChange={(e) => setReplayMode(e.target.value as WhatIfReplayMode)}
+                  className="input-field text-sm w-32"
+                >
+                  <option value="ohlc">OHLC (1m)</option>
+                  <option value="tick">Tick</option>
+                </select>
               </div>
               <button
                 type="button"

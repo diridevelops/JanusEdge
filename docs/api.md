@@ -251,7 +251,7 @@ What-if endpoints use the same filter set as trades and analytics: `account`, `s
 | --- | --- | --- | --- | --- | --- |
 | GET | `/api/whatif/stop-analysis` | Yes | Return R-normalized stop-overshoot statistics | Query filters; symbol is effectively required by the backend logic | Stop-analysis object |
 | GET | `/api/whatif/wicked-out-trades` | Yes | List wicked-out trades and whether raw tick data exists | Query filters | `{ trades: [...] }` |
-| POST | `/api/whatif/simulate` | Yes | Run wider-stop simulation | JSON body with `r_widening`; query filters still apply | Simulation response |
+| POST | `/api/whatif/simulate` | Yes | Run wider-stop simulation | JSON body with `r_widening` and optional `replay_mode`; query filters still apply | Simulation response |
 
 ### Stop-analysis response
 
@@ -275,17 +275,25 @@ The frontend currently expects fields like:
 
 ### Simulation request and response
 
-The stop-management simulator replays stored raw ticks only.
+The stop-management simulator supports two replay modes:
 
-- trades with a target price and usable raw tick data are replayed tick by tick
-- trades without usable raw tick data are skipped with detail status `no_data`
-- the wicked-out trade list exposes `has_tick_data` instead of `has_ohlc_data`
+- `ohlc`: replay stored 1-minute candles generated from imported tick data
+- `tick`: replay stored raw ticks directly
+
+Behavior notes:
+
+- `replay_mode` defaults to `ohlc`
+- OHLC mode is less precise because intrabar price order is approximated from candle highs and lows
+- tick mode is more precise because it replays stored raw ticks in order
+- trades without usable data for the selected mode are skipped with detail status `no_data`
+- the wicked-out trade list exposes `has_tick_data`
 
 Request body:
 
 ```json
 {
-  "r_widening": 1.0
+  "r_widening": 1.0,
+  "replay_mode": "ohlc"
 }
 ```
 

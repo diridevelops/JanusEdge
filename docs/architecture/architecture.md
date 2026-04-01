@@ -93,7 +93,7 @@ graph LR
 ### Analytics and What-If
 
 - Analytics endpoints aggregate trade data from MongoDB.
-- What-if endpoints reuse persisted trade and stored market-data information to calculate stop overshoot statistics and wider-stop simulations. The stop-management simulator replays raw ticks, not candles.
+- What-if endpoints reuse persisted trade and stored market-data information to calculate stop overshoot statistics and wider-stop simulations. The stop-management simulator supports replay from stored 1-minute candles or stored raw ticks.
 - Monte Carlo simulation is computed in the backend and rendered by the frontend.
 
 ### Backup and Restore

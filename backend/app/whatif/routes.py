@@ -94,11 +94,12 @@ def simulate():
     Run what-if stop widening simulation.
 
     Accepts r_widening and optional filters. Replays
-    raw ticks for losing trades with target prices
+    either 1-minute OHLC candles or raw ticks for losing trades with target prices
     to simulate wider stop outcomes.
 
     JSON body:
         r_widening: float — stop widening factor in R.
+        replay_mode: optional string — 'ohlc' or 'tick'.
 
     Query parameters:
         symbol: Optional instrument filter.
@@ -114,6 +115,9 @@ def simulate():
     user_id = get_jwt_identity()
     body = request.get_json(silent=True) or {}
     r_widening = body.get("r_widening")
+    replay_mode = str(
+        body.get("replay_mode", "ohlc")
+    ).strip().lower()
 
     if r_widening is None:
         return (
@@ -142,8 +146,22 @@ def simulate():
             400,
         )
 
+    if replay_mode not in {"ohlc", "tick"}:
+        return (
+            jsonify(
+                {
+                    "error": "replay_mode must be "
+                    "'ohlc' or 'tick'"
+                }
+            ),
+            400,
+        )
+
     filters = _parse_filters()
     result = whatif_service.simulate(
-        user_id, r_widening, filters
+        user_id,
+        r_widening,
+        replay_mode=replay_mode,
+        filters=filters,
     )
     return jsonify(result), 200

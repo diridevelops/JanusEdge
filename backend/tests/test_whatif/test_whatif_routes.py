@@ -338,6 +338,16 @@ class TestSimulate:
         )
         assert resp.status_code == 400
 
+    def test_rejects_invalid_replay_mode(self, client):
+        """Returns 400 for an unsupported replay mode."""
+        token = _register_and_login(client)
+        resp = client.post(
+            "/api/whatif/simulate",
+            json={"r_widening": 0.5, "replay_mode": "foo"},
+            headers=_auth(token),
+        )
+        assert resp.status_code == 400
+
     def test_no_trades_returns_empty(self, client):
         """Returns zeros when no trades match."""
         token = _register_and_login(client)
@@ -542,27 +552,27 @@ class TestSimulate:
 
         seed_market_data_dataset(
             symbol="MES",
-            dataset_type="ticks",
+            dataset_type="candles",
+            timeframe="1m",
             trading_day=datetime(2026, 1, 5).date(),
             rows=[
-                _tick_row(
-                    datetime(
-                        2026, 1, 5, 10, 0, tzinfo=timezone.utc
+                {
+                    "time": int(
+                        datetime(
+                            2026,
+                            1,
+                            5,
+                            10,
+                            0,
+                            tzinfo=timezone.utc,
+                        ).timestamp()
                     ),
-                    5000.0,
-                ),
-                _tick_row(
-                    datetime(
-                        2026, 1, 5, 10, 1, tzinfo=timezone.utc
-                    ),
-                    4990.0,
-                ),
-                _tick_row(
-                    datetime(
-                        2026, 1, 5, 10, 2, tzinfo=timezone.utc
-                    ),
-                    5006.0,
-                ),
+                    "open": 5000.0,
+                    "high": 5006.0,
+                    "low": 4990.0,
+                    "close": 5004.0,
+                    "volume": 3,
+                },
             ],
         )
 
@@ -635,7 +645,7 @@ class TestSimulate:
 
         resp = client.post(
             "/api/whatif/simulate?symbol=MES",
-            json={"r_widening": 0.4},
+            json={"r_widening": 0.4, "replay_mode": "tick"},
             headers=_auth(token),
         )
         assert resp.status_code == 200
@@ -698,7 +708,7 @@ class TestSimulate:
 
         resp = client.post(
             "/api/whatif/simulate?symbol=MES",
-            json={"r_widening": 0.5},
+            json={"r_widening": 0.5, "replay_mode": "tick"},
             headers=_auth(token),
         )
         assert resp.status_code == 200
@@ -712,10 +722,10 @@ class TestSimulate:
         assert detail["converted"] is False
         assert detail["new_pnl"] == -75.0
 
-    def test_candle_only_data_is_not_used_for_simulation(
+    def test_default_simulation_uses_ohlc_candles(
         self, client, seed_market_data_dataset
     ):
-        """What-if replay skips candle-only days because raw ticks are required."""
+        """The default replay mode uses 1-minute OHLC candles."""
 
         token = _register_and_login(client)
         loser = _create_trade(client, token)
@@ -762,6 +772,135 @@ class TestSimulate:
 
         detail = resp.get_json()["details"][0]
         assert detail["trade_id"] == loser["id"]
+        assert detail["status"] == "simulated"
+        assert detail["converted"] is True
+
+    def test_ohlc_mode_includes_entry_bar_for_mid_bar_entries(
+        self, client, seed_market_data_dataset
+    ):
+        """OHLC replay must include the candle containing the entry time."""
+
+        token = _register_and_login(client)
+        loser = _create_trade(
+            client,
+            token,
+            entry_time="2026-01-05T10:00:30",
+            exit_time="2026-01-05T10:05:00",
+        )
+
+        update_resp = client.put(
+            f"/api/trades/{loser['id']}",
+            json={"target_price": 5005.0},
+            headers=_auth(token),
+        )
+        assert update_resp.status_code == 200
+
+        seed_market_data_dataset(
+            symbol="MES",
+            dataset_type="candles",
+            timeframe="1m",
+            trading_day=datetime(2026, 1, 5).date(),
+            rows=[
+                {
+                    "time": int(
+                        datetime(
+                            2026,
+                            1,
+                            5,
+                            10,
+                            0,
+                            tzinfo=timezone.utc,
+                        ).timestamp()
+                    ),
+                    "open": 5000.0,
+                    "high": 5006.0,
+                    "low": 4983.0,
+                    "close": 5004.0,
+                    "volume": 10,
+                },
+                {
+                    "time": int(
+                        datetime(
+                            2026,
+                            1,
+                            5,
+                            10,
+                            1,
+                            tzinfo=timezone.utc,
+                        ).timestamp()
+                    ),
+                    "open": 5004.0,
+                    "high": 5006.0,
+                    "low": 5003.5,
+                    "close": 5005.0,
+                    "volume": 4,
+                },
+            ],
+        )
+
+        resp = client.post(
+            "/api/whatif/simulate?symbol=MES",
+            json={"r_widening": 0.6, "replay_mode": "ohlc"},
+            headers=_auth(token),
+        )
+        assert resp.status_code == 200
+
+        detail = resp.get_json()["details"][0]
+        assert detail["trade_id"] == loser["id"]
+        assert detail["status"] == "simulated"
+        assert detail["converted"] is False
+        assert detail["new_pnl"] < 0
+
+    def test_tick_mode_requires_raw_ticks(
+        self, client, seed_market_data_dataset
+    ):
+        """Tick replay skips candle-only days when raw ticks are missing."""
+
+        token = _register_and_login(client)
+        loser = _create_trade(client, token)
+
+        update_resp = client.put(
+            f"/api/trades/{loser['id']}",
+            json={"target_price": 5005.0},
+            headers=_auth(token),
+        )
+        assert update_resp.status_code == 200
+
+        seed_market_data_dataset(
+            symbol="MES",
+            dataset_type="candles",
+            timeframe="1m",
+            trading_day=datetime(2026, 1, 5).date(),
+            rows=[
+                {
+                    "time": int(
+                        datetime(
+                            2026,
+                            1,
+                            5,
+                            10,
+                            0,
+                            tzinfo=timezone.utc,
+                        ).timestamp()
+                    ),
+                    "open": 5000.0,
+                    "high": 5006.0,
+                    "low": 4990.0,
+                    "close": 5004.0,
+                    "volume": 1,
+                }
+            ],
+        )
+
+        resp = client.post(
+            "/api/whatif/simulate?symbol=MES",
+            json={"r_widening": 0.5, "replay_mode": "tick"},
+            headers=_auth(token),
+        )
+        assert resp.status_code == 200
+
+        detail = resp.get_json()["details"][0]
+        assert detail["trade_id"] == loser["id"]
         assert detail["status"] == "no_data"
 
     def test_ticks_before_entry_are_treated_as_no_data(
@@ -795,7 +934,7 @@ class TestSimulate:
 
         resp = client.post(
             "/api/whatif/simulate?symbol=MES",
-            json={"r_widening": 0.5},
+            json={"r_widening": 0.5, "replay_mode": "tick"},
             headers=_auth(token),
         )
         assert resp.status_code == 200
@@ -825,27 +964,27 @@ class TestSimulate:
 
         seed_market_data_dataset(
             symbol="MES",
-            dataset_type="ticks",
+            dataset_type="candles",
+            timeframe="1m",
             trading_day=datetime(2026, 1, 5).date(),
             rows=[
-                _tick_row(
-                    datetime(
-                        2026, 1, 5, 10, 0, tzinfo=timezone.utc
+                {
+                    "time": int(
+                        datetime(
+                            2026,
+                            1,
+                            5,
+                            10,
+                            0,
+                            tzinfo=timezone.utc,
+                        ).timestamp()
                     ),
-                    5000.0,
-                ),
-                _tick_row(
-                    datetime(
-                        2026, 1, 5, 10, 1, tzinfo=timezone.utc
-                    ),
-                    4990.0,
-                ),
-                _tick_row(
-                    datetime(
-                        2026, 1, 5, 10, 2, tzinfo=timezone.utc
-                    ),
-                    5006.0,
-                ),
+                    "open": 5000.0,
+                    "high": 5006.0,
+                    "low": 4990.0,
+                    "close": 5004.0,
+                    "volume": 3,
+                },
             ],
         )
 
@@ -863,7 +1002,7 @@ class TestSimulate:
     def test_simulate_replays_with_market_data_mapping(
         self, client, seed_market_data_dataset
     ):
-        """Simulation replay resolves tick datasets via market-data mappings."""
+        """Simulation replay resolves candle datasets via market-data mappings."""
         token = _register_and_login(client)
         _update_market_data_mappings(
             client,
@@ -882,27 +1021,27 @@ class TestSimulate:
         seed_market_data_dataset(
             symbol="ES",
             raw_symbol="ES",
-            dataset_type="ticks",
+            dataset_type="candles",
+            timeframe="1m",
             trading_day=datetime(2026, 1, 5).date(),
             rows=[
-                _tick_row(
-                    datetime(
-                        2026, 1, 5, 10, 0, tzinfo=timezone.utc
+                {
+                    "time": int(
+                        datetime(
+                            2026,
+                            1,
+                            5,
+                            10,
+                            0,
+                            tzinfo=timezone.utc,
+                        ).timestamp()
                     ),
-                    5000.0,
-                ),
-                _tick_row(
-                    datetime(
-                        2026, 1, 5, 10, 1, tzinfo=timezone.utc
-                    ),
-                    4990.0,
-                ),
-                _tick_row(
-                    datetime(
-                        2026, 1, 5, 10, 2, tzinfo=timezone.utc
-                    ),
-                    5006.0,
-                ),
+                    "open": 5000.0,
+                    "high": 5006.0,
+                    "low": 4990.0,
+                    "close": 5004.0,
+                    "volume": 3,
+                },
             ],
         )
 
