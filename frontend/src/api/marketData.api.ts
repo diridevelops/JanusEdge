@@ -1,3 +1,4 @@
+import type { AxiosProgressEvent } from 'axios';
 import apiClient from './client';
 import type {
   MarketDataImportBatch,
@@ -21,6 +22,16 @@ export interface StartTickImportParams {
   rawSymbol?: string;
 }
 
+export interface UploadProgress {
+  loadedBytes: number;
+  totalBytes: number | null;
+  percent: number | null;
+}
+
+type UploadProgressCallback = (
+  progress: UploadProgress
+) => void;
+
 /** Fetch OHLC candle data from stored market data. */
 export async function getOHLC(
   params: OHLCParams
@@ -40,8 +51,30 @@ export async function getSavedMarketDataDays(): Promise<SavedMarketDataDay[]> {
   return res.data.saved_days;
 }
 
+function buildUploadProgress(
+  event: AxiosProgressEvent
+): UploadProgress {
+  const totalBytes =
+    typeof event.total === 'number' ? event.total : null;
+  const loadedBytes =
+    typeof event.loaded === 'number' ? event.loaded : 0;
+  const percent =
+    totalBytes && totalBytes > 0
+      ? (loadedBytes / totalBytes) * 100
+      : null;
+
+  return {
+    loadedBytes,
+    totalBytes,
+    percent,
+  };
+}
+
 /** Preview a NinjaTrader tick-data text file before importing it. */
-export async function previewTickImport(file: File): Promise<TickImportPreview> {
+export async function previewTickImport(
+  file: File,
+  onUploadProgress?: UploadProgressCallback
+): Promise<TickImportPreview> {
   const formData = new FormData();
   formData.append('file', file);
 
@@ -52,6 +85,11 @@ export async function previewTickImport(file: File): Promise<TickImportPreview> 
       headers: {
         'Content-Type': 'multipart/form-data',
       },
+      onUploadProgress: onUploadProgress
+        ? (event) => {
+            onUploadProgress(buildUploadProgress(event));
+          }
+        : undefined,
     }
   );
 
@@ -60,7 +98,8 @@ export async function previewTickImport(file: File): Promise<TickImportPreview> 
 
 /** Start a new NinjaTrader tick-data import batch. */
 export async function startTickImport(
-  params: StartTickImportParams
+  params: StartTickImportParams,
+  onUploadProgress?: UploadProgressCallback
 ): Promise<MarketDataImportBatch> {
   const formData = new FormData();
   formData.append('file', params.file);
@@ -80,6 +119,11 @@ export async function startTickImport(
       headers: {
         'Content-Type': 'multipart/form-data',
       },
+      onUploadProgress: onUploadProgress
+        ? (event) => {
+            onUploadProgress(buildUploadProgress(event));
+          }
+        : undefined,
     }
   );
 

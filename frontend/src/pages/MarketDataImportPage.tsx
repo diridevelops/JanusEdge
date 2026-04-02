@@ -14,6 +14,7 @@ import {
   previewTickImport,
   startTickImport,
 } from '../api/marketData.api';
+import type { UploadProgress } from '../api/marketData.api';
 import { TickDataDropZone } from '../components/market-data/TickDataDropZone';
 import { PageHeader } from '../components/ui/PageHeader';
 import { useAuth } from '../hooks/useAuth';
@@ -96,6 +97,8 @@ export function MarketDataImportPage() {
   const [rawSymbolOverride, setRawSymbolOverride] = useState('');
   const [previewLoading, setPreviewLoading] = useState(false);
   const [isStartingImport, setIsStartingImport] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
+  const [uploadStage, setUploadStage] = useState<'preview' | 'import' | null>(null);
   const [isRefreshingStatus, setIsRefreshingStatus] = useState(false);
   const [batch, setBatch] = useState<MarketDataImportBatch | null>(null);
   const [savedDays, setSavedDays] = useState<SavedMarketDataDay[]>([]);
@@ -165,15 +168,26 @@ export function MarketDataImportPage() {
     setSymbolOverride('');
     setRawSymbolOverride('');
     setPreviewLoading(true);
+    setUploadStage('preview');
+    setUploadProgress({
+      loadedBytes: 0,
+      totalBytes: file.size,
+      percent: 0,
+    });
 
     try {
-      const nextPreview = await previewTickImport(file);
+      const nextPreview = await previewTickImport(
+        file,
+        setUploadProgress
+      );
       setPreview(nextPreview);
       setSymbolOverride(nextPreview.symbol_guess ?? '');
     } catch (error: unknown) {
       setPreviewError(getErrorMessage(error, 'Failed to preview the tick-data file.'));
     } finally {
       setPreviewLoading(false);
+      setUploadStage(null);
+      setUploadProgress(null);
     }
   }
 
@@ -185,19 +199,30 @@ export function MarketDataImportPage() {
     setIsStartingImport(true);
     setBatchError(null);
     notifiedBatchStateRef.current = null;
+    setUploadStage('import');
+    setUploadProgress({
+      loadedBytes: 0,
+      totalBytes: selectedFile.size,
+      percent: 0,
+    });
 
     try {
-      const createdBatch = await startTickImport({
-        file: selectedFile,
-        symbol: symbolOverride,
-        rawSymbol: rawSymbolOverride,
-      });
+      const createdBatch = await startTickImport(
+        {
+          file: selectedFile,
+          symbol: symbolOverride,
+          rawSymbol: rawSymbolOverride,
+        },
+        setUploadProgress
+      );
       setBatch(createdBatch);
       addToast('success', 'Market-data import started.');
     } catch (error: unknown) {
       setBatchError(getErrorMessage(error, 'Failed to start the market-data import.'));
     } finally {
       setIsStartingImport(false);
+      setUploadStage(null);
+      setUploadProgress(null);
     }
   }
 
@@ -281,6 +306,22 @@ export function MarketDataImportPage() {
 
   const percentComplete = batch?.progress.processed_percentage ?? 0;
   const totalPreviewDays = preview?.trading_dates.length ?? 0;
+  const loadingPhase =
+    uploadProgress && (uploadProgress.percent ?? 0) >= 100
+      ? 'processing'
+      : uploadProgress
+        ? 'uploading'
+        : null;
+  const uploadLabel =
+    uploadStage === 'preview'
+      ? loadingPhase === 'processing'
+        ? 'Generating preview...'
+        : 'Uploading file for preview...'
+      : uploadStage === 'import'
+        ? loadingPhase === 'processing'
+          ? 'Starting import...'
+          : 'Uploading file for import...'
+        : undefined;
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
@@ -306,6 +347,9 @@ export function MarketDataImportPage() {
               onFileAccepted={handleFileAccepted}
               isLoading={previewLoading || isStartingImport}
               error={previewError}
+              loadingLabel={uploadLabel}
+              loadingPhase={loadingPhase}
+              uploadProgress={uploadProgress}
             />
           </div>
 

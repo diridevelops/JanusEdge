@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 import hashlib
+from io import TextIOWrapper
 import os
 from pathlib import Path
 import tempfile
@@ -93,17 +94,15 @@ class TickDataService:
         if not file_name:
             raise ValidationError("File name is required.")
 
-        decoded_lines = self._decode_lines(file_stream)
-        if not decoded_lines:
-            raise ValidationError("File is empty.")
-
         day_summary: dict[date, dict] = {}
         first_tick: NinjaTraderTick | None = None
         last_tick: NinjaTraderTick | None = None
+        total_lines = 0
         valid_ticks = 0
         skipped_lines = 0
 
-        for line in decoded_lines:
+        for line in self._iter_decoded_lines(file_stream):
+            total_lines += 1
             if not line.strip():
                 skipped_lines += 1
                 continue
@@ -133,6 +132,8 @@ class TickDataService:
             summary["last_tick_at"] = tick.timestamp.isoformat()
 
         if valid_ticks == 0:
+            if total_lines == 0:
+                raise ValidationError("File is empty.")
             raise ValidationError(
                 "No valid NinjaTrader tick rows were found in the file."
             )
@@ -145,7 +146,7 @@ class TickDataService:
         return TickImportPreviewSummary(
             file_name=file_name,
             symbol_guess=self._guess_symbol(file_name),
-            total_lines=len(decoded_lines),
+            total_lines=total_lines,
             valid_ticks=valid_ticks,
             skipped_lines=skipped_lines,
             first_tick_at=(
@@ -493,25 +494,33 @@ class TickDataService:
 
         return records, False
 
-    def _decode_lines(self, file_stream: BinaryIO) -> list[str]:
-        """Decode the uploaded file as UTF-8 text lines."""
+    def _iter_decoded_lines(
+        self,
+        file_stream: BinaryIO,
+    ):
+        """Yield UTF-8 decoded lines from an uploaded file stream."""
 
+        text_stream = TextIOWrapper(
+            file_stream,
+            encoding="utf-8-sig",
+            newline=None,
+        )
         try:
-            raw_content = file_stream.read()
-        except OSError as exc:
-            raise ValidationError("Failed to read uploaded file.") from exc
-
-        if not raw_content:
-            return []
-
-        try:
-            decoded = raw_content.decode("utf-8-sig")
+            for line in text_stream:
+                yield line
         except UnicodeDecodeError as exc:
             raise ValidationError(
                 "Tick data file must be valid UTF-8 text."
             ) from exc
-
-        return decoded.splitlines()
+        except OSError as exc:
+            raise ValidationError(
+                "Failed to read uploaded file."
+            ) from exc
+        finally:
+            try:
+                text_stream.detach()
+            except Exception:
+                pass
 
     def _store_upload(
         self,
