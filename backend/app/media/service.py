@@ -1,4 +1,4 @@
-"""Media attachment service — business logic."""
+"""Media attachment service - business logic."""
 
 import logging
 import uuid
@@ -11,7 +11,11 @@ from bson import ObjectId
 from app.models.media import create_media_doc
 from app.repositories.media_repo import MediaRepository
 from app.repositories.trade_repo import TradeRepository
-from app.storage import get_bucket, get_client
+from app.storage import (
+    get_bucket,
+    get_client,
+    get_public_client,
+)
 from app.utils.errors import NotFoundError, ValidationError
 
 logger = logging.getLogger(__name__)
@@ -33,20 +37,17 @@ PRESIGNED_URL_EXPIRY = timedelta(hours=1)
 
 
 class MediaService:
-    """Handles upload, listing, presigned-URL
-    generation, and deletion of trade media."""
+    """Handles upload, listing, presigned URLs, and deletion."""
 
     def __init__(self) -> None:
         self.media_repo = MediaRepository()
         self.trade_repo = TradeRepository()
 
-    # ── helpers ──────────────────────────────────────
-
     def _verify_trade_ownership(
         self, user_id: str, trade_id: str
     ) -> Dict:
         """
-        Ensure the trade exists and belongs to user.
+        Ensure the trade exists and belongs to the user.
 
         Parameters:
             user_id: Owning user ObjectId string.
@@ -58,6 +59,7 @@ class MediaService:
         Raises:
             NotFoundError: If not found / not owned.
         """
+
         trade = self.trade_repo.find_one(
             {
                 "_id": ObjectId(trade_id),
@@ -75,15 +77,14 @@ class MediaService:
         """
         Build a unique object key in the bucket.
 
-        Format: ``<user_id>/<trade_id>/<uuid>_<filename>``
+        Format: ``<user_id>/<trade_id>/<uuid>_<filename>``.
         """
+
         safe = filename.replace("/", "_").replace(
             "\\", "_"
         )
         uid = uuid.uuid4().hex[:12]
         return f"{user_id}/{trade_id}/{uid}_{safe}"
-
-    # ── public API ───────────────────────────────────
 
     def upload(
         self,
@@ -92,7 +93,7 @@ class MediaService:
         file_storage,
     ) -> Dict:
         """
-        Upload a media file to MinIO and record in DB.
+        Upload a media file to MinIO and record it in the DB.
 
         Parameters:
             user_id: Owning user ObjectId string.
@@ -101,12 +102,13 @@ class MediaService:
                 the request.
 
         Returns:
-            Serialised media document.
+            Serialized media document.
 
         Raises:
             ValidationError: On bad input.
             NotFoundError: If trade not owned.
         """
+
         self._verify_trade_ownership(user_id, trade_id)
 
         if not file_storage or not file_storage.filename:
@@ -123,7 +125,6 @@ class MediaService:
                 + ", ".join(sorted(ALLOWED_TYPES))
             )
 
-        # Read into memory so we know the size
         data = file_storage.read()
         size = len(data)
         if size > MAX_FILE_SIZE:
@@ -131,7 +132,6 @@ class MediaService:
                 "File exceeds the 500 MB limit."
             )
 
-        # Enforce per-trade cap
         existing = self.media_repo.count_for_trade(
             user_id, trade_id
         )
@@ -145,7 +145,6 @@ class MediaService:
             user_id, trade_id, file_storage.filename
         )
 
-        # Upload to MinIO
         client = get_client()
         bucket = get_bucket()
         client.put_object(
@@ -156,7 +155,6 @@ class MediaService:
             content_type=content_type,
         )
 
-        # Persist metadata
         doc = create_media_doc(
             user_id=ObjectId(user_id),
             trade_id=ObjectId(trade_id),
@@ -182,8 +180,9 @@ class MediaService:
             trade_id: Trade ObjectId string.
 
         Returns:
-            List of serialised media documents.
+            List of serialized media documents.
         """
+
         self._verify_trade_ownership(user_id, trade_id)
         docs = self.media_repo.find_by_trade(
             user_id, trade_id
@@ -208,6 +207,7 @@ class MediaService:
         Raises:
             NotFoundError: If not found / not owned.
         """
+
         doc = self.media_repo.find_owned(
             user_id, media_id
         )
@@ -216,20 +216,19 @@ class MediaService:
                 "Media attachment not found."
             )
 
-        client = get_client()
+        client = get_public_client()
         bucket = get_bucket()
-        url = client.presigned_get_object(
+        return client.presigned_get_object(
             bucket,
             doc["object_key"],
             expires=PRESIGNED_URL_EXPIRY,
         )
-        return url
 
     def delete(
         self, user_id: str, media_id: str
     ) -> None:
         """
-        Delete a media attachment from MinIO and DB.
+        Delete a media attachment from MinIO and the DB.
 
         Parameters:
             user_id: Owning user ObjectId string.
@@ -238,6 +237,7 @@ class MediaService:
         Raises:
             NotFoundError: If not found / not owned.
         """
+
         doc = self.media_repo.find_owned(
             user_id, media_id
         )
@@ -246,7 +246,6 @@ class MediaService:
                 "Media attachment not found."
             )
 
-        # Remove from object storage
         try:
             client = get_client()
             bucket = get_bucket()
@@ -260,5 +259,4 @@ class MediaService:
                 exc_info=True,
             )
 
-        # Remove metadata record
         self.media_repo.delete_one(str(doc["_id"]))

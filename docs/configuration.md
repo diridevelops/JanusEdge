@@ -41,7 +41,7 @@ The backend also has a testing-only value in code:
 | `MINIO_SECRET_KEY` | `minioadmin` | MinIO client | Required at backend startup |
 | `MINIO_BUCKET` | `janusedge-media` | Storage initialization | Bucket is created automatically if missing |
 | `MINIO_USE_SSL` | `false` | MinIO client | Parsed as a boolean in code |
-| `MINIO_PUBLIC_URL` | `http://localhost:9000` | Config only | Defined in config and example files, but not currently used by backend code |
+| `MINIO_PUBLIC_URL` | `http://localhost:9000` | Media presigned URLs | Browser-facing MinIO origin used to generate presigned media URLs when the backend connects through an internal endpoint such as `minio:9000` |
 
 ## Docker Compose Variables
 
@@ -86,7 +86,7 @@ The repository does not yet contain a full production deployment contract, but t
 2. Set `CORS_ORIGINS` to your real frontend origin instead of `http://localhost:5173`.
 3. Use real MongoDB and MinIO endpoints instead of local or Compose hostnames.
 4. Decide whether MinIO traffic should use TLS and set `MINIO_USE_SSL` accordingly.
-5. Do not rely on `MINIO_PUBLIC_URL` until the code actually consumes it.
+5. Set `MINIO_PUBLIC_URL` to a browser-reachable MinIO origin if the backend connects through an internal hostname such as `minio:9000`.
 6. Do not rely on `VITE_APP_NAME` until the frontend reads it from `import.meta.env`.
 
 ## Startup Validation And Failure Mode

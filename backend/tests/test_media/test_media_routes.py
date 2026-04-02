@@ -1,6 +1,7 @@
 """Tests for media attachment routes and service layer."""
 
 from io import BytesIO
+from uuid import uuid4
 
 import pytest
 
@@ -17,6 +18,9 @@ def app(patch_minio):
     """Create a test Flask application with shared MinIO stub."""
     application = create_app(TestingConfig)
     application._minio_mock = storage_module.get_client()
+    application._public_minio_mock = (
+        storage_module.get_public_client()
+    )
     yield application
 
 
@@ -42,10 +46,11 @@ def clean_db(app):
 
 def _register_and_login(client):
     """Helper: register a user and return JWT token."""
+    username = f"mediauser-{uuid4().hex[:8]}"
     client.post(
         "/api/auth/register",
         json={
-            "username": "mediauser",
+            "username": username,
             "password": "TestPass123!",
             "timezone": "America/New_York",
         },
@@ -53,7 +58,7 @@ def _register_and_login(client):
     resp = client.post(
         "/api/auth/login",
         json={
-            "username": "mediauser",
+            "username": username,
             "password": "TestPass123!",
         },
     )
@@ -370,9 +375,12 @@ class TestGetMediaUrl:
     def test_get_url_returns_presigned(
         self, client, app
     ):
-        """Get URL returns the presigned link."""
-        app._minio_mock.presigned_get_object.side_effect = (
-            lambda *args, **kwargs: "http://minio:9000/signed"
+        """Get URL uses the public MinIO client for browser access."""
+        app._public_minio_mock.presigned_get_object.side_effect = (
+            lambda *args, **kwargs: (
+                "http://localhost:9000/signed"
+                "?X-Amz-Signature=testsig"
+            )
         )
 
         token = _register_and_login(client)
@@ -389,7 +397,41 @@ class TestGetMediaUrl:
         )
         assert resp.status_code == 200
         assert resp.get_json()["url"] \
-            == "http://minio:9000/signed"
+            == (
+                "http://localhost:9000/signed"
+                "?X-Amz-Signature=testsig"
+            )
+
+    def test_get_url_preserves_original_when_public_url_invalid(
+        self, client, app
+    ):
+        """Invalid public URL falls back to the internal client."""
+        storage_module._public_client = app._minio_mock
+        app._minio_mock.presigned_get_object.side_effect = (
+            lambda *args, **kwargs: (
+                "http://minio:9000/signed"
+                "?X-Amz-Signature=testsig"
+            )
+        )
+
+        token = _register_and_login(client)
+        trade_id = _create_trade(client, token)
+
+        upload_resp = _upload_file(
+            client, token, trade_id,
+        )
+        media_id = upload_resp.get_json()["media"]["id"]
+
+        resp = client.get(
+            f"/api/media/{media_id}/url",
+            headers=_auth(token),
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["url"] \
+            == (
+                "http://minio:9000/signed"
+                "?X-Amz-Signature=testsig"
+            )
 
     def test_get_url_nonexistent_returns_404(
         self, client
