@@ -11,6 +11,7 @@ def create_market_data_import_batch_doc(
     symbol: str,
     raw_symbol: str | None,
     source_platform: str = "ninjatrader",
+    batch_type: str = "import",
 ) -> dict:
     """Create a market-data import batch document."""
 
@@ -21,6 +22,7 @@ def create_market_data_import_batch_doc(
         "file_hash": file_hash,
         "file_size_bytes": file_size_bytes,
         "source_platform": source_platform,
+        "batch_type": batch_type,
         "symbol": symbol,
         "raw_symbol": raw_symbol,
         "status": "queued",
@@ -37,6 +39,7 @@ def create_market_data_import_batch_doc(
             "datasets_written": 0,
         },
         "error_message": None,
+        "preview": None,
         "created_at": now,
         "started_at": None,
         "completed_at": None,

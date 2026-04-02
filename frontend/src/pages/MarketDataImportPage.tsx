@@ -9,9 +9,10 @@ import {
 } from 'lucide-react';
 import { startTransition, useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
 import {
+  getTickImportPreviewBatch,
   getSavedMarketDataDays,
   getTickImportBatch,
-  previewTickImport,
+  startTickImportPreview,
   startTickImport,
 } from '../api/marketData.api';
 import type { UploadProgress } from '../api/marketData.api';
@@ -91,6 +92,7 @@ export function MarketDataImportPage() {
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<TickImportPreview | null>(null);
+  const [previewBatch, setPreviewBatch] = useState<MarketDataImportBatch | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [batchError, setBatchError] = useState<string | null>(null);
   const [symbolOverride, setSymbolOverride] = useState('');
@@ -106,12 +108,21 @@ export function MarketDataImportPage() {
   const [isSavedDaysLoading, setIsSavedDaysLoading] = useState(true);
 
   const pollTimeoutRef = useRef<number | null>(null);
+  const previewPollTimeoutRef = useRef<number | null>(null);
   const notifiedBatchStateRef = useRef<string | null>(null);
+  const notifiedPreviewStateRef = useRef<string | null>(null);
 
   const clearPollTimeout = useCallback(() => {
     if (pollTimeoutRef.current !== null) {
       window.clearTimeout(pollTimeoutRef.current);
       pollTimeoutRef.current = null;
+    }
+  }, []);
+
+  const clearPreviewPollTimeout = useCallback(() => {
+    if (previewPollTimeoutRef.current !== null) {
+      window.clearTimeout(previewPollTimeoutRef.current);
+      previewPollTimeoutRef.current = null;
     }
   }, []);
 
@@ -157,11 +168,35 @@ export function MarketDataImportPage() {
     }
   }, []);
 
+  const loadPreviewBatch = useCallback(async (batchId: string) => {
+    try {
+      const nextBatch = await getTickImportPreviewBatch(batchId);
+      startTransition(() => {
+        setPreviewBatch(nextBatch);
+        if (nextBatch.status === 'completed' && nextBatch.preview) {
+          setPreview(nextBatch.preview);
+          setPreviewError(null);
+          setSymbolOverride(nextBatch.preview.symbol_guess ?? '');
+        } else if (nextBatch.status === 'failed') {
+          setPreview(null);
+          setPreviewError(nextBatch.error_message ?? 'Failed to preview the tick-data file.');
+        }
+      });
+      return nextBatch;
+    } catch (error: unknown) {
+      setPreviewError(getErrorMessage(error, 'Failed to refresh preview status.'));
+      throw error;
+    }
+  }, []);
+
   async function handleFileAccepted(file: File) {
     clearPollTimeout();
+    clearPreviewPollTimeout();
     notifiedBatchStateRef.current = null;
+    notifiedPreviewStateRef.current = null;
     setSelectedFile(file);
     setPreview(null);
+    setPreviewBatch(null);
     setBatch(null);
     setPreviewError(null);
     setBatchError(null);
@@ -176,15 +211,21 @@ export function MarketDataImportPage() {
     });
 
     try {
-      const nextPreview = await previewTickImport(
+      const createdPreviewBatch = await startTickImportPreview(
         file,
         setUploadProgress
       );
-      setPreview(nextPreview);
-      setSymbolOverride(nextPreview.symbol_guess ?? '');
+      setPreviewBatch(createdPreviewBatch);
+      setUploadProgress(null);
+      if (createdPreviewBatch.status === 'completed' && createdPreviewBatch.preview) {
+        setPreview(createdPreviewBatch.preview);
+        setPreviewError(null);
+        setSymbolOverride(createdPreviewBatch.preview.symbol_guess ?? '');
+        setPreviewLoading(false);
+        setUploadStage(null);
+      }
     } catch (error: unknown) {
       setPreviewError(getErrorMessage(error, 'Failed to preview the tick-data file.'));
-    } finally {
       setPreviewLoading(false);
       setUploadStage(null);
       setUploadProgress(null);
@@ -243,6 +284,44 @@ export function MarketDataImportPage() {
   }, [loadSavedDays]);
 
   useEffect(() => {
+    clearPreviewPollTimeout();
+
+    if (!previewBatch || !ACTIVE_BATCH_STATUSES.has(previewBatch.status)) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const nextBatch = await loadPreviewBatch(previewBatch.id);
+        if (cancelled || !nextBatch) {
+          return;
+        }
+
+        if (ACTIVE_BATCH_STATUSES.has(nextBatch.status)) {
+          previewPollTimeoutRef.current = window.setTimeout(poll, POLL_INTERVAL_MS);
+          return;
+        }
+
+        setPreviewLoading(false);
+        setUploadStage(null);
+      } catch {
+        if (!cancelled) {
+          previewPollTimeoutRef.current = window.setTimeout(poll, POLL_INTERVAL_MS * 2);
+        }
+      }
+    };
+
+    previewPollTimeoutRef.current = window.setTimeout(poll, POLL_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      clearPreviewPollTimeout();
+    };
+  }, [clearPreviewPollTimeout, loadPreviewBatch, previewBatch]);
+
+  useEffect(() => {
     clearPollTimeout();
 
     if (!batch || !ACTIVE_BATCH_STATUSES.has(batch.status)) {
@@ -277,6 +356,29 @@ export function MarketDataImportPage() {
   }, [batch, clearPollTimeout, loadBatch]);
 
   useEffect(() => {
+    if (!previewBatch) {
+      return;
+    }
+
+    const notificationKey = `${previewBatch.id}:${previewBatch.status}`;
+    if (notifiedPreviewStateRef.current === notificationKey) {
+      return;
+    }
+
+    if (previewBatch.status === 'completed' && previewBatch.preview) {
+      notifiedPreviewStateRef.current = notificationKey;
+      addToast('success', 'Tick-data preview ready.');
+    }
+
+    if (previewBatch.status === 'failed') {
+      notifiedPreviewStateRef.current = notificationKey;
+      addToast('error', previewBatch.error_message ?? 'Tick-data preview failed.');
+      setPreviewLoading(false);
+      setUploadStage(null);
+    }
+  }, [addToast, previewBatch]);
+
+  useEffect(() => {
     if (!batch) {
       return;
     }
@@ -301,24 +403,42 @@ export function MarketDataImportPage() {
   useEffect(() => {
     return () => {
       clearPollTimeout();
+      clearPreviewPollTimeout();
     };
-  }, [clearPollTimeout]);
+  }, [clearPollTimeout, clearPreviewPollTimeout]);
 
   const percentComplete = batch?.progress.processed_percentage ?? 0;
   const totalPreviewDays = preview?.trading_dates.length ?? 0;
-  const loadingPhase =
-    uploadProgress && (uploadProgress.percent ?? 0) >= 100
-      ? 'processing'
-      : uploadProgress
-        ? 'uploading'
+  const previewDropzoneProgress =
+    previewLoading && previewBatch
+      ? {
+          loadedBytes: previewBatch.progress.processed_bytes,
+          totalBytes: previewBatch.progress.total_bytes,
+          percent: previewBatch.progress.processed_percentage,
+        }
+      : null;
+  const dropzoneProgress =
+    uploadStage === 'preview'
+      ? uploadProgress ?? previewDropzoneProgress
+      : uploadStage === 'import'
+        ? uploadProgress
         : null;
+  const isIndeterminateLoading =
+    uploadStage === 'import'
+    && !!uploadProgress
+    && (uploadProgress.percent ?? 0) >= 100
+    && !batch;
   const uploadLabel =
     uploadStage === 'preview'
-      ? loadingPhase === 'processing'
-        ? 'Generating preview...'
-        : 'Uploading file for preview...'
+      ? uploadProgress
+        ? (uploadProgress.percent ?? 0) >= 100
+          ? 'Preparing preview...'
+          : 'Uploading file for preview...'
+        : previewBatch && ACTIVE_BATCH_STATUSES.has(previewBatch.status)
+          ? 'Generating preview...'
+          : 'Preparing preview...'
       : uploadStage === 'import'
-        ? loadingPhase === 'processing'
+        ? isIndeterminateLoading
           ? 'Starting import...'
           : 'Uploading file for import...'
         : undefined;
@@ -348,8 +468,8 @@ export function MarketDataImportPage() {
               isLoading={previewLoading || isStartingImport}
               error={previewError}
               loadingLabel={uploadLabel}
-              loadingPhase={loadingPhase}
-              uploadProgress={uploadProgress}
+              isIndeterminate={isIndeterminateLoading}
+              uploadProgress={dropzoneProgress}
             />
           </div>
 

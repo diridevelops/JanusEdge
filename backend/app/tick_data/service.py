@@ -229,6 +229,56 @@ class TickDataService:
             batch_id=batch_id,
         )
 
+    def start_ninjatrader_preview(
+        self,
+        *,
+        user_id: str,
+        file_name: str,
+        file_stream: BinaryIO,
+    ) -> dict:
+        """Persist an upload and start a background preview batch."""
+
+        if not file_name:
+            raise ValidationError("File name is required.")
+
+        temp_path, file_hash, file_size = self._store_upload(
+            file_stream
+        )
+        if file_size == 0:
+            os.unlink(temp_path)
+            raise ValidationError("File is empty.")
+
+        guessed_raw_symbol = self._guess_raw_symbol(file_name)
+        guessed_symbol = self._guess_symbol(file_name)
+        batch_doc = create_market_data_import_batch_doc(
+            user_id=ObjectId(user_id),
+            file_name=file_name,
+            file_hash=file_hash,
+            file_size_bytes=file_size,
+            symbol=guessed_symbol or guessed_raw_symbol or "",
+            raw_symbol=guessed_raw_symbol,
+            batch_type="preview",
+        )
+        batch_id = self.import_batch_repo.insert_one(batch_doc)
+
+        app = current_app._get_current_object()
+        worker = threading.Thread(
+            target=self._run_preview_batch,
+            kwargs={
+                "app": app,
+                "batch_id": batch_id,
+                "temp_path": temp_path,
+                "file_name": file_name,
+                "file_size": file_size,
+            },
+            daemon=True,
+        )
+        worker.start()
+        return self.get_preview_batch(
+            user_id=user_id,
+            batch_id=batch_id,
+        )
+
     def get_import_batch(
         self,
         *,
@@ -240,9 +290,27 @@ class TickDataService:
         batch = self.import_batch_repo.find_by_user_and_id(
             user_id=user_id,
             batch_id=batch_id,
+            batch_type="import",
         )
         if batch is None:
             raise NotFoundError("Tick-data import batch not found.")
+        return self.import_batch_repo.serialize_doc(batch)
+
+    def get_preview_batch(
+        self,
+        *,
+        user_id: str,
+        batch_id: str,
+    ) -> dict:
+        """Return one preview batch for the authenticated user."""
+
+        batch = self.import_batch_repo.find_by_user_and_id(
+            user_id=user_id,
+            batch_id=batch_id,
+            batch_type="preview",
+        )
+        if batch is None:
+            raise NotFoundError("Tick-data preview batch not found.")
         return self.import_batch_repo.serialize_doc(batch)
 
     def get_ohlc(
@@ -687,6 +755,158 @@ class TickDataService:
                     skipped_lines=skipped_lines,
                     days_completed=days_completed,
                     datasets_written=datasets_written,
+                )
+            finally:
+                if os.path.exists(temp_path):
+                    os.unlink(temp_path)
+
+    def _run_preview_batch(
+        self,
+        *,
+        app,
+        batch_id: str,
+        temp_path: str,
+        file_name: str,
+        file_size: int,
+    ) -> None:
+        """Process a temp upload into a preview summary batch."""
+
+        processed_lines = 0
+        valid_ticks = 0
+        skipped_lines = 0
+        processed_bytes = 0
+        day_summary: dict[date, dict] = {}
+        first_tick: NinjaTraderTick | None = None
+        last_tick: NinjaTraderTick | None = None
+        decode_encoding = "utf-8-sig"
+
+        with app.app_context():
+            self.import_batch_repo.mark_processing(batch_id)
+            try:
+                with open(temp_path, "rb") as file_handle:
+                    for raw_line in file_handle:
+                        processed_bytes = file_handle.tell()
+                        processed_lines += 1
+                        try:
+                            line = raw_line.decode(
+                                decode_encoding
+                            )
+                        except UnicodeDecodeError as exc:
+                            raise ValidationError(
+                                "Tick data file must be valid UTF-8 text."
+                            ) from exc
+                        decode_encoding = "utf-8"
+
+                        if not line.strip():
+                            skipped_lines += 1
+                            self._maybe_update_progress(
+                                batch_id=batch_id,
+                                processed_lines=processed_lines,
+                                valid_ticks=valid_ticks,
+                                skipped_lines=skipped_lines,
+                                processed_bytes=processed_bytes,
+                                total_bytes=file_size,
+                                days_completed=len(day_summary),
+                                datasets_written=0,
+                            )
+                            continue
+
+                        try:
+                            tick = parse_ninjatrader_tick_line(line)
+                        except ValueError:
+                            skipped_lines += 1
+                            self._maybe_update_progress(
+                                batch_id=batch_id,
+                                processed_lines=processed_lines,
+                                valid_ticks=valid_ticks,
+                                skipped_lines=skipped_lines,
+                                processed_bytes=processed_bytes,
+                                total_bytes=file_size,
+                                days_completed=len(day_summary),
+                                datasets_written=0,
+                            )
+                            continue
+
+                        valid_ticks += 1
+                        if first_tick is None:
+                            first_tick = tick
+                        last_tick = tick
+
+                        trading_date = tick.timestamp.date()
+                        summary = day_summary.setdefault(
+                            trading_date,
+                            {
+                                "date": trading_date.isoformat(),
+                                "tick_count": 0,
+                                "first_tick_at": tick.timestamp.isoformat(),
+                                "last_tick_at": tick.timestamp.isoformat(),
+                            },
+                        )
+                        summary["tick_count"] += 1
+                        summary["last_tick_at"] = (
+                            tick.timestamp.isoformat()
+                        )
+                        self._maybe_update_progress(
+                            batch_id=batch_id,
+                            processed_lines=processed_lines,
+                            valid_ticks=valid_ticks,
+                            skipped_lines=skipped_lines,
+                            processed_bytes=processed_bytes,
+                            total_bytes=file_size,
+                            days_completed=len(day_summary),
+                            datasets_written=0,
+                        )
+
+                if processed_lines == 0:
+                    raise ValidationError("File is empty.")
+
+                if valid_ticks == 0:
+                    raise ValidationError(
+                        "No valid NinjaTrader tick rows were found in the file."
+                    )
+
+                trading_dates = [
+                    day_summary[current_date]
+                    for current_date in sorted(day_summary)
+                ]
+                preview = TickImportPreviewSummary(
+                    file_name=file_name,
+                    symbol_guess=self._guess_symbol(file_name),
+                    total_lines=processed_lines,
+                    valid_ticks=valid_ticks,
+                    skipped_lines=skipped_lines,
+                    first_tick_at=(
+                        first_tick.timestamp.isoformat()
+                        if first_tick is not None
+                        else None
+                    ),
+                    last_tick_at=(
+                        last_tick.timestamp.isoformat()
+                        if last_tick is not None
+                        else None
+                    ),
+                    trading_dates=trading_dates,
+                )
+                self.import_batch_repo.mark_preview_completed(
+                    batch_id,
+                    preview=preview.to_dict(),
+                    total_bytes=file_size,
+                    processed_lines=processed_lines,
+                    valid_ticks=valid_ticks,
+                    skipped_lines=skipped_lines,
+                    days_completed=len(trading_dates),
+                )
+            except Exception as exc:
+                self.import_batch_repo.mark_failed(
+                    batch_id,
+                    error_message=str(exc),
+                    processed_bytes=processed_bytes,
+                    total_bytes=file_size,
+                    processed_lines=processed_lines,
+                    valid_ticks=valid_ticks,
+                    skipped_lines=skipped_lines,
+                    days_completed=len(day_summary),
+                    datasets_written=0,
                 )
             finally:
                 if os.path.exists(temp_path):

@@ -4,7 +4,6 @@ import type {
   MarketDataImportBatch,
   OHLCDataPoint,
   SavedMarketDataDay,
-  TickImportPreview,
 } from '../types/marketData.types';
 
 export interface OHLCParams {
@@ -70,15 +69,15 @@ function buildUploadProgress(
   };
 }
 
-/** Preview a NinjaTrader tick-data text file before importing it. */
-export async function previewTickImport(
+/** Start a background preview for a NinjaTrader tick-data text file. */
+export async function startTickImportPreview(
   file: File,
   onUploadProgress?: UploadProgressCallback
-): Promise<TickImportPreview> {
+): Promise<MarketDataImportBatch> {
   const formData = new FormData();
   formData.append('file', file);
 
-  const res = await apiClient.post<TickImportPreview>(
+  const res = await apiClient.post<MarketDataImportBatch>(
     '/market-data/tick-imports/preview',
     formData,
     {
@@ -93,6 +92,16 @@ export async function previewTickImport(
     }
   );
 
+  return res.data;
+}
+
+/** Fetch the latest status for a market-data preview batch. */
+export async function getTickImportPreviewBatch(
+  batchId: string
+): Promise<MarketDataImportBatch> {
+  const res = await apiClient.get<MarketDataImportBatch>(
+    `/market-data/tick-imports/preview/${batchId}`
+  );
   return res.data;
 }
 

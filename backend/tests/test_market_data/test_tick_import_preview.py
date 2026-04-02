@@ -56,8 +56,27 @@ def _update_market_data_mappings(
     assert response.status_code == 200
 
 
+def _poll_preview_batch(client, headers, batch_id):
+    """Poll a preview batch until it reaches a terminal state."""
+
+    completed_batch = None
+    for _ in range(50):
+        poll_response = client.get(
+            f"/api/market-data/tick-imports/preview/{batch_id}",
+            headers=headers,
+        )
+        assert poll_response.status_code == 200
+        completed_batch = poll_response.get_json()
+        if completed_batch["status"] in {"completed", "failed"}:
+            break
+        time.sleep(0.02)
+
+    assert completed_batch is not None
+    return completed_batch
+
+
 def test_preview_tick_import_returns_daily_summary(client):
-    """Preview returns parsed tick counts grouped by day."""
+    """Preview creates a batch and returns parsed tick counts grouped by day."""
 
     headers = _register_and_login(client)
     payload = _load_example_bytes(
@@ -71,8 +90,23 @@ def test_preview_tick_import_returns_daily_summary(client):
         content_type="multipart/form-data",
     )
 
-    assert response.status_code == 200
-    data = response.get_json()
+    assert response.status_code == 202
+    batch = response.get_json()
+    assert batch["batch_type"] == "preview"
+    assert batch["file_name"] == "ES 06-26.Last.txt"
+    assert batch["preview"] is None or isinstance(
+        batch["preview"], dict
+    )
+
+    completed_batch = _poll_preview_batch(
+        client,
+        headers,
+        batch["id"],
+    )
+
+    assert completed_batch["status"] == "completed"
+    data = completed_batch["preview"]
+    assert data is not None
     assert data["file_name"] == "ES 06-26.Last.txt"
     assert data["symbol_guess"] == "ES"
     assert data["total_lines"] == 3
@@ -116,7 +150,7 @@ def test_preview_tick_import_rejects_missing_file(client):
 
 
 def test_preview_tick_import_rejects_files_without_valid_ticks(client):
-    """Preview fails when no valid NinjaTrader rows are present."""
+    """Preview batch fails when no valid NinjaTrader rows are present."""
 
     headers = _register_and_login(client)
 
@@ -127,11 +161,31 @@ def test_preview_tick_import_rejects_files_without_valid_ticks(client):
         content_type="multipart/form-data",
     )
 
-    assert response.status_code == 400
+    assert response.status_code == 202
+    batch = response.get_json()
+    completed_batch = _poll_preview_batch(
+        client,
+        headers,
+        batch["id"],
+    )
+    assert completed_batch["status"] == "failed"
     assert (
-        response.get_json()["error"]["message"]
+        completed_batch["error_message"]
         == "No valid NinjaTrader tick rows were found in the file."
     )
+
+
+def test_get_preview_batch_nonexistent_returns_404(client):
+    """Unknown preview batch ids return 404."""
+
+    headers = _register_and_login(client)
+
+    response = client.get(
+        "/api/market-data/tick-imports/preview/000000000000000000000000",
+        headers=headers,
+    )
+
+    assert response.status_code == 404
 
 
 def test_tick_import_creates_batch_and_reports_progress(client, app):

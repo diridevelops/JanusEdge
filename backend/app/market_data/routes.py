@@ -74,7 +74,7 @@ def get_saved_days():
 @market_data_bp.route("/tick-imports/preview", methods=["POST"])
 @jwt_required()
 def preview_tick_import():
-    """Preview a NinjaTrader tick-data text file before ingestion."""
+    """Start a background preview for a NinjaTrader tick-data text file."""
 
     if "file" not in request.files:
         raise ValidationError("No file provided.")
@@ -88,11 +88,27 @@ def preview_tick_import():
             "Only NinjaTrader text exports are supported."
         )
 
-    preview = tick_data_service.preview_ninjatrader_upload(
+    batch = tick_data_service.start_ninjatrader_preview(
+        user_id=get_jwt_identity(),
         file_name=file.filename,
         file_stream=file.stream,
     )
-    return jsonify(preview.to_dict()), 200
+    return jsonify(batch), 202
+
+
+@market_data_bp.route(
+    "/tick-imports/preview/<batch_id>",
+    methods=["GET"],
+)
+@jwt_required()
+def get_tick_import_preview(batch_id: str):
+    """Return the current progress for one tick-data preview batch."""
+
+    batch = tick_data_service.get_preview_batch(
+        user_id=get_jwt_identity(),
+        batch_id=batch_id,
+    )
+    return jsonify(batch), 200
 
 
 @market_data_bp.route("/tick-imports", methods=["POST"])

@@ -7,7 +7,7 @@ interface TickDataDropZoneProps {
   isLoading: boolean;
   error?: string | null;
   loadingLabel?: string;
-  loadingPhase?: 'uploading' | 'processing' | null;
+  isIndeterminate?: boolean;
   uploadProgress?: {
     loadedBytes: number;
     totalBytes: number | null;
@@ -37,7 +37,7 @@ export function TickDataDropZone({
   isLoading,
   error,
   loadingLabel,
-  loadingPhase,
+  isIndeterminate,
   uploadProgress,
 }: TickDataDropZoneProps) {
   const onDrop = useCallback(
@@ -84,7 +84,7 @@ export function TickDataDropZone({
                       {loadingLabel ?? 'Uploading tick data...'}
                     </p>
                     <p className="text-xs text-gray-500 dark:text-gray-400">
-                      {loadingPhase === 'processing'
+                      {isIndeterminate
                         ? 'Server-side parsing in progress'
                         : uploadProgress.percent !== null
                         ? `${uploadProgress.percent.toFixed(1)}%`
@@ -93,7 +93,7 @@ export function TickDataDropZone({
                   </div>
                 </div>
                 <div className="h-2 overflow-hidden rounded-full bg-gray-200 dark:bg-gray-700">
-                  {loadingPhase === 'processing' ? (
+                  {isIndeterminate ? (
                     <div className="relative h-full w-full overflow-hidden">
                       <div className="absolute inset-y-0 left-0 w-full rounded-full bg-brand-200/70 dark:bg-brand-900/40" />
                       <div className="absolute inset-y-0 left-0 w-full rounded-full bg-brand-600 animate-pulse" />
@@ -111,7 +111,7 @@ export function TickDataDropZone({
                   )}
                 </div>
                 <p className="text-xs text-gray-500 dark:text-gray-400">
-                  {loadingPhase === 'processing' ? (
+                  {isIndeterminate ? (
                     <>
                       Uploaded {formatUploadBytes(uploadProgress.loadedBytes)}
                       {uploadProgress.totalBytes !== null
