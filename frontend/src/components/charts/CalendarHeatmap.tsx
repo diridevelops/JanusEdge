@@ -132,10 +132,10 @@ export function CalendarHeatmap({
           const dayData = dataByDate.get(dayKey);
           const tradeCount = dayData?.trade_count ?? 0;
           const pnl = dayData?.net_pnl ?? 0;
-          const roundedPnl = Math.round(pnl);
+          const formattedPnl = `${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}`;
           const inVisibleMonth = isSameMonth(day, visibleMonth);
           const title = inVisibleMonth
-            ? `${dayKey} • ${tradeCount} trades • ${roundedPnl >= 0 ? '+' : ''}${roundedPnl}`
+            ? `${dayKey} • ${tradeCount} trades • ${formattedPnl}`
             : undefined;
 
           return (
@@ -155,8 +155,7 @@ export function CalendarHeatmap({
                     <>
                       <div>Trades: {tradeCount}</div>
                       <div>
-                        P&L: {roundedPnl >= 0 ? '+' : ''}
-                        {roundedPnl}
+                        P&L: {formattedPnl}
                       </div>
                     </>
                   ) : null}
