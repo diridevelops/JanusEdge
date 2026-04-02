@@ -450,6 +450,49 @@ class TickDataService:
         )
         return self._frame_to_tick_records(frame)
 
+    def read_tick_prices_for_range(
+        self,
+        *,
+        symbol: str,
+        raw_symbol: str | None,
+        start_dt: datetime,
+        end_dt: datetime,
+        market_data_mappings: Mapping[str, str] | None = None,
+    ) -> tuple[list[tuple[datetime, float]], bool]:
+        """Read only timestamp and last_price ticks for a UTC time range."""
+
+        dataset_symbols = resolve_market_data_symbols(
+            symbol,
+            raw_symbol,
+            market_data_mappings,
+        )
+        current_day = start_dt.date()
+        last_day = end_dt.date()
+        records: list[tuple[datetime, float]] = []
+
+        while current_day <= last_day:
+            tick_document = self.dataset_repo.find_dataset(
+                dataset_symbols,
+                "ticks",
+                current_day,
+                None,
+            )
+            if tick_document is None:
+                return [], True
+
+            frame = self.parquet_store.read_dataframe(
+                tick_document["object_key"]
+            )
+            day_records = self._frame_to_tick_price_records(
+                frame,
+                start_dt=start_dt,
+                end_dt=end_dt,
+            )
+            records.extend(day_records)
+            current_day += timedelta(days=1)
+
+        return records, False
+
     def _decode_lines(self, file_stream: BinaryIO) -> list[str]:
         """Decode the uploaded file as UTF-8 text lines."""
 
@@ -858,6 +901,44 @@ class TickDataService:
                     ),
                     "size": int(row.get("size", 0)),
                 }
+            )
+        return records
+
+    def _frame_to_tick_price_records(
+        self,
+        frame: pd.DataFrame,
+        *,
+        start_dt: datetime,
+        end_dt: datetime,
+    ) -> list[tuple[datetime, float]]:
+        """Convert a tick DataFrame into sorted timestamp/last-price pairs."""
+
+        if frame.empty:
+            return []
+
+        normalized = frame.loc[:, ["timestamp", "last_price"]].copy()
+        normalized["timestamp"] = pd.to_datetime(
+            normalized["timestamp"],
+            utc=True,
+        )
+        normalized = normalized[
+            (normalized["timestamp"] >= start_dt)
+            & (normalized["timestamp"] <= end_dt)
+        ]
+        if normalized.empty:
+            return []
+
+        normalized = normalized.sort_values("timestamp")
+        records: list[tuple[datetime, float]] = []
+        for timestamp, last_price in normalized.itertuples(
+            index=False,
+            name=None,
+        ):
+            records.append(
+                (
+                    timestamp.to_pydatetime(),
+                    round(float(last_price), 6),
+                )
             )
         return records
 

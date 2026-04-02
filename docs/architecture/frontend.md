@@ -197,12 +197,18 @@ Calculator skips that trade.
 The trade detail page combines:
 
 - trade summary metrics
+- running P&L chart
 - execution list
 - candlestick chart
 - notes
 - tags
 - stop-analysis fields
 - media attachments
+
+The running P&L section is a filled area chart powered by a trade-specific backend
+endpoint. It uses stored raw ticks plus the trade's executions to show realized
+and unrealized gross P&L over time, converted to USD through the user's symbol
+point-value settings.
 
 For losing trades, the stop-analysis editor includes a `Detect` action for the
 wishful stop field. It requests an OHLC-based suggestion from the backend,

@@ -1,14 +1,16 @@
 """Tests for trade API routes."""
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 import pytest
+from bson import ObjectId
 
 from app import create_app
 from app.market_data.symbol_mapper import (
     get_default_symbol_mappings,
 )
+from app.models.execution import create_execution_doc
 from app.trades.service import TradeService
 from app.whatif.cache import _sim_cache
 from config import TestingConfig
@@ -132,6 +134,57 @@ def _seed_ohlc_dataset(
         trading_day=trading_day,
         rows=bars,
     )
+
+
+def _seed_tick_dataset(
+    seed_market_data_dataset,
+    *,
+    trading_day: date,
+    ticks: list[dict],
+    symbol: str = "MES",
+    raw_symbol: str = "MES",
+):
+    """Store a raw tick dataset for a trade day."""
+    seed_market_data_dataset(
+        symbol=symbol,
+        raw_symbol=raw_symbol,
+        dataset_type="ticks",
+        timeframe=None,
+        trading_day=trading_day,
+        rows=ticks,
+    )
+
+
+def _insert_execution(
+    app,
+    *,
+    trade_id: str,
+    user_id: str,
+    trade_account_id: str,
+    side: str,
+    quantity: int,
+    price: float,
+    timestamp: datetime,
+    symbol: str = "MES",
+    raw_symbol: str = "MES",
+):
+    """Insert one execution linked to a trade."""
+    with app.app_context():
+        from app.extensions import mongo
+
+        document = create_execution_doc(
+            user_id=ObjectId(user_id),
+            trade_account_id=ObjectId(trade_account_id),
+            import_batch_id=None,
+            symbol=symbol,
+            raw_symbol=raw_symbol,
+            side=side,
+            quantity=quantity,
+            price=price,
+            timestamp=timestamp,
+        )
+        document["trade_id"] = ObjectId(trade_id)
+        mongo.db.executions.insert_one(document)
 
 
 def test_create_manual_trade(client):
@@ -315,6 +368,642 @@ def test_get_trade_detail(client):
     data = resp.get_json()
     assert data["trade"]["side"] == "Short"
     assert data["trade"]["total_quantity"] == 2
+
+
+def test_get_running_pnl_long_trade(
+    app,
+    client,
+    seed_market_data_dataset,
+):
+    token = _register_and_login(client)
+    create_resp = _create_trade(
+        client,
+        token,
+        entry_time="2026-01-01T10:00:00+00:00",
+        exit_time="2026-01-01T10:05:00+00:00",
+    )
+    trade = create_resp.get_json()["trade"]
+    trade_id = trade["id"]
+    _insert_execution(
+        app,
+        trade_id=trade_id,
+        user_id=trade["user_id"],
+        trade_account_id=trade["trade_account_id"],
+        side="Buy",
+        quantity=1,
+        price=5000.0,
+        timestamp=datetime(
+            2026, 1, 1, 10, 0, tzinfo=timezone.utc
+        ),
+    )
+    _insert_execution(
+        app,
+        trade_id=trade_id,
+        user_id=trade["user_id"],
+        trade_account_id=trade["trade_account_id"],
+        side="Sell",
+        quantity=1,
+        price=5010.0,
+        timestamp=datetime(
+            2026, 1, 1, 10, 5, tzinfo=timezone.utc
+        ),
+    )
+    _seed_tick_dataset(
+        seed_market_data_dataset,
+        trading_day=date(2026, 1, 1),
+        ticks=[
+            {
+                "timestamp": datetime(
+                    2026, 1, 1, 10, 0, tzinfo=timezone.utc
+                ),
+                "last_price": 5000.0,
+                "bid_price": 4999.75,
+                "ask_price": 5000.25,
+                "size": 1,
+            },
+            {
+                "timestamp": datetime(
+                    2026, 1, 1, 10, 1, tzinfo=timezone.utc
+                ),
+                "last_price": 5004.0,
+                "bid_price": 5003.75,
+                "ask_price": 5004.25,
+                "size": 1,
+            },
+            {
+                "timestamp": datetime(
+                    2026, 1, 1, 10, 2, tzinfo=timezone.utc
+                ),
+                "last_price": 4998.0,
+                "bid_price": 4997.75,
+                "ask_price": 4998.25,
+                "size": 1,
+            },
+            {
+                "timestamp": datetime(
+                    2026, 1, 1, 10, 5, tzinfo=timezone.utc
+                ),
+                "last_price": 5010.0,
+                "bid_price": 5009.75,
+                "ask_price": 5010.25,
+                "size": 1,
+            },
+        ],
+    )
+
+    response = client.get(
+        f"/api/trades/{trade_id}/running-pnl",
+        headers=_auth_header(token),
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["source"] == "ticks"
+    assert payload["point_value"] == 5.0
+    assert payload["empty_reason"] is None
+    assert [point["pnl"] for point in payload["points"]] == [
+        0.0,
+        20.0,
+        -10.0,
+        50.0,
+    ]
+
+
+def test_get_running_pnl_short_trade(
+    app,
+    client,
+    seed_market_data_dataset,
+):
+    token = _register_and_login(client)
+    create_resp = _create_trade(
+        client,
+        token,
+        side="Short",
+        total_quantity=1,
+        entry_price=5050.0,
+        exit_price=5040.0,
+        entry_time="2026-01-01T10:00:00+00:00",
+        exit_time="2026-01-01T10:03:00+00:00",
+    )
+    trade = create_resp.get_json()["trade"]
+    trade_id = trade["id"]
+    _insert_execution(
+        app,
+        trade_id=trade_id,
+        user_id=trade["user_id"],
+        trade_account_id=trade["trade_account_id"],
+        side="Sell",
+        quantity=1,
+        price=5050.0,
+        timestamp=datetime(
+            2026, 1, 1, 10, 0, tzinfo=timezone.utc
+        ),
+    )
+    _insert_execution(
+        app,
+        trade_id=trade_id,
+        user_id=trade["user_id"],
+        trade_account_id=trade["trade_account_id"],
+        side="Buy",
+        quantity=1,
+        price=5040.0,
+        timestamp=datetime(
+            2026, 1, 1, 10, 3, tzinfo=timezone.utc
+        ),
+    )
+    _seed_tick_dataset(
+        seed_market_data_dataset,
+        trading_day=date(2026, 1, 1),
+        ticks=[
+            {
+                "timestamp": datetime(
+                    2026, 1, 1, 10, 0, tzinfo=timezone.utc
+                ),
+                "last_price": 5050.0,
+                "bid_price": 5049.75,
+                "ask_price": 5050.25,
+                "size": 1,
+            },
+            {
+                "timestamp": datetime(
+                    2026, 1, 1, 10, 1, tzinfo=timezone.utc
+                ),
+                "last_price": 5046.0,
+                "bid_price": 5045.75,
+                "ask_price": 5046.25,
+                "size": 1,
+            },
+            {
+                "timestamp": datetime(
+                    2026, 1, 1, 10, 2, tzinfo=timezone.utc
+                ),
+                "last_price": 5052.0,
+                "bid_price": 5051.75,
+                "ask_price": 5052.25,
+                "size": 1,
+            },
+            {
+                "timestamp": datetime(
+                    2026, 1, 1, 10, 3, tzinfo=timezone.utc
+                ),
+                "last_price": 5040.0,
+                "bid_price": 5039.75,
+                "ask_price": 5040.25,
+                "size": 1,
+            },
+        ],
+    )
+
+    response = client.get(
+        f"/api/trades/{trade_id}/running-pnl",
+        headers=_auth_header(token),
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["empty_reason"] is None
+    assert [point["pnl"] for point in payload["points"]] == [
+        0.0,
+        20.0,
+        -10.0,
+        50.0,
+    ]
+
+
+def test_get_running_pnl_uses_symbol_point_value_mapping(
+    app,
+    client,
+    seed_market_data_dataset,
+):
+    token = _register_and_login(client)
+    symbol_mappings = get_default_symbol_mappings()
+    symbol_mappings["MES"] = {
+        "dollar_value_per_point": 10.0,
+    }
+    _update_symbol_mappings(client, token, symbol_mappings)
+    create_resp = _create_trade(
+        client,
+        token,
+        entry_time="2026-01-01T10:00:00+00:00",
+        exit_time="2026-01-01T10:05:00+00:00",
+    )
+    trade = create_resp.get_json()["trade"]
+    trade_id = trade["id"]
+    _insert_execution(
+        app,
+        trade_id=trade_id,
+        user_id=trade["user_id"],
+        trade_account_id=trade["trade_account_id"],
+        side="Buy",
+        quantity=1,
+        price=5000.0,
+        timestamp=datetime(
+            2026, 1, 1, 10, 0, tzinfo=timezone.utc
+        ),
+    )
+    _insert_execution(
+        app,
+        trade_id=trade_id,
+        user_id=trade["user_id"],
+        trade_account_id=trade["trade_account_id"],
+        side="Sell",
+        quantity=1,
+        price=5010.0,
+        timestamp=datetime(
+            2026, 1, 1, 10, 5, tzinfo=timezone.utc
+        ),
+    )
+    _seed_tick_dataset(
+        seed_market_data_dataset,
+        trading_day=date(2026, 1, 1),
+        ticks=[
+            {
+                "timestamp": datetime(
+                    2026, 1, 1, 10, 0, tzinfo=timezone.utc
+                ),
+                "last_price": 5000.0,
+                "bid_price": 4999.75,
+                "ask_price": 5000.25,
+                "size": 1,
+            },
+            {
+                "timestamp": datetime(
+                    2026, 1, 1, 10, 5, tzinfo=timezone.utc
+                ),
+                "last_price": 5010.0,
+                "bid_price": 5009.75,
+                "ask_price": 5010.25,
+                "size": 1,
+            },
+        ],
+    )
+
+    response = client.get(
+        f"/api/trades/{trade_id}/running-pnl",
+        headers=_auth_header(token),
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["point_value"] == 10.0
+    assert payload["points"][-1]["pnl"] == 100.0
+
+
+def test_get_running_pnl_tracks_partial_exits(
+    app,
+    client,
+    seed_market_data_dataset,
+):
+    token = _register_and_login(client)
+    create_resp = _create_trade(
+        client,
+        token,
+        total_quantity=2,
+        entry_price=5005.0,
+        exit_price=5017.5,
+        entry_time="2026-01-01T10:00:00+00:00",
+        exit_time="2026-01-01T10:03:00+00:00",
+    )
+    trade = create_resp.get_json()["trade"]
+    trade_id = trade["id"]
+    execution_specs = [
+        (
+            "Buy",
+            1,
+            5000.0,
+            datetime(2026, 1, 1, 10, 0, tzinfo=timezone.utc),
+        ),
+        (
+            "Buy",
+            1,
+            5010.0,
+            datetime(2026, 1, 1, 10, 1, tzinfo=timezone.utc),
+        ),
+        (
+            "Sell",
+            1,
+            5015.0,
+            datetime(2026, 1, 1, 10, 2, tzinfo=timezone.utc),
+        ),
+        (
+            "Sell",
+            1,
+            5020.0,
+            datetime(2026, 1, 1, 10, 3, tzinfo=timezone.utc),
+        ),
+    ]
+    for side, quantity, price, timestamp in execution_specs:
+        _insert_execution(
+            app,
+            trade_id=trade_id,
+            user_id=trade["user_id"],
+            trade_account_id=trade["trade_account_id"],
+            side=side,
+            quantity=quantity,
+            price=price,
+            timestamp=timestamp,
+        )
+    _seed_tick_dataset(
+        seed_market_data_dataset,
+        trading_day=date(2026, 1, 1),
+        ticks=[
+            {
+                "timestamp": datetime(
+                    2026, 1, 1, 10, 0, tzinfo=timezone.utc
+                ),
+                "last_price": 5000.0,
+                "bid_price": 4999.75,
+                "ask_price": 5000.25,
+                "size": 1,
+            },
+            {
+                "timestamp": datetime(
+                    2026, 1, 1, 10, 1, tzinfo=timezone.utc
+                ),
+                "last_price": 5010.0,
+                "bid_price": 5009.75,
+                "ask_price": 5010.25,
+                "size": 1,
+            },
+            {
+                "timestamp": datetime(
+                    2026, 1, 1, 10, 2, tzinfo=timezone.utc
+                ),
+                "last_price": 5015.0,
+                "bid_price": 5014.75,
+                "ask_price": 5015.25,
+                "size": 1,
+            },
+            {
+                "timestamp": datetime(
+                    2026, 1, 1, 10, 3, tzinfo=timezone.utc
+                ),
+                "last_price": 5020.0,
+                "bid_price": 5019.75,
+                "ask_price": 5020.25,
+                "size": 1,
+            },
+        ],
+    )
+
+    response = client.get(
+        f"/api/trades/{trade_id}/running-pnl",
+        headers=_auth_header(token),
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert [point["pnl"] for point in payload["points"]] == [
+        0.0,
+        50.0,
+        100.0,
+        125.0,
+    ]
+    assert payload["points"][-1]["pnl"] == trade["gross_pnl"]
+
+
+def test_get_running_pnl_downsamples_dense_series_and_preserves_key_points(
+    app,
+    client,
+    seed_market_data_dataset,
+):
+    token = _register_and_login(client)
+    create_resp = _create_trade(
+        client,
+        token,
+        total_quantity=2,
+        entry_price=5000.0,
+        exit_price=5100.0,
+        entry_time="2026-01-01T10:00:00+00:00",
+        exit_time="2026-01-01T10:20:00+00:00",
+    )
+    trade = create_resp.get_json()["trade"]
+    trade_id = trade["id"]
+    entry_ts = datetime(
+        2026, 1, 1, 10, 0, tzinfo=timezone.utc
+    )
+    partial_exit_ts = datetime(
+        2026, 1, 1, 10, 10, tzinfo=timezone.utc
+    )
+    final_exit_ts = datetime(
+        2026, 1, 1, 10, 20, tzinfo=timezone.utc
+    )
+
+    _insert_execution(
+        app,
+        trade_id=trade_id,
+        user_id=trade["user_id"],
+        trade_account_id=trade["trade_account_id"],
+        side="Buy",
+        quantity=2,
+        price=5000.0,
+        timestamp=entry_ts,
+    )
+    _insert_execution(
+        app,
+        trade_id=trade_id,
+        user_id=trade["user_id"],
+        trade_account_id=trade["trade_account_id"],
+        side="Sell",
+        quantity=1,
+        price=5050.0,
+        timestamp=partial_exit_ts,
+    )
+    _insert_execution(
+        app,
+        trade_id=trade_id,
+        user_id=trade["user_id"],
+        trade_account_id=trade["trade_account_id"],
+        side="Sell",
+        quantity=1,
+        price=5100.0,
+        timestamp=final_exit_ts,
+    )
+
+    ticks = []
+    for index in range(1201):
+        timestamp = entry_ts + timedelta(seconds=index)
+        ticks.append(
+            {
+                "timestamp": timestamp,
+                "last_price": 5000.0 + (index * (100.0 / 1200.0)),
+                "bid_price": 4999.75,
+                "ask_price": 5000.25,
+                "size": 1,
+            }
+        )
+    _seed_tick_dataset(
+        seed_market_data_dataset,
+        trading_day=date(2026, 1, 1),
+        ticks=ticks,
+    )
+
+    response = client.get(
+        f"/api/trades/{trade_id}/running-pnl",
+        headers=_auth_header(token),
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert len(payload["points"]) <= 600
+    point_times = {point["time"] for point in payload["points"]}
+    assert entry_ts.isoformat() in point_times
+    assert partial_exit_ts.isoformat() in point_times
+    assert final_exit_ts.isoformat() in point_times
+    assert payload["points"][-1]["pnl"] == trade["gross_pnl"]
+
+
+def test_get_running_pnl_returns_missing_tick_data_when_unavailable(
+    app,
+    client,
+):
+    token = _register_and_login(client)
+    create_resp = _create_trade(
+        client,
+        token,
+        entry_time="2026-01-01T10:00:00+00:00",
+        exit_time="2026-01-01T10:05:00+00:00",
+    )
+    trade = create_resp.get_json()["trade"]
+    trade_id = trade["id"]
+    _insert_execution(
+        app,
+        trade_id=trade_id,
+        user_id=trade["user_id"],
+        trade_account_id=trade["trade_account_id"],
+        side="Buy",
+        quantity=1,
+        price=5000.0,
+        timestamp=datetime(
+            2026, 1, 1, 10, 0, tzinfo=timezone.utc
+        ),
+    )
+    _insert_execution(
+        app,
+        trade_id=trade_id,
+        user_id=trade["user_id"],
+        trade_account_id=trade["trade_account_id"],
+        side="Sell",
+        quantity=1,
+        price=5010.0,
+        timestamp=datetime(
+            2026, 1, 1, 10, 5, tzinfo=timezone.utc
+        ),
+    )
+
+    response = client.get(
+        f"/api/trades/{trade_id}/running-pnl",
+        headers=_auth_header(token),
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["points"] == []
+    assert payload["empty_reason"] == "missing_tick_data"
+
+
+def test_get_running_pnl_returns_no_ticks_in_trade_window(
+    app,
+    client,
+    seed_market_data_dataset,
+):
+    token = _register_and_login(client)
+    create_resp = _create_trade(
+        client,
+        token,
+        entry_time="2026-01-01T10:00:00+00:00",
+        exit_time="2026-01-01T10:05:00+00:00",
+    )
+    trade = create_resp.get_json()["trade"]
+    trade_id = trade["id"]
+    _insert_execution(
+        app,
+        trade_id=trade_id,
+        user_id=trade["user_id"],
+        trade_account_id=trade["trade_account_id"],
+        side="Buy",
+        quantity=1,
+        price=5000.0,
+        timestamp=datetime(
+            2026, 1, 1, 10, 0, tzinfo=timezone.utc
+        ),
+    )
+    _insert_execution(
+        app,
+        trade_id=trade_id,
+        user_id=trade["user_id"],
+        trade_account_id=trade["trade_account_id"],
+        side="Sell",
+        quantity=1,
+        price=5010.0,
+        timestamp=datetime(
+            2026, 1, 1, 10, 5, tzinfo=timezone.utc
+        ),
+    )
+    _seed_tick_dataset(
+        seed_market_data_dataset,
+        trading_day=date(2026, 1, 1),
+        ticks=[
+            {
+                "timestamp": datetime(
+                    2026, 1, 1, 9, 58, tzinfo=timezone.utc
+                ),
+                "last_price": 4999.0,
+                "bid_price": 4998.75,
+                "ask_price": 4999.25,
+                "size": 1,
+            },
+            {
+                "timestamp": datetime(
+                    2026, 1, 1, 9, 59, tzinfo=timezone.utc
+                ),
+                "last_price": 5000.0,
+                "bid_price": 4999.75,
+                "ask_price": 5000.25,
+                "size": 1,
+            },
+        ],
+    )
+
+    response = client.get(
+        f"/api/trades/{trade_id}/running-pnl",
+        headers=_auth_header(token),
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["points"] == []
+    assert payload["empty_reason"] == "no_ticks_in_trade_window"
+
+
+def test_get_running_pnl_other_user_cannot_access(client):
+    owner_token = _register_and_login(client)
+    create_resp = _create_trade(client, owner_token)
+    trade_id = create_resp.get_json()["trade"]["id"]
+
+    client.post(
+        "/api/auth/register",
+        json={
+            "username": "otheruser",
+            "password": "TestPass123!",
+            "timezone": "America/New_York",
+        },
+    )
+    other_login = client.post(
+        "/api/auth/login",
+        json={
+            "username": "otheruser",
+            "password": "TestPass123!",
+        },
+    )
+    other_token = other_login.get_json()["token"]
+
+    response = client.get(
+        f"/api/trades/{trade_id}/running-pnl",
+        headers=_auth_header(other_token),
+    )
+
+    assert response.status_code == 404
 
 
 def test_update_trade_fee(client):

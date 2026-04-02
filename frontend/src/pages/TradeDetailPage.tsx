@@ -2,8 +2,9 @@ import { ArrowLeft, RefreshCw, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { getOHLC } from '../api/marketData.api';
-import { deleteTrade, getTrade } from '../api/trades.api';
+import { deleteTrade, getTrade, getTradeRunningPnL } from '../api/trades.api';
 import { CandlestickChart } from '../components/charts/CandlestickChart';
+import { RunningPnLChart } from '../components/charts/RunningPnLChart';
 import { ExecutionList } from '../components/trade/ExecutionList';
 import { StopAnalysisFields } from '../components/trade/StopAnalysisFields';
 import { TagSelector } from '../components/trade/TagSelector';
@@ -14,7 +15,11 @@ import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
 import type { Execution } from '../types/execution.types';
 import type { ChartInterval, OHLCDataPoint } from '../types/marketData.types';
-import type { Trade } from '../types/trade.types';
+import type {
+  RunningPnLEmptyReason,
+  RunningPnLPoint,
+  Trade,
+} from '../types/trade.types';
 import { formatCurrency, formatDateTime, formatDuration } from '../utils/formatters';
 import { getTradeRMultiple } from '../utils/tradeMetrics';
 
@@ -30,6 +35,18 @@ function bestInterval(holdingSeconds: number): ChartInterval {
 
 function getMarketDataFailureMessage(): string {
   return 'No stored market data was found for this trade window. Import a NinjaTrader tick-data file from Market Data to populate candles for this symbol.';
+}
+
+function getRunningPnLEmptyStateMessage(
+  emptyReason: RunningPnLEmptyReason
+): string | null {
+  if (emptyReason === 'missing_tick_data') {
+    return 'Running P&L requires stored raw tick data for this trade window. Import a NinjaTrader tick-data file from Market Data to populate it.';
+  }
+  if (emptyReason === 'no_ticks_in_trade_window') {
+    return 'Stored raw tick data exists for this trade day, but no ticks were found between the trade entry and exit times.';
+  }
+  return null;
 }
 
 function SkeletonBlock({ className }: { className: string }) {
@@ -141,13 +158,17 @@ export function TradeDetailPage() {
   const [trade, setTrade] = useState<Trade | null>(null);
   const [executions, setExecutions] = useState<Execution[]>([]);
   const [ohlcMap, setOhlcMap] = useState<Record<string, OHLCDataPoint[]>>({});
+  const [runningPnl, setRunningPnl] = useState<RunningPnLPoint[]>([]);
   const [interval, setInterval] = useState<ChartInterval>('5m');
   const [isTradeLoading, setIsTradeLoading] = useState(true);
   const [isChartLoading, setIsChartLoading] = useState(false);
+  const [isRunningPnlLoading, setIsRunningPnlLoading] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [chartError, setChartError] = useState<string | null>(null);
+  const [runningPnlError, setRunningPnlError] = useState<string | null>(null);
   const tradeRequestIdRef = useRef(0);
   const chartRequestIdRef = useRef(0);
+  const runningPnlRequestIdRef = useRef(0);
 
   const fetchAllCharts = useCallback(
     async (
@@ -262,6 +283,36 @@ export function TradeDetailPage() {
     [addToast]
   );
 
+  const fetchRunningPnl = useCallback(async (tradeId: string) => {
+    const requestId = runningPnlRequestIdRef.current + 1;
+    runningPnlRequestIdRef.current = requestId;
+    setIsRunningPnlLoading(true);
+    setRunningPnlError(null);
+
+    try {
+      const response = await getTradeRunningPnL(tradeId);
+      if (requestId !== runningPnlRequestIdRef.current) {
+        return;
+      }
+
+      setRunningPnl(response.points);
+      setRunningPnlError(
+        getRunningPnLEmptyStateMessage(response.empty_reason)
+      );
+    } catch {
+      if (requestId !== runningPnlRequestIdRef.current) {
+        return;
+      }
+
+      setRunningPnl([]);
+      setRunningPnlError('Failed to load running P&L.');
+    } finally {
+      if (requestId === runningPnlRequestIdRef.current) {
+        setIsRunningPnlLoading(false);
+      }
+    }
+  }, []);
+
   const fetchTrade = useCallback(async (preserveExisting = false) => {
     if (!id) {
       setIsTradeLoading(false);
@@ -271,13 +322,17 @@ export function TradeDetailPage() {
     const requestId = tradeRequestIdRef.current + 1;
     tradeRequestIdRef.current = requestId;
     chartRequestIdRef.current += 1;
+    runningPnlRequestIdRef.current += 1;
     setIsTradeLoading(true);
     setIsChartLoading(false);
+    setIsRunningPnlLoading(false);
 
     if (!preserveExisting) {
       setTrade(null);
       setExecutions([]);
       setOhlcMap({});
+      setRunningPnl([]);
+      setRunningPnlError(null);
     }
 
     try {
@@ -300,6 +355,7 @@ export function TradeDetailPage() {
       setIsTradeLoading(false);
 
       void fetchAllCharts(loadedTrade);
+      void fetchRunningPnl(loadedTrade.id);
     } catch {
       if (requestId !== tradeRequestIdRef.current) {
         return;
@@ -308,8 +364,9 @@ export function TradeDetailPage() {
       navigate('/trades');
       setIsTradeLoading(false);
       setIsChartLoading(false);
+      setIsRunningPnlLoading(false);
     }
-  }, [id, addToast, navigate, fetchAllCharts]);
+  }, [id, addToast, navigate, fetchAllCharts, fetchRunningPnl]);
 
   const handleTradeRefresh = useCallback(() => {
     void fetchTrade(true);
@@ -499,6 +556,18 @@ export function TradeDetailPage() {
           </div>
           <TradeMedia tradeId={trade.id} compact />
         </div>
+      </div>
+
+      <div className="card p-4">
+        <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wider mb-3 dark:text-gray-100">
+          Running P&amp;L
+        </h2>
+        <RunningPnLChart
+          data={runningPnl}
+          isLoading={isRunningPnlLoading}
+          displayTimezone={user?.display_timezone ?? user?.timezone}
+          emptyStateMessage={runningPnlError ?? undefined}
+        />
       </div>
 
       {/* Editable detail cards */}

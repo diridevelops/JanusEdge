@@ -34,6 +34,26 @@ export interface Trade {
   market_data_cached?: boolean;
 }
 
+/** One point on a trade's running gross P&L series. */
+export interface RunningPnLPoint {
+  time: string;
+  pnl: number;
+}
+
+/** Empty-state reasons for the running P&L endpoint. */
+export type RunningPnLEmptyReason =
+  | 'missing_tick_data'
+  | 'no_ticks_in_trade_window'
+  | null;
+
+/** Running P&L response from the trade detail API. */
+export interface RunningPnLResponse {
+  source: 'ticks';
+  point_value: number;
+  empty_reason: RunningPnLEmptyReason;
+  points: RunningPnLPoint[];
+}
+
 /** Payload for creating a manual trade. */
 export interface ManualTradeRequest {
   symbol: string;
