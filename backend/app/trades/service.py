@@ -1,7 +1,7 @@
 """Trade service — business logic for trades."""
 
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 
 from bson import ObjectId
@@ -33,6 +33,7 @@ from app.utils.trade_metrics import (
 
 
 logger = logging.getLogger(__name__)
+_RUNNING_PNL_MAX_POINTS = 600
 
 
 def _parse_date_from(value: str) -> datetime:
@@ -253,13 +254,9 @@ class TradeService:
         Raises:
             NotFoundError: If trade not found.
         """
-        trade = self.trade_repo.find_by_id(trade_id)
-        if not trade:
-            raise NotFoundError("Trade not found.")
-        if str(trade["user_id"]) != user_id:
-            raise NotFoundError("Trade not found.")
-        if trade.get("status") == "deleted":
-            raise NotFoundError("Trade not found.")
+        trade = self._get_trade_or_raise(
+            user_id, trade_id
+        )
 
         executions = self.exec_repo.find_by_trade(
             trade_id
@@ -270,6 +267,47 @@ class TradeService:
                 self.exec_repo.serialize_doc(e)
                 for e in executions
             ],
+        }
+
+    def get_running_pnl(
+        self, user_id: str, trade_id: str
+    ) -> dict:
+        """Return a position-aware running gross P&L series for one trade."""
+        trade = self._get_trade_or_raise(
+            user_id, trade_id
+        )
+        executions = self.exec_repo.find_by_trade(
+            trade_id
+        )
+        symbol_mappings = self._get_symbol_mappings(
+            user_id
+        )
+        market_data_mappings = self._get_market_data_mappings(
+            user_id
+        )
+
+        try:
+            point_value = get_point_value(
+                trade.get("symbol", ""),
+                trade.get("raw_symbol"),
+                symbol_mappings,
+            )
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from exc
+
+        points, empty_reason = (
+            self._build_running_pnl_points(
+                trade=trade,
+                executions=executions,
+                point_value=point_value,
+                market_data_mappings=market_data_mappings,
+            )
+        )
+        return {
+            "source": "ticks",
+            "point_value": float(point_value),
+            "empty_reason": empty_reason,
+            "points": points,
         }
 
     def create_manual_trade(
@@ -396,6 +434,19 @@ class TradeService:
             user.get("market_data_mappings") if user else None
         )
 
+    def _get_trade_or_raise(
+        self, user_id: str, trade_id: str
+    ) -> dict:
+        """Return one active trade for the user or raise not found."""
+        trade = self.trade_repo.find_by_id(trade_id)
+        if not trade:
+            raise NotFoundError("Trade not found.")
+        if str(trade["user_id"]) != user_id:
+            raise NotFoundError("Trade not found.")
+        if trade.get("status") == "deleted":
+            raise NotFoundError("Trade not found.")
+        return trade
+
     @staticmethod
     def _get_trade_day(entry_time) -> date:
         """Return the UTC trading day for the trade entry."""
@@ -409,6 +460,466 @@ class TradeService:
         if isinstance(entry_time, datetime):
             return to_utc(entry_time)
         return to_utc(datetime.fromisoformat(str(entry_time)))
+
+    @staticmethod
+    def _get_exit_datetime(exit_time) -> datetime:
+        """Return the trade exit as a timezone-aware UTC datetime."""
+        if isinstance(exit_time, datetime):
+            return to_utc(exit_time)
+        return to_utc(datetime.fromisoformat(str(exit_time)))
+
+    @staticmethod
+    def _execution_timestamp(execution: dict) -> datetime:
+        """Return one execution timestamp normalized to UTC."""
+        timestamp = execution.get("timestamp")
+        if isinstance(timestamp, datetime):
+            return to_utc(timestamp)
+        return to_utc(datetime.fromisoformat(str(timestamp)))
+
+    @staticmethod
+    def _apply_execution_to_position(
+        *,
+        current_position: int,
+        avg_entry_price: float,
+        realized_pnl: float,
+        execution: dict,
+        point_value: float,
+    ) -> tuple[int, float, float]:
+        """Apply one execution and return updated position state."""
+        quantity = int(execution.get("quantity", 0) or 0)
+        price = float(execution.get("price", 0.0) or 0.0)
+        side = str(execution.get("side", ""))
+        signed_quantity = (
+            quantity if side == "Buy" else -quantity
+        )
+
+        if quantity <= 0:
+            return (
+                current_position,
+                avg_entry_price,
+                realized_pnl,
+            )
+
+        if current_position == 0 or (
+            current_position > 0 and signed_quantity > 0
+        ) or (
+            current_position < 0 and signed_quantity < 0
+        ):
+            next_abs_position = abs(current_position) + abs(
+                signed_quantity
+            )
+            if next_abs_position == 0:
+                next_avg_entry_price = 0.0
+            else:
+                next_avg_entry_price = (
+                    (abs(current_position) * avg_entry_price)
+                    + (abs(signed_quantity) * price)
+                ) / next_abs_position
+            return (
+                current_position + signed_quantity,
+                next_avg_entry_price,
+                realized_pnl,
+            )
+
+        closing_quantity = min(
+            abs(current_position), abs(signed_quantity)
+        )
+        if current_position > 0:
+            realized_pnl += (
+                (price - avg_entry_price)
+                * closing_quantity
+                * point_value
+            )
+        else:
+            realized_pnl += (
+                (avg_entry_price - price)
+                * closing_quantity
+                * point_value
+            )
+
+        next_position = current_position + signed_quantity
+        if next_position == 0:
+            return 0, 0.0, realized_pnl
+        if (
+            current_position > 0 and next_position > 0
+        ) or (
+            current_position < 0 and next_position < 0
+        ):
+            return next_position, avg_entry_price, realized_pnl
+        return next_position, price, realized_pnl
+
+    @staticmethod
+    def _calculate_unrealized_pnl(
+        *,
+        current_position: int,
+        avg_entry_price: float,
+        mark_price: float,
+        point_value: float,
+    ) -> float:
+        """Return unrealized P&L for the current open position."""
+        if current_position == 0:
+            return 0.0
+        if current_position > 0:
+            return (
+                (mark_price - avg_entry_price)
+                * current_position
+                * point_value
+            )
+        return (
+            (avg_entry_price - mark_price)
+            * abs(current_position)
+            * point_value
+        )
+
+    @staticmethod
+    def _build_synthetic_trade_executions(
+        trade: dict,
+    ) -> list[dict]:
+        """Build minimal entry and exit executions for manual trades."""
+        quantity = int(trade.get("total_quantity", 0) or 0)
+        if quantity <= 0:
+            return []
+
+        if trade.get("side") == "Long":
+            entry_side = "Buy"
+            exit_side = "Sell"
+        else:
+            entry_side = "Sell"
+            exit_side = "Buy"
+
+        return [
+            {
+                "side": entry_side,
+                "quantity": quantity,
+                "price": float(
+                    trade.get("avg_entry_price", 0.0) or 0.0
+                ),
+                "timestamp": trade.get("entry_time"),
+            },
+            {
+                "side": exit_side,
+                "quantity": quantity,
+                "price": float(
+                    trade.get("avg_exit_price", 0.0) or 0.0
+                ),
+                "timestamp": trade.get("exit_time"),
+            },
+        ]
+
+    def _build_running_pnl_points(
+        self,
+        *,
+        trade: dict,
+        executions: list[dict],
+        point_value: float,
+        market_data_mappings: dict,
+    ) -> tuple[list[dict], str | None]:
+        """Build a running gross P&L series for one trade."""
+        entry_dt = self._get_entry_datetime(
+            trade.get("entry_time")
+        )
+        exit_dt = self._get_exit_datetime(
+            trade.get("exit_time")
+        )
+        effective_executions = (
+            executions
+            if executions
+            else self._build_synthetic_trade_executions(
+                trade
+            )
+        )
+
+        filtered_executions = sorted(
+            [
+                (
+                    self._execution_timestamp(execution),
+                    execution,
+                )
+                for execution in effective_executions
+                if entry_dt
+                <= self._execution_timestamp(execution)
+                <= exit_dt
+            ],
+            key=lambda item: item[0],
+        )
+
+        tick_prices, missing_tick_data = (
+            self.market_data_service.tick_data_service.read_tick_prices_for_range(
+                symbol=trade.get("symbol", ""),
+                raw_symbol=trade.get("raw_symbol"),
+                start_dt=entry_dt,
+                end_dt=exit_dt,
+                market_data_mappings=market_data_mappings,
+            )
+        )
+        if missing_tick_data:
+            return [], "missing_tick_data"
+        if not tick_prices:
+            return [], "no_ticks_in_trade_window"
+
+        current_position = 0
+        avg_entry_price = 0.0
+        realized_pnl = 0.0
+        last_tick_price: float | None = None
+        points: list[dict] = []
+        execution_index = 0
+        tick_index = 0
+
+        while (
+            execution_index < len(filtered_executions)
+            or tick_index < len(tick_prices)
+        ):
+            next_execution_ts = (
+                filtered_executions[execution_index][0]
+                if execution_index < len(filtered_executions)
+                else None
+            )
+            next_tick_ts = (
+                tick_prices[tick_index][0]
+                if tick_index < len(tick_prices)
+                else None
+            )
+            if next_tick_ts is None or (
+                next_execution_ts is not None
+                and next_execution_ts <= next_tick_ts
+            ):
+                timestamp = next_execution_ts
+            else:
+                timestamp = next_tick_ts
+
+            if timestamp is None:
+                break
+
+            execution_mark_price: float | None = None
+            while (
+                execution_index < len(filtered_executions)
+                and filtered_executions[execution_index][0]
+                == timestamp
+            ):
+                execution = filtered_executions[
+                    execution_index
+                ][1]
+                (
+                    current_position,
+                    avg_entry_price,
+                    realized_pnl,
+                ) = self._apply_execution_to_position(
+                    current_position=current_position,
+                    avg_entry_price=avg_entry_price,
+                    realized_pnl=realized_pnl,
+                    execution=execution,
+                    point_value=point_value,
+                )
+                execution_mark_price = float(
+                    execution.get("price", 0.0)
+                )
+                execution_index += 1
+
+            tick_mark_price: float | None = None
+            while (
+                tick_index < len(tick_prices)
+                and tick_prices[tick_index][0] == timestamp
+            ):
+                tick_mark_price = tick_prices[tick_index][1]
+                tick_index += 1
+            if tick_mark_price is not None:
+                last_tick_price = tick_mark_price
+
+            pnl_value = realized_pnl
+            if current_position != 0:
+                if tick_mark_price is not None:
+                    mark_price = tick_mark_price
+                elif execution_mark_price is not None:
+                    mark_price = execution_mark_price
+                elif last_tick_price is not None:
+                    mark_price = last_tick_price
+                else:
+                    mark_price = avg_entry_price
+                pnl_value += self._calculate_unrealized_pnl(
+                    current_position=current_position,
+                    avg_entry_price=avg_entry_price,
+                    mark_price=mark_price,
+                    point_value=point_value,
+                )
+
+            points.append(
+                {
+                    "time": timestamp.astimezone(
+                        timezone.utc
+                    ).isoformat(),
+                    "pnl": round(pnl_value, 2),
+                }
+            )
+
+        execution_times = {
+            execution_ts.astimezone(timezone.utc).isoformat()
+            for execution_ts, _ in filtered_executions
+        }
+        final_time = exit_dt.astimezone(
+            timezone.utc
+        ).isoformat()
+        final_pnl = round(
+            float(trade.get("gross_pnl", realized_pnl)),
+            2,
+        )
+        if points and points[-1]["time"] == final_time:
+            points[-1]["pnl"] = final_pnl
+        else:
+            points.append(
+                {
+                    "time": final_time,
+                    "pnl": final_pnl,
+                }
+            )
+
+        return (
+            self._downsample_running_pnl_points(
+                points=points,
+                preserved_times=execution_times,
+                max_points=_RUNNING_PNL_MAX_POINTS,
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _sample_evenly_indices(
+        indices: list[int],
+        sample_size: int,
+    ) -> list[int]:
+        """Sample ordered indices evenly while preserving endpoints."""
+        if sample_size <= 0 or not indices:
+            return []
+        if sample_size >= len(indices):
+            return list(indices)
+        if sample_size == 1:
+            return [indices[0]]
+
+        result: list[int] = []
+        last_index = len(indices) - 1
+        for sample_index in range(sample_size):
+            position = round(
+                sample_index * last_index / (sample_size - 1)
+            )
+            candidate = indices[position]
+            if not result or candidate != result[-1]:
+                result.append(candidate)
+
+        for candidate in indices:
+            if len(result) >= sample_size:
+                break
+            if candidate not in result:
+                result.append(candidate)
+
+        return sorted(result)[:sample_size]
+
+    @classmethod
+    def _downsample_running_pnl_points(
+        cls,
+        *,
+        points: list[dict],
+        preserved_times: set[str],
+        max_points: int,
+    ) -> list[dict]:
+        """Downsample a running P&L series for chart display."""
+        if len(points) <= max_points:
+            return points
+
+        key_indices = {0, len(points) - 1}
+        zero_crossing_indices: set[int] = set()
+        for index, point in enumerate(points):
+            if point["time"] in preserved_times:
+                key_indices.add(index)
+
+        for index in range(1, len(points)):
+            prev_pnl = float(points[index - 1]["pnl"])
+            current_pnl = float(points[index]["pnl"])
+            if (
+                prev_pnl == 0
+                or current_pnl == 0
+                or (prev_pnl < 0 < current_pnl)
+                or (prev_pnl > 0 > current_pnl)
+            ):
+                zero_crossing_indices.add(index - 1)
+                zero_crossing_indices.add(index)
+
+        if len(key_indices) < max_points:
+            available_crossings = sorted(
+                zero_crossing_indices - key_indices
+            )
+            key_indices.update(
+                cls._sample_evenly_indices(
+                    available_crossings,
+                    min(
+                        len(available_crossings),
+                        max_points - len(key_indices),
+                    ),
+                )
+            )
+
+        if len(key_indices) >= max_points:
+            selected_indices = cls._sample_evenly_indices(
+                sorted(key_indices),
+                max_points,
+            )
+            return [
+                points[index]
+                for index in selected_indices
+            ]
+
+        non_preserved = [
+            index
+            for index in range(len(points))
+            if index not in key_indices
+        ]
+        remaining_slots = max_points - len(key_indices)
+        bucket_count = max(1, remaining_slots // 2)
+        bucket_count = min(bucket_count, len(non_preserved))
+        if bucket_count <= 0:
+            return [
+                points[index]
+                for index in sorted(key_indices)
+            ]
+
+        bucket_size = max(
+            1,
+            (len(non_preserved) + bucket_count - 1)
+            // bucket_count,
+        )
+        bucket_candidates: list[int] = []
+        for start in range(0, len(non_preserved), bucket_size):
+            bucket = non_preserved[start:start + bucket_size]
+            if not bucket:
+                continue
+            min_index = min(
+                bucket,
+                key=lambda item: float(points[item]["pnl"]),
+            )
+            max_index = max(
+                bucket,
+                key=lambda item: float(points[item]["pnl"]),
+            )
+            bucket_candidates.extend(
+                sorted({min_index, max_index})
+            )
+
+        addition_candidates = sorted(
+            set(bucket_candidates) - key_indices
+        )
+        selected_additions = cls._sample_evenly_indices(
+            addition_candidates,
+            min(len(addition_candidates), remaining_slots),
+        )
+        selected_indices = sorted(
+            key_indices | set(selected_additions)
+        )
+
+        if len(selected_indices) > max_points:
+            selected_indices = cls._sample_evenly_indices(
+                selected_indices,
+                max_points,
+            )
+
+        return [points[index] for index in selected_indices]
 
     @staticmethod
     def _infer_tick_size_from_bars(

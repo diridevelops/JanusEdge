@@ -64,6 +64,21 @@ def get_trade(trade_id):
     return jsonify(result), 200
 
 
+@trades_bp.route("/<trade_id>/running-pnl", methods=["GET"])
+@jwt_required()
+def get_running_pnl(trade_id):
+    """
+    Get a position-aware running gross P&L series for one trade.
+
+    Returns: {points[], source, point_value, empty_reason}
+    """
+    user_id = get_jwt_identity()
+    result = trade_service.get_running_pnl(
+        user_id, trade_id
+    )
+    return jsonify(result), 200
+
+
 @trades_bp.route("", methods=["POST"])
 @jwt_required()
 def create_trade():

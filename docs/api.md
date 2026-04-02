@@ -90,6 +90,7 @@ If you need an exact stable schema here, treat it as TODO because the preview re
 | --- | --- | --- | --- | --- | --- |
 | GET | `/api/trades` | Yes | List trades with filters and pagination | Query params: `account`, `symbol`, `side`, `tag`, `date_from`, `date_to`, `page`, `per_page`, `sort_by`, `sort_dir` | `{ trades, total, page, per_page, pages }` |
 | GET | `/api/trades/:trade_id` | Yes | Get one trade with executions | Path parameter `trade_id` | `{ trade, executions }` |
+| GET | `/api/trades/:trade_id/running-pnl` | Yes | Get a position-aware running gross P&L series from stored raw ticks | Path parameter `trade_id` | `{ source, point_value, empty_reason, points }` |
 | POST | `/api/trades` | Yes | Create a manual trade | JSON with `symbol`, `side`, `total_quantity`, `entry_price`, `exit_price`, `entry_time`, `exit_time`, optional `fee`, `initial_risk`, `account`, `tags`, `notes` | `{ trade }` |
 | PUT | `/api/trades/:trade_id` | Yes | Update journaling and risk fields on a trade | JSON may include `fee`, `fee_source`, `initial_risk`, `strategy`, `pre_trade_notes`, `post_trade_notes`, `tag_ids`, `wish_stop_price`, `target_price` | `{ trade }` |
 | POST | `/api/trades/:trade_id/detect-wish-stop` | Yes | Detect a suggested wishful stop from stored 1-minute OHLC data for the trade day | Path parameter `trade_id` | `{ wish_stop_price }` |
@@ -104,6 +105,32 @@ If you need an exact stable schema here, treat it as TODO because the preview re
 - `account` can be either an account ObjectId or an account name.
 - `tag` can be either a tag ObjectId or a tag name.
 - each returned trade includes a computed `market_data_cached` boolean based on stored candle metadata.
+
+### Running P&L notes
+
+- `GET /api/trades/:trade_id/running-pnl` returns a trade-specific, time-ordered gross P&L series built from stored raw ticks.
+- The series is position-aware:
+  - executions are applied in timestamp order
+  - realized gross P&L from partial exits is retained
+  - any remaining open size is marked to each tick `last_price`
+- `point_value` is resolved from the user's current `symbol_mappings`, so futures like `ES` or `MES` convert price points into USD correctly.
+- The response shape is:
+
+```json
+{
+  "source": "ticks",
+  "point_value": 50.0,
+  "empty_reason": null,
+  "points": [
+    { "time": "2026-01-01T10:00:00+00:00", "pnl": 0.0 }
+  ]
+}
+```
+
+- `empty_reason` can currently be:
+  - `missing_tick_data` when one or more required raw tick partitions are unavailable
+  - `no_ticks_in_trade_window` when a tick dataset exists for the day but none fall between the trade entry and exit times
+- The series is gross P&L only. Fees remain separate on the trade summary and are not subtracted from these chart points.
 
 ### Wishful stop detection notes
 

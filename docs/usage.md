@@ -318,6 +318,23 @@ Important limitation:
 
 If a chart does not load for a symbol, check whether the trade symbol matches an imported dataset directly or whether you need an explicit market-data mapping.
 
+### Running P&L
+
+The trade detail page also includes a Running P&L chart.
+
+It shows:
+
+- time on the x-axis from trade entry to trade exit
+- gross P&L in dollars on the y-axis
+- live mark-to-market movement based on stored raw ticks
+- realized plus unrealized P&L for trades that scale in or out
+
+If the instrument trades in points instead of dollars, the chart converts movement using your configured symbol mapping dollar-value-per-point setting.
+
+Important limitation:
+
+- the Running P&L chart requires stored raw tick data for that trade window and does not fall back to 1-minute candles
+
 ### Media
 
 The Media section lets you attach files to a trade.

@@ -1,5 +1,10 @@
 import apiClient from './client';
-import type { Trade, ManualTradeRequest, UpdateTradeRequest } from '../types/trade.types';
+import type {
+  ManualTradeRequest,
+  RunningPnLResponse,
+  Trade,
+  UpdateTradeRequest,
+} from '../types/trade.types';
 import type { PaginatedResponse } from '../types/common.types';
 
 interface TradeListParams {
@@ -31,6 +36,16 @@ export async function getTrade(
 ): Promise<{ trade: Trade; executions: unknown[] }> {
   const res = await apiClient.get<{ trade: Trade; executions: unknown[] }>(
     `/trades/${id}`
+  );
+  return res.data;
+}
+
+/** Get the running gross P&L series for a trade. */
+export async function getTradeRunningPnL(
+  id: string
+): Promise<RunningPnLResponse> {
+  const res = await apiClient.get<RunningPnLResponse>(
+    `/trades/${id}/running-pnl`
   );
   return res.data;
 }
