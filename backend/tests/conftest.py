@@ -120,10 +120,12 @@ def patch_minio(monkeypatch):
 
     monkeypatch.setattr("app.storage.Minio", InMemoryMinio)
     storage_module._client = None
+    storage_module._public_client = None
     storage_module._media_bucket = ""
     storage_module._market_data_bucket = ""
     yield
     storage_module._client = None
+    storage_module._public_client = None
     storage_module._media_bucket = ""
     storage_module._market_data_bucket = ""
 
