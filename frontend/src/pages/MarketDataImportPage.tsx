@@ -586,18 +586,18 @@ export function MarketDataImportPage() {
                 </table>
               </div>
 
-              <div className="mt-6 rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-900/40">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-900 dark:text-gray-100">
-                      Import Progress
-                    </h3>
-                    <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                      Progress is updated automatically while the batch is queued or processing.
-                    </p>
-                  </div>
+              {batch ? (
+                <div className="mt-6 rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-900/40">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-900 dark:text-gray-100">
+                        Import Progress
+                      </h3>
+                      <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                        Progress is updated automatically while the batch is queued or processing.
+                      </p>
+                    </div>
 
-                  {batch ? (
                     <button
                       type="button"
                       onClick={handleRefreshStatus}
@@ -607,14 +607,8 @@ export function MarketDataImportPage() {
                       <RefreshCw className={`h-4 w-4 ${isRefreshingStatus ? 'animate-spin' : ''}`} />
                       Refresh
                     </button>
-                  ) : null}
-                </div>
-
-                {!batch ? (
-                  <div className="mt-4 rounded-lg border border-dashed border-gray-300 px-4 py-6 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
-                    Preview a file, then start an import to see live status here.
                   </div>
-                ) : (
+
                   <div className="mt-4 space-y-4">
                     <div className="flex flex-wrap items-center gap-3">
                       <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-wide ${statusClasses(batch.status)}`}>
@@ -683,8 +677,8 @@ export function MarketDataImportPage() {
                       </div>
                     ) : null}
                   </div>
-                )}
-              </div>
+                </div>
+              ) : null}
 
               <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-gray-200 pt-4 dark:border-gray-700">
                 <div className="text-xs text-gray-500 dark:text-gray-400">
@@ -697,6 +691,12 @@ export function MarketDataImportPage() {
                     <span>Ready to start import.</span>
                   )}
                 </div>
+
+                {!batch && batchError ? (
+                  <div className="w-full rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-900/30 dark:text-red-400">
+                    {batchError}
+                  </div>
+                ) : null}
 
                 <button
                   type="button"
