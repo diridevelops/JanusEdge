@@ -14,15 +14,16 @@ class MarketDataImportBatchRepository(BaseRepository):
         self,
         user_id: str,
         batch_id: str,
+        batch_type: str | None = None,
     ) -> dict | None:
         """Return one import batch for the authenticated user."""
-
-        return self.find_one(
-            {
-                "_id": ObjectId(batch_id),
-                "user_id": ObjectId(user_id),
-            }
-        )
+        query = {
+            "_id": ObjectId(batch_id),
+            "user_id": ObjectId(user_id),
+        }
+        if batch_type is not None:
+            query["batch_type"] = batch_type
+        return self.find_one(query)
 
     def mark_processing(self, batch_id: str) -> None:
         """Mark an import batch as actively processing."""
@@ -119,6 +120,47 @@ class MarketDataImportBatchRepository(BaseRepository):
                         "days_completed": days_completed,
                         "datasets_written": datasets_written,
                     },
+                    "completed_at": now,
+                    "updated_at": now,
+                    "error_message": None,
+                }
+            },
+        )
+
+    def mark_preview_completed(
+        self,
+        batch_id: str,
+        *,
+        preview: dict,
+        total_bytes: int,
+        processed_lines: int,
+        valid_ticks: int,
+        skipped_lines: int,
+        days_completed: int,
+    ) -> None:
+        """Mark a preview batch as completed with preview payload."""
+
+        from app.utils.datetime_utils import utc_now
+
+        now = utc_now()
+        self.collection.update_one(
+            {"_id": ObjectId(batch_id)},
+            {
+                "$set": {
+                    "status": "completed",
+                    "progress": {
+                        "processed_bytes": total_bytes,
+                        "total_bytes": total_bytes,
+                        "processed_percentage": 100.0,
+                    },
+                    "stats": {
+                        "processed_lines": processed_lines,
+                        "valid_ticks": valid_ticks,
+                        "skipped_lines": skipped_lines,
+                        "days_completed": days_completed,
+                        "datasets_written": 0,
+                    },
+                    "preview": preview,
                     "completed_at": now,
                     "updated_at": now,
                     "error_message": None,

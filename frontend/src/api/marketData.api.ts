@@ -1,9 +1,9 @@
+import type { AxiosProgressEvent } from 'axios';
 import apiClient from './client';
 import type {
   MarketDataImportBatch,
   OHLCDataPoint,
   SavedMarketDataDay,
-  TickImportPreview,
 } from '../types/marketData.types';
 
 export interface OHLCParams {
@@ -20,6 +20,16 @@ export interface StartTickImportParams {
   symbol?: string;
   rawSymbol?: string;
 }
+
+export interface UploadProgress {
+  loadedBytes: number;
+  totalBytes: number | null;
+  percent: number | null;
+}
+
+type UploadProgressCallback = (
+  progress: UploadProgress
+) => void;
 
 /** Fetch OHLC candle data from stored market data. */
 export async function getOHLC(
@@ -40,27 +50,65 @@ export async function getSavedMarketDataDays(): Promise<SavedMarketDataDay[]> {
   return res.data.saved_days;
 }
 
-/** Preview a NinjaTrader tick-data text file before importing it. */
-export async function previewTickImport(file: File): Promise<TickImportPreview> {
+function buildUploadProgress(
+  event: AxiosProgressEvent
+): UploadProgress {
+  const totalBytes =
+    typeof event.total === 'number' ? event.total : null;
+  const loadedBytes =
+    typeof event.loaded === 'number' ? event.loaded : 0;
+  const percent =
+    totalBytes && totalBytes > 0
+      ? (loadedBytes / totalBytes) * 100
+      : null;
+
+  return {
+    loadedBytes,
+    totalBytes,
+    percent,
+  };
+}
+
+/** Start a background preview for a NinjaTrader tick-data text file. */
+export async function startTickImportPreview(
+  file: File,
+  onUploadProgress?: UploadProgressCallback
+): Promise<MarketDataImportBatch> {
   const formData = new FormData();
   formData.append('file', file);
 
-  const res = await apiClient.post<TickImportPreview>(
+  const res = await apiClient.post<MarketDataImportBatch>(
     '/market-data/tick-imports/preview',
     formData,
     {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
+      onUploadProgress: onUploadProgress
+        ? (event) => {
+            onUploadProgress(buildUploadProgress(event));
+          }
+        : undefined,
     }
   );
 
   return res.data;
 }
 
+/** Fetch the latest status for a market-data preview batch. */
+export async function getTickImportPreviewBatch(
+  batchId: string
+): Promise<MarketDataImportBatch> {
+  const res = await apiClient.get<MarketDataImportBatch>(
+    `/market-data/tick-imports/preview/${batchId}`
+  );
+  return res.data;
+}
+
 /** Start a new NinjaTrader tick-data import batch. */
 export async function startTickImport(
-  params: StartTickImportParams
+  params: StartTickImportParams,
+  onUploadProgress?: UploadProgressCallback
 ): Promise<MarketDataImportBatch> {
   const formData = new FormData();
   formData.append('file', params.file);
@@ -80,6 +128,11 @@ export async function startTickImport(
       headers: {
         'Content-Type': 'multipart/form-data',
       },
+      onUploadProgress: onUploadProgress
+        ? (event) => {
+            onUploadProgress(buildUploadProgress(event));
+          }
+        : undefined,
     }
   );
 

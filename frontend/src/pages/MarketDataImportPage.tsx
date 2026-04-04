@@ -9,11 +9,13 @@ import {
 } from 'lucide-react';
 import { startTransition, useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react';
 import {
+  getTickImportPreviewBatch,
   getSavedMarketDataDays,
   getTickImportBatch,
-  previewTickImport,
+  startTickImportPreview,
   startTickImport,
 } from '../api/marketData.api';
+import type { UploadProgress } from '../api/marketData.api';
 import { TickDataDropZone } from '../components/market-data/TickDataDropZone';
 import { PageHeader } from '../components/ui/PageHeader';
 import { useAuth } from '../hooks/useAuth';
@@ -90,12 +92,15 @@ export function MarketDataImportPage() {
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<TickImportPreview | null>(null);
+  const [previewBatch, setPreviewBatch] = useState<MarketDataImportBatch | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [batchError, setBatchError] = useState<string | null>(null);
   const [symbolOverride, setSymbolOverride] = useState('');
   const [rawSymbolOverride, setRawSymbolOverride] = useState('');
   const [previewLoading, setPreviewLoading] = useState(false);
   const [isStartingImport, setIsStartingImport] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<UploadProgress | null>(null);
+  const [uploadStage, setUploadStage] = useState<'preview' | 'import' | null>(null);
   const [isRefreshingStatus, setIsRefreshingStatus] = useState(false);
   const [batch, setBatch] = useState<MarketDataImportBatch | null>(null);
   const [savedDays, setSavedDays] = useState<SavedMarketDataDay[]>([]);
@@ -103,12 +108,21 @@ export function MarketDataImportPage() {
   const [isSavedDaysLoading, setIsSavedDaysLoading] = useState(true);
 
   const pollTimeoutRef = useRef<number | null>(null);
+  const previewPollTimeoutRef = useRef<number | null>(null);
   const notifiedBatchStateRef = useRef<string | null>(null);
+  const notifiedPreviewStateRef = useRef<string | null>(null);
 
   const clearPollTimeout = useCallback(() => {
     if (pollTimeoutRef.current !== null) {
       window.clearTimeout(pollTimeoutRef.current);
       pollTimeoutRef.current = null;
+    }
+  }, []);
+
+  const clearPreviewPollTimeout = useCallback(() => {
+    if (previewPollTimeoutRef.current !== null) {
+      window.clearTimeout(previewPollTimeoutRef.current);
+      previewPollTimeoutRef.current = null;
     }
   }, []);
 
@@ -154,26 +168,67 @@ export function MarketDataImportPage() {
     }
   }, []);
 
+  const loadPreviewBatch = useCallback(async (batchId: string) => {
+    try {
+      const nextBatch = await getTickImportPreviewBatch(batchId);
+      startTransition(() => {
+        setPreviewBatch(nextBatch);
+        if (nextBatch.status === 'completed' && nextBatch.preview) {
+          setPreview(nextBatch.preview);
+          setPreviewError(null);
+          setSymbolOverride(nextBatch.preview.symbol_guess ?? '');
+        } else if (nextBatch.status === 'failed') {
+          setPreview(null);
+          setPreviewError(nextBatch.error_message ?? 'Failed to preview the tick-data file.');
+        }
+      });
+      return nextBatch;
+    } catch (error: unknown) {
+      setPreviewError(getErrorMessage(error, 'Failed to refresh preview status.'));
+      throw error;
+    }
+  }, []);
+
   async function handleFileAccepted(file: File) {
     clearPollTimeout();
+    clearPreviewPollTimeout();
     notifiedBatchStateRef.current = null;
+    notifiedPreviewStateRef.current = null;
     setSelectedFile(file);
     setPreview(null);
+    setPreviewBatch(null);
     setBatch(null);
     setPreviewError(null);
     setBatchError(null);
     setSymbolOverride('');
     setRawSymbolOverride('');
     setPreviewLoading(true);
+    setUploadStage('preview');
+    setUploadProgress({
+      loadedBytes: 0,
+      totalBytes: file.size,
+      percent: 0,
+    });
 
     try {
-      const nextPreview = await previewTickImport(file);
-      setPreview(nextPreview);
-      setSymbolOverride(nextPreview.symbol_guess ?? '');
+      const createdPreviewBatch = await startTickImportPreview(
+        file,
+        setUploadProgress
+      );
+      setPreviewBatch(createdPreviewBatch);
+      setUploadProgress(null);
+      if (createdPreviewBatch.status === 'completed' && createdPreviewBatch.preview) {
+        setPreview(createdPreviewBatch.preview);
+        setPreviewError(null);
+        setSymbolOverride(createdPreviewBatch.preview.symbol_guess ?? '');
+        setPreviewLoading(false);
+        setUploadStage(null);
+      }
     } catch (error: unknown) {
       setPreviewError(getErrorMessage(error, 'Failed to preview the tick-data file.'));
-    } finally {
       setPreviewLoading(false);
+      setUploadStage(null);
+      setUploadProgress(null);
     }
   }
 
@@ -185,19 +240,30 @@ export function MarketDataImportPage() {
     setIsStartingImport(true);
     setBatchError(null);
     notifiedBatchStateRef.current = null;
+    setUploadStage('import');
+    setUploadProgress({
+      loadedBytes: 0,
+      totalBytes: selectedFile.size,
+      percent: 0,
+    });
 
     try {
-      const createdBatch = await startTickImport({
-        file: selectedFile,
-        symbol: symbolOverride,
-        rawSymbol: rawSymbolOverride,
-      });
+      const createdBatch = await startTickImport(
+        {
+          file: selectedFile,
+          symbol: symbolOverride,
+          rawSymbol: rawSymbolOverride,
+        },
+        setUploadProgress
+      );
       setBatch(createdBatch);
       addToast('success', 'Market-data import started.');
     } catch (error: unknown) {
       setBatchError(getErrorMessage(error, 'Failed to start the market-data import.'));
     } finally {
       setIsStartingImport(false);
+      setUploadStage(null);
+      setUploadProgress(null);
     }
   }
 
@@ -216,6 +282,44 @@ export function MarketDataImportPage() {
   useEffect(() => {
     void loadSavedDays();
   }, [loadSavedDays]);
+
+  useEffect(() => {
+    clearPreviewPollTimeout();
+
+    if (!previewBatch || !ACTIVE_BATCH_STATUSES.has(previewBatch.status)) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const nextBatch = await loadPreviewBatch(previewBatch.id);
+        if (cancelled || !nextBatch) {
+          return;
+        }
+
+        if (ACTIVE_BATCH_STATUSES.has(nextBatch.status)) {
+          previewPollTimeoutRef.current = window.setTimeout(poll, POLL_INTERVAL_MS);
+          return;
+        }
+
+        setPreviewLoading(false);
+        setUploadStage(null);
+      } catch {
+        if (!cancelled) {
+          previewPollTimeoutRef.current = window.setTimeout(poll, POLL_INTERVAL_MS * 2);
+        }
+      }
+    };
+
+    previewPollTimeoutRef.current = window.setTimeout(poll, POLL_INTERVAL_MS);
+
+    return () => {
+      cancelled = true;
+      clearPreviewPollTimeout();
+    };
+  }, [clearPreviewPollTimeout, loadPreviewBatch, previewBatch]);
 
   useEffect(() => {
     clearPollTimeout();
@@ -252,6 +356,29 @@ export function MarketDataImportPage() {
   }, [batch, clearPollTimeout, loadBatch]);
 
   useEffect(() => {
+    if (!previewBatch) {
+      return;
+    }
+
+    const notificationKey = `${previewBatch.id}:${previewBatch.status}`;
+    if (notifiedPreviewStateRef.current === notificationKey) {
+      return;
+    }
+
+    if (previewBatch.status === 'completed' && previewBatch.preview) {
+      notifiedPreviewStateRef.current = notificationKey;
+      addToast('success', 'Tick-data preview ready.');
+    }
+
+    if (previewBatch.status === 'failed') {
+      notifiedPreviewStateRef.current = notificationKey;
+      addToast('error', previewBatch.error_message ?? 'Tick-data preview failed.');
+      setPreviewLoading(false);
+      setUploadStage(null);
+    }
+  }, [addToast, previewBatch]);
+
+  useEffect(() => {
     if (!batch) {
       return;
     }
@@ -276,11 +403,45 @@ export function MarketDataImportPage() {
   useEffect(() => {
     return () => {
       clearPollTimeout();
+      clearPreviewPollTimeout();
     };
-  }, [clearPollTimeout]);
+  }, [clearPollTimeout, clearPreviewPollTimeout]);
 
   const percentComplete = batch?.progress.processed_percentage ?? 0;
   const totalPreviewDays = preview?.trading_dates.length ?? 0;
+  const previewDropzoneProgress =
+    previewLoading && previewBatch
+      ? {
+          loadedBytes: previewBatch.progress.processed_bytes,
+          totalBytes: previewBatch.progress.total_bytes,
+          percent: previewBatch.progress.processed_percentage,
+        }
+      : null;
+  const dropzoneProgress =
+    uploadStage === 'preview'
+      ? uploadProgress ?? previewDropzoneProgress
+      : uploadStage === 'import'
+        ? uploadProgress
+        : null;
+  const isIndeterminateLoading =
+    uploadStage === 'import'
+    && !!uploadProgress
+    && (uploadProgress.percent ?? 0) >= 100
+    && !batch;
+  const uploadLabel =
+    uploadStage === 'preview'
+      ? uploadProgress
+        ? (uploadProgress.percent ?? 0) >= 100
+          ? 'Preparing preview...'
+          : 'Uploading file for preview...'
+        : previewBatch && ACTIVE_BATCH_STATUSES.has(previewBatch.status)
+          ? 'Generating preview...'
+          : 'Preparing preview...'
+      : uploadStage === 'import'
+        ? isIndeterminateLoading
+          ? 'Starting import...'
+          : 'Uploading file for import...'
+        : undefined;
 
   return (
     <div className="mx-auto max-w-6xl space-y-6">
@@ -306,6 +467,9 @@ export function MarketDataImportPage() {
               onFileAccepted={handleFileAccepted}
               isLoading={previewLoading || isStartingImport}
               error={previewError}
+              loadingLabel={uploadLabel}
+              isIndeterminate={isIndeterminateLoading}
+              uploadProgress={dropzoneProgress}
             />
           </div>
 
@@ -422,18 +586,18 @@ export function MarketDataImportPage() {
                 </table>
               </div>
 
-              <div className="mt-6 rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-900/40">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-900 dark:text-gray-100">
-                      Import Progress
-                    </h3>
-                    <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                      Progress is updated automatically while the batch is queued or processing.
-                    </p>
-                  </div>
+              {batch ? (
+                <div className="mt-6 rounded-lg border border-gray-200 bg-gray-50 p-4 dark:border-gray-700 dark:bg-gray-900/40">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-semibold uppercase tracking-wider text-gray-900 dark:text-gray-100">
+                        Import Progress
+                      </h3>
+                      <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                        Progress is updated automatically while the batch is queued or processing.
+                      </p>
+                    </div>
 
-                  {batch ? (
                     <button
                       type="button"
                       onClick={handleRefreshStatus}
@@ -443,14 +607,8 @@ export function MarketDataImportPage() {
                       <RefreshCw className={`h-4 w-4 ${isRefreshingStatus ? 'animate-spin' : ''}`} />
                       Refresh
                     </button>
-                  ) : null}
-                </div>
-
-                {!batch ? (
-                  <div className="mt-4 rounded-lg border border-dashed border-gray-300 px-4 py-6 text-center text-sm text-gray-500 dark:border-gray-700 dark:text-gray-400">
-                    Preview a file, then start an import to see live status here.
                   </div>
-                ) : (
+
                   <div className="mt-4 space-y-4">
                     <div className="flex flex-wrap items-center gap-3">
                       <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold uppercase tracking-wide ${statusClasses(batch.status)}`}>
@@ -519,8 +677,8 @@ export function MarketDataImportPage() {
                       </div>
                     ) : null}
                   </div>
-                )}
-              </div>
+                </div>
+              ) : null}
 
               <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-gray-200 pt-4 dark:border-gray-700">
                 <div className="text-xs text-gray-500 dark:text-gray-400">
@@ -533,6 +691,12 @@ export function MarketDataImportPage() {
                     <span>Ready to start import.</span>
                   )}
                 </div>
+
+                {!batch && batchError ? (
+                  <div className="w-full rounded-md bg-red-50 p-3 text-sm text-red-600 dark:bg-red-900/30 dark:text-red-400">
+                    {batchError}
+                  </div>
+                ) : null}
 
                 <button
                   type="button"

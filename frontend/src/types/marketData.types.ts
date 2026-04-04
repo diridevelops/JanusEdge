@@ -64,6 +64,8 @@ export type MarketDataImportStatus =
   | 'completed'
   | 'failed';
 
+export type MarketDataBatchType = 'preview' | 'import';
+
 /** Market-data import batch returned by the backend. */
 export interface MarketDataImportBatch {
   id: string;
@@ -72,12 +74,14 @@ export interface MarketDataImportBatch {
   file_hash: string;
   file_size_bytes: number;
   source_platform: string;
+  batch_type: MarketDataBatchType;
   symbol: string;
   raw_symbol: string | null;
   status: MarketDataImportStatus;
   progress: MarketDataImportProgress;
   stats: MarketDataImportStats;
   error_message: string | null;
+  preview: TickImportPreview | null;
   created_at: string;
   started_at: string | null;
   completed_at: string | null;

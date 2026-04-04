@@ -202,7 +202,8 @@ The resolved market-data key prefers `raw_symbol` when present and otherwise fal
 
 Authenticated tick-data endpoints:
 
-- `POST /api/market-data/tick-imports/preview`: validate a NinjaTrader text export and return a daily summary
+- `POST /api/market-data/tick-imports/preview`: start a background preview batch for a NinjaTrader text export
+- `GET /api/market-data/tick-imports/preview/:batch_id`: poll preview progress and completed preview payload
 - `POST /api/market-data/tick-imports`: store the upload, start a background import, and create a progress-tracked batch
 - `GET /api/market-data/tick-imports/:batch_id`: poll the current progress and status for an import batch
 

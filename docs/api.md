@@ -177,7 +177,8 @@ Note: the route docstring mentions an `account` query parameter, but the code do
 | Method | Path | Auth | Purpose | Request | Response |
 | --- | --- | --- | --- | --- | --- |
 | GET | `/api/market-data/ohlc` | Yes | Return OHLC data for charting | Query params: `symbol` required, optional `interval`, `start`, `end`, `raw_symbol`, `force_refresh` | `{ ohlc_data: [...] }` |
-| POST | `/api/market-data/tick-imports/preview` | Yes | Validate a NinjaTrader tick export and summarize it by day | `multipart/form-data` with `file` | `{ file_name, symbol_guess, total_lines, valid_ticks, skipped_lines, first_tick_at, last_tick_at, trading_dates }` |
+| POST | `/api/market-data/tick-imports/preview` | Yes | Start a background preview for a NinjaTrader tick export | `multipart/form-data` with `file` | Preview batch document |
+| GET | `/api/market-data/tick-imports/preview/:batch_id` | Yes | Poll tick-data preview progress | Path parameter `batch_id` | Preview batch document |
 | POST | `/api/market-data/tick-imports` | Yes | Start a background tick-data import | `multipart/form-data` with `file` and optional `symbol`, `raw_symbol` | Import batch document |
 | GET | `/api/market-data/tick-imports/:batch_id` | Yes | Poll tick-data import progress | Path parameter `batch_id` | Import batch document |
 
@@ -197,9 +198,19 @@ The frontend currently expects each OHLC point to look like:
 ### Tick import notes
 
 - imports currently support NinjaTrader UTF-8 text exports only
+- preview parsing now runs as a background batch and uses the same persisted progress shape as imports
 - the backend writes raw daily ticks and derived daily candles to Snappy-compressed Parquet in MinIO
 - import progress is persisted in MongoDB so the frontend can poll percentage complete
 - `force_refresh=true` on the OHLC route regenerates candle datasets from stored raw ticks for the requested date range
+
+### Tick preview batch notes
+
+- preview batches use the same `status`, `progress`, and `stats` structure as import batches
+- preview batches add:
+  - `batch_type: "preview"`
+  - `preview: null | { file_name, symbol_guess, total_lines, valid_ticks, skipped_lines, first_tick_at, last_tick_at, trading_dates }`
+- while preview is still running, `preview` is `null`
+- when preview completes, `preview` contains the full daily summary payload used by the upload page
 
 ## Analytics
 
