@@ -1,35 +1,91 @@
 import { AlertCircle, FileText, Upload } from 'lucide-react';
 import { useCallback } from 'react';
-import { useDropzone } from 'react-dropzone';
+import { useDropzone, type FileRejection } from 'react-dropzone';
+import type { UploadRuleConfig } from '../../types/clientConfig.types';
 
 interface FileDropZoneProps {
   /** Called when one or more valid CSV files are accepted. */
   onFileAccepted: (files: File[]) => void;
+  /** Called when one or more selected files are rejected client-side. */
+  onFileRejected?: (message: string) => void;
   /** Whether submission is in progress. */
   isLoading: boolean;
   /** Error message to display. */
   error?: string | null;
+  /** Backend-driven upload rules when available. */
+  uploadRule?: UploadRuleConfig | null;
+}
+
+function getDropzoneErrorMessage(
+  rejections: FileRejection[],
+  uploadRule?: UploadRuleConfig | null
+): string {
+  const firstError = rejections[0]?.errors[0];
+
+  switch (firstError?.code) {
+    case 'file-too-large':
+      return uploadRule
+        ? `CSV files must be ${uploadRule.max_size_label} or smaller.`
+        : 'One or more selected files exceed the server upload limit.';
+    case 'file-invalid-type':
+      return uploadRule
+        ? 'Only .csv files are supported.'
+        : 'Unable to upload that file. Please choose a valid CSV export.';
+    default:
+      return uploadRule
+        ? 'Unable to upload one or more selected files. Please review the CSV export and try again.'
+        : 'Unable to upload one or more selected files. The server will validate them after upload.';
+  }
+}
+
+function buildDropzoneAccept(
+  uploadRule?: UploadRuleConfig | null
+): Record<string, string[]> | undefined {
+  if (
+    !uploadRule
+    || uploadRule.accepted_mime_types.length === 0
+    || uploadRule.accepted_extensions.length === 0
+  ) {
+    return undefined;
+  }
+
+  return Object.fromEntries(
+    uploadRule.accepted_mime_types.map((mimeType) => [
+      mimeType,
+      uploadRule.accepted_extensions,
+    ])
+  );
 }
 
 /** Drag-and-drop file upload zone for CSV files. */
 export function FileDropZone({
   onFileAccepted,
+  onFileRejected,
   isLoading,
   error,
+  uploadRule,
 }: FileDropZoneProps) {
   const onDrop = useCallback(
-    (acceptedFiles: File[]) => {
+    (acceptedFiles: File[], fileRejections: FileRejection[]) => {
+      if (fileRejections.length > 0) {
+        onFileRejected?.(
+          getDropzoneErrorMessage(fileRejections, uploadRule)
+        );
+        return;
+      }
+
       if (acceptedFiles.length > 0) {
         onFileAccepted(acceptedFiles);
       }
     },
-    [onFileAccepted]
+    [onFileAccepted, onFileRejected, uploadRule]
   );
 
   const { getRootProps, getInputProps, isDragActive, acceptedFiles } =
     useDropzone({
       onDrop,
-      accept: { 'text/csv': ['.csv'] },
+      accept: buildDropzoneAccept(uploadRule),
+      maxSize: uploadRule?.max_size_bytes,
       disabled: isLoading,
     });
 
@@ -59,7 +115,7 @@ export function FileDropZone({
               </p>
               <p className="text-xs text-gray-500 dark:text-gray-400 text-center">
                 {selectedFiles.slice(0, 3).map((file) => file.name).join(', ')}
-                {selectedFiles.length > 3 ? '…' : ''}
+                {selectedFiles.length > 3 ? '...' : ''}
               </p>
             </>
           ) : (
@@ -73,7 +129,11 @@ export function FileDropZone({
                     <span className="font-medium text-brand-600">Click to upload</span> or drag
                     and drop
                   </p>
-                  <p className="text-xs text-gray-500 dark:text-gray-400">One or more CSV files (NinjaTrader, Quantower)</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    {uploadRule
+                      ? `One or more CSV files (NinjaTrader, Quantower) - Max ${uploadRule.max_size_label} each`
+                      : 'One or more CSV files (NinjaTrader, Quantower)'}
+                  </p>
                 </>
               )}
             </>

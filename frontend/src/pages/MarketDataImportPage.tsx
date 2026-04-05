@@ -19,32 +19,32 @@ import type { UploadProgress } from '../api/marketData.api';
 import { TickDataDropZone } from '../components/market-data/TickDataDropZone';
 import { PageHeader } from '../components/ui/PageHeader';
 import { useAuth } from '../hooks/useAuth';
+import { useClientConfig } from '../hooks/useClientConfig';
 import { useToast } from '../hooks/useToast';
 import type {
   MarketDataImportBatch,
   SavedMarketDataDay,
   TickImportPreview,
 } from '../types/marketData.types';
-import {
-  MARKET_DATA_UPLOAD_LIMIT_BYTES,
-  MARKET_DATA_UPLOAD_LIMIT_LABEL,
-} from '../utils/constants';
 import { formatDateTime, formatDateTimeWithTimeZone } from '../utils/formatters';
 
 const POLL_INTERVAL_MS = 1500;
 const ACTIVE_BATCH_STATUSES = new Set(['queued', 'processing']);
-const MARKET_DATA_FILE_TOO_LARGE_MESSAGE = `Tick-data files must be ${MARKET_DATA_UPLOAD_LIMIT_LABEL} or smaller.`;
 
-function getErrorMessage(error: unknown, fallbackMessage: string): string {
+function getErrorMessage(
+  error: unknown,
+  fallbackMessage: string,
+  payloadTooLargeMessage = 'Request payload exceeds the upload limit.'
+): string {
   if (axios.isAxiosError(error)) {
-    if (error.response?.status === 413) {
-      return MARKET_DATA_FILE_TOO_LARGE_MESSAGE;
-    }
-
     const apiMessage =
       error.response?.data?.error?.message ?? error.response?.data?.message;
     if (typeof apiMessage === 'string' && apiMessage.trim()) {
       return apiMessage;
+    }
+
+    if (error.response?.status === 413) {
+      return payloadTooLargeMessage;
     }
   }
 
@@ -98,6 +98,7 @@ function PreviewMetric({ label, value }: { label: string; value: string }) {
 /** Dedicated market-data import flow for NinjaTrader tick-data files. */
 export function MarketDataImportPage() {
   const { user } = useAuth();
+  const { clientConfig } = useClientConfig();
   const { addToast } = useToast();
 
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -121,6 +122,19 @@ export function MarketDataImportPage() {
   const previewPollTimeoutRef = useRef<number | null>(null);
   const notifiedBatchStateRef = useRef<string | null>(null);
   const notifiedPreviewStateRef = useRef<string | null>(null);
+  const marketDataUploadRule = clientConfig?.uploads.market_data ?? null;
+  const marketDataTooLargeMessage = marketDataUploadRule
+    ? `Tick-data files must be ${marketDataUploadRule.max_size_label} or smaller.`
+    : 'The selected tick-data file exceeds the server upload limit.';
+  const pageDescription = marketDataUploadRule
+    ? `Upload a NinjaTrader tick-data text export up to ${marketDataUploadRule.max_size_label}, review the daily summary, and ingest stored candles for charts and analytics.`
+    : 'Upload a NinjaTrader tick-data text export, review the daily summary, and ingest stored candles for charts and analytics.';
+  const uploadSummaryText = marketDataUploadRule
+    ? `Supported format: NinjaTrader tick-data .txt exports, up to ${marketDataUploadRule.max_size_label}. A preview is generated before any data is written.`
+    : 'Supported format: NinjaTrader tick-data .txt exports. A preview is generated before any data is written.';
+  const dropzoneHelperText = marketDataUploadRule
+    ? `One NinjaTrader tick-data .txt export - Max ${marketDataUploadRule.max_size_label}`
+    : 'One NinjaTrader tick-data .txt export';
 
   const clearPollTimeout = useCallback(() => {
     if (pollTimeoutRef.current !== null) {
@@ -219,9 +233,12 @@ export function MarketDataImportPage() {
   async function handleFileAccepted(file: File) {
     resetImportState();
 
-    if (file.size > MARKET_DATA_UPLOAD_LIMIT_BYTES) {
+    if (
+      marketDataUploadRule
+      && file.size > marketDataUploadRule.max_size_bytes
+    ) {
       setSelectedFile(null);
-      setPreviewError(MARKET_DATA_FILE_TOO_LARGE_MESSAGE);
+      setPreviewError(marketDataTooLargeMessage);
       return;
     }
 
@@ -249,7 +266,13 @@ export function MarketDataImportPage() {
         setUploadStage(null);
       }
     } catch (error: unknown) {
-      setPreviewError(getErrorMessage(error, 'Failed to preview the tick-data file.'));
+      setPreviewError(
+        getErrorMessage(
+          error,
+          'Failed to preview the tick-data file.',
+          marketDataTooLargeMessage
+        )
+      );
       setPreviewLoading(false);
       setUploadStage(null);
       setUploadProgress(null);
@@ -267,8 +290,11 @@ export function MarketDataImportPage() {
       return;
     }
 
-    if (selectedFile.size > MARKET_DATA_UPLOAD_LIMIT_BYTES) {
-      setBatchError(MARKET_DATA_FILE_TOO_LARGE_MESSAGE);
+    if (
+      marketDataUploadRule
+      && selectedFile.size > marketDataUploadRule.max_size_bytes
+    ) {
+      setBatchError(marketDataTooLargeMessage);
       return;
     }
 
@@ -294,7 +320,13 @@ export function MarketDataImportPage() {
       setBatch(createdBatch);
       addToast('success', 'Market-data import started.');
     } catch (error: unknown) {
-      setBatchError(getErrorMessage(error, 'Failed to start the market-data import.'));
+      setBatchError(
+        getErrorMessage(
+          error,
+          'Failed to start the market-data import.',
+          marketDataTooLargeMessage
+        )
+      );
     } finally {
       setIsStartingImport(false);
       setUploadStage(null);
@@ -483,7 +515,7 @@ export function MarketDataImportPage() {
       <PageHeader
         icon={Database}
         title="Import Market Data"
-        description={`Upload a NinjaTrader tick-data text export up to ${MARKET_DATA_UPLOAD_LIMIT_LABEL}, review the daily summary, and ingest stored candles for charts and analytics.`}
+        description={pageDescription}
       />
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(340px,0.8fr)]">
@@ -494,7 +526,7 @@ export function MarketDataImportPage() {
                 Upload Tick Data
               </h2>
               <p className="text-sm text-gray-500 dark:text-gray-400">
-                Supported format: NinjaTrader tick-data .txt exports, up to {MARKET_DATA_UPLOAD_LIMIT_LABEL}. A preview is generated before any data is written.
+                {uploadSummaryText}
               </p>
             </div>
 
@@ -505,8 +537,8 @@ export function MarketDataImportPage() {
               error={previewError}
               loadingLabel={uploadLabel}
               isIndeterminate={isIndeterminateLoading}
-              maxSizeBytes={MARKET_DATA_UPLOAD_LIMIT_BYTES}
-              maxSizeLabel={MARKET_DATA_UPLOAD_LIMIT_LABEL}
+              uploadRule={marketDataUploadRule}
+              helperText={dropzoneHelperText}
               uploadProgress={dropzoneProgress}
             />
           </div>
@@ -654,7 +686,7 @@ export function MarketDataImportPage() {
                       </span>
                       <span className="text-sm text-gray-600 dark:text-gray-300">
                         {batch.symbol}
-                        {batch.raw_symbol ? ` • ${batch.raw_symbol}` : ''}
+                        {batch.raw_symbol ? ` - ${batch.raw_symbol}` : ''}
                       </span>
                     </div>
 
@@ -806,7 +838,7 @@ export function MarketDataImportPage() {
                         </div>
                         <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                           Timeframes: {day.available_timeframes.length > 0 ? day.available_timeframes.join(', ') : 'None'}
-                          {day.has_ticks ? ' • Ticks available' : ''}
+                          {day.has_ticks ? ' - Ticks available' : ''}
                         </p>
                       </div>
 

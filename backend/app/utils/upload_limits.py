@@ -13,15 +13,17 @@ GB = 1024 * MB
 
 CSV_IMPORT_MAX_FILE_SIZE = 500 * MB
 MEDIA_MAX_FILE_SIZE = 500 * MB
-MARKET_DATA_MAX_FILE_SIZE = 1 * GB
+MARKET_DATA_MAX_FILE_SIZE = 1536 * MB
 GLOBAL_MAX_REQUEST_SIZE = MARKET_DATA_MAX_FILE_SIZE
 
 
 def format_upload_limit(size_bytes: int) -> str:
     """Return a human-readable upload limit label."""
 
-    if size_bytes % GB == 0:
-        return f"{size_bytes // GB} GB"
+    if size_bytes >= GB:
+        size_gb = size_bytes / GB
+        formatted = f"{size_gb:.1f}".rstrip("0").rstrip(".")
+        return f"{formatted} GB"
 
     return f"{size_bytes // MB} MB"
 

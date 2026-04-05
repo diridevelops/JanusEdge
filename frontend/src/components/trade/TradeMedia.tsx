@@ -13,7 +13,9 @@ import {
   listMedia,
   uploadMedia,
 } from '../../api/media.api';
+import { useClientConfig } from '../../hooks/useClientConfig';
 import { useToast } from '../../hooks/useToast';
+import type { UploadRuleConfig } from '../../types/clientConfig.types';
 import type { MediaAttachment } from '../../types/media.types';
 import { MediaLightbox } from '../ui/MediaLightbox';
 
@@ -30,6 +32,69 @@ interface TradeMediaProps {
 /** Cached presigned URLs keyed by media id. */
 const urlCache = new Map<string, string>();
 
+function buildInputAccept(
+  uploadRule?: UploadRuleConfig | null
+): string | undefined {
+  if (!uploadRule) {
+    return undefined;
+  }
+
+  return Array.from(
+    new Set([
+      ...uploadRule.accepted_mime_types,
+      ...uploadRule.accepted_extensions,
+    ])
+  ).join(',');
+}
+
+function formatAcceptedExtensions(
+  extensions: string[]
+): string {
+  return extensions
+    .map((extension) => extension.replace(/^\./, '').toUpperCase())
+    .join(', ');
+}
+
+function getUploadErrorMessage(error: unknown): string {
+  const responseData = (
+    error as {
+      response?: {
+        data?: {
+          error?: string | { message?: string };
+          message?: string;
+        };
+      };
+    }
+  )?.response?.data;
+
+  const nestedError = responseData?.error;
+  if (typeof nestedError === 'string' && nestedError.trim()) {
+    return nestedError;
+  }
+
+  if (
+    nestedError
+    && typeof nestedError === 'object'
+    && typeof nestedError.message === 'string'
+    && nestedError.message.trim()
+  ) {
+    return nestedError.message;
+  }
+
+  if (
+    typeof responseData?.message === 'string'
+    && responseData.message.trim()
+  ) {
+    return responseData.message;
+  }
+
+  if (error instanceof Error && error.message.trim()) {
+    return error.message;
+  }
+
+  return 'Upload failed';
+}
+
 /**
  * Trade-detail media section.
  *
@@ -39,6 +104,7 @@ const urlCache = new Map<string, string>();
  * - Delete button per attachment
  */
 export function TradeMedia({ tradeId, compact = false }: TradeMediaProps) {
+  const { clientConfig } = useClientConfig();
   const { addToast } = useToast();
 
   const [items, setItems] = useState<MediaAttachment[]>([]);
@@ -52,6 +118,14 @@ export function TradeMedia({ tradeId, compact = false }: TradeMediaProps) {
   } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const mediaUploadRule = clientConfig?.uploads.media ?? null;
+  const mediaAccept = buildInputAccept(mediaUploadRule);
+  const mediaLimitLabel = mediaUploadRule
+    ? `Max ${mediaUploadRule.max_size_label} per file`
+    : null;
+  const mediaFormatsLabel = mediaUploadRule
+    ? formatAcceptedExtensions(mediaUploadRule.accepted_extensions)
+    : null;
 
   // ── fetch list ────────────────────────────────────
   const fetchMedia = useCallback(async () => {
@@ -78,10 +152,7 @@ export function TradeMedia({ tradeId, compact = false }: TradeMediaProps) {
         await uploadMedia(tradeId, file);
         success += 1;
       } catch (err: unknown) {
-        const msg =
-          (err as { response?: { data?: { error?: string } } })
-            ?.response?.data?.error ?? 'Upload failed';
-        addToast('error', `${file.name}: ${msg}`);
+        addToast('error', `${file.name}: ${getUploadErrorMessage(err)}`);
       }
     }
     if (success > 0) {
@@ -220,24 +291,30 @@ export function TradeMedia({ tradeId, compact = false }: TradeMediaProps) {
         <>
           <p className="text-sm text-gray-500 dark:text-gray-400">
             {uploading
-              ? 'Uploading…'
+              ? 'Uploading...'
               : 'Drag & drop or click to upload images / videos'}
           </p>
-          <p className="text-xs text-gray-400 dark:text-gray-500">
-            Max 500 MB per file · JPG, PNG, GIF, WebP, MP4, WebM, MOV
-          </p>
+          {mediaLimitLabel || mediaFormatsLabel ? (
+            <p className="text-xs text-gray-400 dark:text-gray-500">
+              {[mediaLimitLabel, mediaFormatsLabel].filter(Boolean).join(' - ')}
+            </p>
+          ) : (
+            <p className="text-xs text-gray-400 dark:text-gray-500">
+              Images and videos are validated after upload.
+            </p>
+          )}
         </>
       )}
       {compact && (
         <p className="text-[10px] text-gray-400 dark:text-gray-500 text-center leading-tight">
-          {uploading ? 'Uploading…' : 'Upload'}
+          {uploading ? 'Uploading...' : 'Upload'}
         </p>
       )}
       <input
         ref={fileInputRef}
         type="file"
         className="hidden"
-        accept="image/jpeg,image/png,image/gif,image/webp,video/mp4,video/webm,video/quicktime"
+        accept={mediaAccept}
         multiple
         onChange={(e) => {
           if (e.target.files?.length) handleFiles(e.target.files);
