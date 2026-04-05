@@ -13,6 +13,7 @@ import {
   registerAuthEventHandlers,
   setAccessToken,
 } from '../api/authSession';
+import type { AuthResponse } from '../types/auth.types';
 import type { User } from '../types/auth.types';
 
 interface AuthState {
@@ -45,6 +46,23 @@ interface AuthProviderProps {
   children: ReactNode;
 }
 
+let initialSessionRestorePromise:
+  | Promise<AuthResponse | null>
+  | null = null;
+
+function restoreInitialSession(): Promise<AuthResponse | null> {
+  if (!initialSessionRestorePromise) {
+    initialSessionRestorePromise = authApi
+      .refreshSession()
+      .catch(() => null);
+    initialSessionRestorePromise.finally(() => {
+      initialSessionRestorePromise = null;
+    });
+  }
+
+  return initialSessionRestorePromise;
+}
+
 /** Provides authentication state to the entire app. */
 export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<User | null>(null);
@@ -54,34 +72,54 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    let isActive = true;
+
     const unregisterHandlers = registerAuthEventHandlers({
       onAuthResponse: (response) => {
+        if (!isActive) {
+          return;
+        }
         setAccessToken(response.token);
         setToken(response.token);
         setUser(response.user);
       },
       onUnauthorized: () => {
+        if (!isActive) {
+          return;
+        }
         clearAccessToken();
         setToken(null);
         setUser(null);
       },
     });
 
-    authApi
-      .refreshSession()
+    restoreInitialSession()
       .then((response) => {
+        if (!isActive) {
+          return;
+        }
+
+        if (!response) {
+          clearAccessToken();
+          setToken(null);
+          setUser(null);
+          return;
+        }
+
         setAccessToken(response.token);
         setToken(response.token);
         setUser(response.user);
       })
-      .catch(() => {
-        clearAccessToken();
-        setToken(null);
-        setUser(null);
-      })
-      .finally(() => setIsLoading(false));
+      .finally(() => {
+        if (isActive) {
+          setIsLoading(false);
+        }
+      });
 
-    return unregisterHandlers;
+    return () => {
+      isActive = false;
+      unregisterHandlers();
+    };
   }, []);
 
   const login = useCallback(
