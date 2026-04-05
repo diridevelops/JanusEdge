@@ -13,10 +13,23 @@ def clean_db(app):
     with app.app_context():
         from app.extensions import mongo
         mongo.db.users.delete_many({})
+        mongo.db.auth_refresh_sessions.delete_many({})
     yield
 
 
-def test_register_success(client):
+def _refresh_cookie_name(app):
+    """Return the configured refresh-cookie name."""
+
+    return app.config["AUTH_REFRESH_COOKIE_NAME"]
+
+
+def _refresh_cookie_path(app):
+    """Return the configured refresh-cookie path."""
+
+    return app.config["AUTH_REFRESH_COOKIE_PATH"]
+
+
+def test_register_success(client, app):
     """Register a new user returns 201 with token."""
     response = client.post("/api/auth/register", json={
         "username": "testuser",
@@ -33,6 +46,11 @@ def test_register_success(client):
         data["user"]["symbol_mappings"]
         == get_default_symbol_mappings()
     )
+    assert response.headers.get("Set-Cookie")
+    assert client.get_cookie(
+        _refresh_cookie_name(app),
+        path=_refresh_cookie_path(app),
+    ) is not None
 
 
 def test_register_duplicate_username(client):
@@ -68,7 +86,7 @@ def test_register_missing_fields(client):
     assert response.status_code == 400
 
 
-def test_login_success(client):
+def test_login_success(client, app):
     """Login with valid credentials returns token."""
     client.post("/api/auth/register", json={
         "username": "testuser",
@@ -88,6 +106,10 @@ def test_login_success(client):
         data["user"]["symbol_mappings"]
         == get_default_symbol_mappings()
     )
+    assert client.get_cookie(
+        _refresh_cookie_name(app),
+        path=_refresh_cookie_path(app),
+    ) is not None
 
 
 def test_login_wrong_password(client):
@@ -138,19 +160,107 @@ def test_me_without_token(client):
     assert response.status_code == 401
 
 
-def test_logout(client):
-    """POST /logout with valid token returns 200."""
+def test_refresh_rotates_cookie_and_returns_new_access_token(
+    client, app
+):
+    """POST /refresh rotates the persistent session cookie."""
+
+    reg = client.post("/api/auth/register", json={
+        "username": "testuser",
+        "password": "testpass123",
+        "timezone": "America/New_York",
+    })
+    initial_cookie = client.get_cookie(
+        _refresh_cookie_name(app),
+        path=_refresh_cookie_path(app),
+    )
+
+    response = client.post("/api/auth/refresh")
+
+    assert response.status_code == 200
+    assert "token" in response.get_json()
+    rotated_cookie = client.get_cookie(
+        _refresh_cookie_name(app),
+        path=_refresh_cookie_path(app),
+    )
+    assert rotated_cookie is not None
+    assert initial_cookie is not None
+    assert rotated_cookie.value != initial_cookie.value
+
+
+def test_refresh_without_cookie_returns_401_and_clears_cookie(
+    client, app
+):
+    """POST /refresh fails cleanly without a refresh cookie."""
+
+    response = client.post("/api/auth/refresh")
+
+    assert response.status_code == 401
+    assert (
+        response.get_json()["error"]["message"]
+        == "Session expired. Please log in again."
+    )
+    assert client.get_cookie(
+        _refresh_cookie_name(app),
+        path=_refresh_cookie_path(app),
+    ) is None
+
+
+def test_logout_clears_refresh_cookie(client, app):
+    """POST /logout revokes the browser refresh session."""
+
+    client.post("/api/auth/register", json={
+        "username": "testuser",
+        "password": "testpass123",
+        "timezone": "America/New_York",
+    })
+    response = client.post("/api/auth/logout")
+
+    assert response.status_code == 200
+    assert client.get_cookie(
+        _refresh_cookie_name(app),
+        path=_refresh_cookie_path(app),
+    ) is None
+
+
+def test_refresh_fails_after_logout(client):
+    """Logging out revokes the refresh session."""
+
+    client.post("/api/auth/register", json={
+        "username": "testuser",
+        "password": "testpass123",
+        "timezone": "America/New_York",
+    })
+    client.post("/api/auth/logout")
+
+    response = client.post("/api/auth/refresh")
+
+    assert response.status_code == 401
+
+
+def test_change_password_revokes_refresh_sessions(client):
+    """Password change invalidates persistent browser sessions."""
+
     reg = client.post("/api/auth/register", json={
         "username": "testuser",
         "password": "testpass123",
         "timezone": "America/New_York",
     })
     token = reg.get_json()["token"]
-    response = client.post(
-        "/api/auth/logout",
+    change_response = client.post(
+        "/api/auth/change-password",
         headers={"Authorization": f"Bearer {token}"},
+        json={
+            "current_password": "testpass123",
+            "new_password": "newpass456",
+        },
     )
-    assert response.status_code == 200
+
+    assert change_response.status_code == 200
+
+    refresh_response = client.post("/api/auth/refresh")
+
+    assert refresh_response.status_code == 401
 
 
 def test_update_symbol_mappings_persists_to_profile(client):

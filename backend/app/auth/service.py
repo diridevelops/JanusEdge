@@ -1,6 +1,8 @@
 """Authentication service — business logic."""
 
 import bcrypt
+import hashlib
+import secrets
 from flask_jwt_extended import create_access_token
 
 from app.auth.backup_service import PortableBackupService
@@ -11,7 +13,13 @@ from app.market_data.symbol_mapper import (
     get_default_symbol_mappings,
     validate_market_data_mappings,
 )
+from app.models.auth_refresh_session import (
+    create_auth_refresh_session_doc,
+)
 from app.models.user import create_user_doc
+from app.repositories.auth_refresh_session_repo import (
+    AuthRefreshSessionRepository,
+)
 from app.repositories.user_repo import UserRepository
 from app.utils.errors import (
     AuthenticationError,
@@ -28,6 +36,9 @@ class AuthService:
 
     def __init__(self):
         self.user_repo = UserRepository()
+        self.refresh_session_repo = (
+            AuthRefreshSessionRepository()
+        )
         self.backup_service = PortableBackupService()
 
     def register(
@@ -35,6 +46,7 @@ class AuthService:
         username: str,
         password: str,
         timezone: str,
+        user_agent: str | None = None,
     ) -> dict:
         """
         Register a new user.
@@ -76,15 +88,23 @@ class AuthService:
         user_id = self.user_repo.insert_one(user_doc)
 
         token = create_access_token(identity=user_id)
+        refresh_token = self._create_refresh_session(
+            user_id=user_id,
+            user_agent=user_agent,
+        )
         user_doc["_id"] = user_id
 
         return {
             "token": token,
             "user": self._serialize_user_profile(user_doc),
+            "refresh_token": refresh_token,
         }
 
     def login(
-        self, username: str, password: str
+        self,
+        username: str,
+        password: str,
+        user_agent: str | None = None,
     ) -> dict:
         """
         Authenticate a user and return a token.
@@ -115,10 +135,54 @@ class AuthService:
 
         user_id = str(user["_id"])
         token = create_access_token(identity=user_id)
+        refresh_token = self._create_refresh_session(
+            user_id=user_id,
+            user_agent=user_agent,
+        )
 
         return {
             "token": token,
             "user": self._serialize_user_profile(user),
+            "refresh_token": refresh_token,
+        }
+
+    def refresh_session(
+        self,
+        refresh_token: str,
+    ) -> dict:
+        """Rotate a refresh session and issue a new access token."""
+
+        session = self.refresh_session_repo.find_active_by_token_hash(
+            self._hash_refresh_token(refresh_token)
+        )
+        if not session:
+            raise AuthenticationError(
+                "Session expired. Please log in again."
+            )
+
+        user_id = str(session["user_id"])
+        user = self.user_repo.find_by_id(user_id)
+        if not user:
+            self.refresh_session_repo.revoke_by_token_hash(
+                session["token_hash"]
+            )
+            raise AuthenticationError(
+                "Session expired. Please log in again."
+            )
+
+        next_refresh_token = self._generate_refresh_token()
+        next_refresh_token_hash = self._hash_refresh_token(
+            next_refresh_token
+        )
+        self.refresh_session_repo.rotate_session(
+            str(session["_id"]),
+            token_hash=next_refresh_token_hash,
+        )
+
+        return {
+            "token": create_access_token(identity=user_id),
+            "user": self._serialize_user_profile(user),
+            "refresh_token": next_refresh_token,
         }
 
     def get_profile(self, user_id: str) -> dict:
@@ -179,7 +243,22 @@ class AuthService:
         ).decode("utf-8")
 
         self.user_repo.update_password(user_id, new_hash)
+        self.refresh_session_repo.revoke_all_for_user(
+            user_id
+        )
         return {"message": "Password changed successfully."}
+
+    def logout(
+        self,
+        refresh_token: str | None,
+    ) -> dict:
+        """Revoke the current browser refresh session."""
+
+        if refresh_token:
+            self.refresh_session_repo.revoke_by_token_hash(
+                self._hash_refresh_token(refresh_token)
+            )
+        return {"message": "Logged out."}
 
     def update_timezone(
         self,
@@ -398,3 +477,36 @@ class AuthService:
                 )
             ),
         }
+
+    def _create_refresh_session(
+        self,
+        *,
+        user_id: str,
+        user_agent: str | None,
+    ) -> str:
+        """Create and persist one refresh session."""
+
+        refresh_token = self._generate_refresh_token()
+        session_doc = create_auth_refresh_session_doc(
+            user_id=user_id,
+            token_hash=self._hash_refresh_token(
+                refresh_token
+            ),
+            user_agent=user_agent,
+        )
+        self.refresh_session_repo.insert_one(session_doc)
+        return refresh_token
+
+    @staticmethod
+    def _generate_refresh_token() -> str:
+        """Generate a new opaque refresh token."""
+
+        return secrets.token_urlsafe(64)
+
+    @staticmethod
+    def _hash_refresh_token(refresh_token: str) -> str:
+        """Hash a refresh token before storing or lookup."""
+
+        return hashlib.sha256(
+            refresh_token.encode("utf-8")
+        ).hexdigest()

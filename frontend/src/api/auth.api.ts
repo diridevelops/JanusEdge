@@ -51,6 +51,12 @@ export async function login(
   return res.data;
 }
 
+/** Restore or rotate the current browser session. */
+export async function refreshSession(): Promise<AuthResponse> {
+  const res = await apiClient.post<AuthResponse>('/auth/refresh');
+  return res.data;
+}
+
 /** Logout the current user. */
 export async function logout(): Promise<void> {
   await apiClient.post('/auth/logout');

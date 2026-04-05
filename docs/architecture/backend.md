@@ -5,6 +5,7 @@
 The backend is a Flask application in `backend/` that provides the repository's REST API. It handles:
 
 - authentication
+- persistent refresh-token sessions
 - CSV import and trade reconstruction
 - trade CRUD and search
 - analytics aggregation and Monte Carlo simulation
@@ -158,9 +159,11 @@ Serialization renames `_id` to `id` in API output.
 ## Authentication and Session Model
 
 - JWT tokens are issued by Flask-JWT-Extended.
-- The token is expected in the `Authorization: Bearer <token>` header.
-- The backend itself does not implement token refresh or server-side session storage.
-- Logout is effectively client-side token discard.
+- Short-lived access tokens are expected in the `Authorization: Bearer <token>` header.
+- Persistent browser sessions are backed by `auth_refresh_sessions` in MongoDB and an `HttpOnly` refresh cookie.
+- `POST /api/auth/refresh` rotates the current refresh session and issues a new access token.
+- Logout revokes the current browser refresh session and clears the cookie.
+- Password changes revoke all persistent refresh sessions for that user.
 
 ## Import Pipeline
 
@@ -494,16 +497,27 @@ flowchart TB
 	ValidateInput --> CheckDup["Check username uniqueness"]
 	CheckDup --> HashPW["bcrypt.hashpw(password, salt)"]
 	HashPW --> CreateUser["Insert user document"]
-	CreateUser --> GenToken["Generate JWT<br/>(sub=user_id, exp=15min)"]
-	GenToken --> Response["Return: {token, user}"]
+	CreateUser --> CreateRefresh["Create refresh session<br/>store token hash in Mongo"]
+	CreateRefresh --> GenToken["Generate access JWT<br/>(sub=user_id, exp=15min)"]
+	GenToken --> Response["Return: {token, user}<br/>Set HttpOnly refresh cookie"]
     
 	Login["POST /api/auth/login"] --> FindUser["Find user by username"]
 	FindUser --> VerifyPW["bcrypt.checkpw(password, hash)"]
-	VerifyPW --> GenToken2["Generate JWT"]
-	GenToken2 --> Response2["Return: {token, user}"]
+	VerifyPW --> CreateRefresh2["Create refresh session"]
+	CreateRefresh2 --> GenToken2["Generate access JWT"]
+	GenToken2 --> Response2["Return: {token, user}<br/>Set HttpOnly refresh cookie"]
+
+	Refresh["POST /api/auth/refresh"] --> ReadCookie["Read refresh cookie"]
+	ReadCookie --> LookupSession["Lookup active session by token hash"]
+	LookupSession --> RotateSession["Rotate refresh token + update session"]
+	RotateSession --> GenToken3["Generate fresh access JWT"]
+	GenToken3 --> Response3["Return: {token, user}<br/>Rotate HttpOnly refresh cookie"]
     
 	ProtectedRequest["Any authenticated request"] --> ExtractToken["Extract Bearer token"]
 	ExtractToken --> VerifyJWT["Verify JWT signature + expiry"]
 	VerifyJWT --> LoadUser["Load user_id from token"]
 	LoadUser --> ExecuteRoute["Execute route handler"]
+
+	Logout["POST /api/auth/logout"] --> RevokeRefresh["Revoke current refresh session"]
+	RevokeRefresh --> ClearCookie["Clear refresh cookie"]
 ```
