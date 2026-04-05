@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { ArrowLeft, Check, ChevronLeft, ChevronRight, Upload } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { FeeEntryTable } from '../components/import/FeeEntryTable';
@@ -5,6 +6,7 @@ import { FileDropZone } from '../components/import/FileDropZone';
 import { ImportPreview } from '../components/import/ImportPreview';
 import { ImportSummary } from '../components/import/ImportSummary';
 import { ValidationErrors } from '../components/import/ValidationErrors';
+import { useClientConfig } from '../hooks/useClientConfig';
 import type { ImportStep } from '../hooks/useImport';
 import { useImport } from '../hooks/useImport';
 
@@ -20,11 +22,19 @@ const STEPS: ImportStep[] = ['upload', 'preview', 'fees', 'summary'];
 /** CSV Import wizard page with multi-step flow. */
 export function ImportPage() {
   const wizard = useImport();
+  const { clientConfig } = useClientConfig();
+  const [uploadUiError, setUploadUiError] = useState<string | null>(null);
 
   const currentStepIndex = STEPS.indexOf(wizard.step);
+  const tradeImportUploadRule = clientConfig?.uploads.trade_import ?? null;
 
   function handleFileAccepted(files: File[]) {
+    setUploadUiError(null);
     wizard.handleUpload(files);
+  }
+
+  function handleFileRejected(message: string) {
+    setUploadUiError(message);
   }
 
   async function handleConfirmPreview() {
@@ -111,8 +121,10 @@ export function ImportPage() {
             </h2>
             <FileDropZone
               onFileAccepted={handleFileAccepted}
+              onFileRejected={handleFileRejected}
               isLoading={wizard.isLoading}
-              error={wizard.error}
+              error={uploadUiError ?? wizard.error}
+              uploadRule={tradeImportUploadRule}
             />
           </div>
         )}

@@ -1,5 +1,7 @@
 """CSV Import API routes."""
 
+from pathlib import Path
+
 from flask import jsonify, request
 from flask_jwt_extended import (
     get_jwt_identity,
@@ -10,6 +12,9 @@ from marshmallow import (
 )
 
 from app.imports import imports_bp
+from app.imports.config import (
+    TRADE_IMPORT_ACCEPTED_EXTENSIONS,
+)
 from app.imports.schemas import FinalizeSchema
 from app.imports.service import ImportService
 from app.market_data.symbol_mapper import (
@@ -63,7 +68,8 @@ def upload():
     if file.filename == "":
         raise ValidationError("No file selected.")
 
-    if not file.filename.lower().endswith(".csv"):
+    suffix = Path(file.filename).suffix.lower()
+    if suffix not in TRADE_IMPORT_ACCEPTED_EXTENSIONS:
         raise ValidationError(
             "Only CSV files are supported."
         )

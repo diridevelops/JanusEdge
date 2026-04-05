@@ -1,5 +1,7 @@
 """Market data API routes."""
 
+from pathlib import Path
+
 from flask import jsonify, request
 from flask_jwt_extended import (
     get_jwt_identity,
@@ -7,6 +9,9 @@ from flask_jwt_extended import (
 )
 
 from app.market_data import market_data_bp
+from app.market_data.config import (
+    MARKET_DATA_ACCEPTED_EXTENSIONS,
+)
 from app.market_data.service import MarketDataService
 from app.market_data.symbol_mapper import (
     get_effective_market_data_mappings,
@@ -94,7 +99,8 @@ def preview_tick_import():
     if file.filename == "":
         raise ValidationError("No file selected.")
 
-    if not file.filename.lower().endswith(".txt"):
+    suffix = Path(file.filename).suffix.lower()
+    if suffix not in MARKET_DATA_ACCEPTED_EXTENSIONS:
         raise ValidationError(
             "Only NinjaTrader text exports are supported."
         )
@@ -140,7 +146,8 @@ def create_tick_import():
     if file.filename == "":
         raise ValidationError("No file selected.")
 
-    if not file.filename.lower().endswith(".txt"):
+    suffix = Path(file.filename).suffix.lower()
+    if suffix not in MARKET_DATA_ACCEPTED_EXTENSIONS:
         raise ValidationError(
             "Only NinjaTrader text exports are supported."
         )

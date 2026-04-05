@@ -4,7 +4,7 @@
 
 - Base API namespace: `/api`
 - Authentication mechanism: JWT bearer token in the `Authorization` header
-- Public endpoints: `GET /api/auth/health`, `POST /api/auth/register`, `POST /api/auth/login`
+- Public endpoints: `GET /api/auth/health`, `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/client-config`
 - All other endpoints currently require authentication
 
 Unless otherwise noted, IDs are MongoDB ObjectId strings serialized as plain strings.
@@ -46,6 +46,50 @@ Where the backend returns a serialized user object, the frontend currently expec
 - `symbol_mappings` controls point-value resolution only.
 - `market_data_mappings` controls explicit cross-symbol market-data lookup.
 - The default `market_data_mappings` value is `{}`, which means market data lookup uses the symbol as-is.
+
+## Client Config
+
+| Method | Path | Auth | Purpose | Request | Response |
+| --- | --- | --- | --- | --- | --- |
+| GET | `/api/client-config` | No | Return public app config used by upload UIs | None | `{ uploads: { ... } }` |
+
+### Client-config response notes
+
+- `uploads.market_data` reports the backend-enforced tick-data upload limit and accepted `.txt` formats
+- `uploads.trade_import` reports the CSV import limit and accepted `.csv` formats
+- `uploads.media` reports the trade-media upload limit and accepted image/video formats
+- each upload rule currently includes:
+  - `max_size_bytes`
+  - `max_size_label`
+  - `accepted_extensions`
+  - `accepted_mime_types`
+
+Example response:
+
+```json
+{
+  "uploads": {
+    "market_data": {
+      "max_size_bytes": 1610612736,
+      "max_size_label": "1.5 GB",
+      "accepted_extensions": [".txt"],
+      "accepted_mime_types": ["text/plain", "application/octet-stream"]
+    },
+    "trade_import": {
+      "max_size_bytes": 524288000,
+      "max_size_label": "500 MB",
+      "accepted_extensions": [".csv"],
+      "accepted_mime_types": ["text/csv"]
+    },
+    "media": {
+      "max_size_bytes": 524288000,
+      "max_size_label": "500 MB",
+      "accepted_extensions": [".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4", ".webm", ".mov"],
+      "accepted_mime_types": ["image/jpeg", "image/png", "image/gif", "image/webp", "video/mp4", "video/webm", "video/quicktime"]
+    }
+  }
+}
+```
 
 ## Imports
 
@@ -184,7 +228,7 @@ Note: the route docstring mentions an `account` query parameter, but the code do
 
 Current server-side constraint for market-data uploads:
 
-- max file size `1 GB`
+- max file size `1.5 GB`
 
 The frontend currently expects each OHLC point to look like:
 

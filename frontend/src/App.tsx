@@ -4,6 +4,7 @@ import { ProtectedRoute } from './components/layout/ProtectedRoute';
 import { ErrorBoundary } from './components/ui/ErrorBoundary';
 import { ToastContainer } from './components/ui/Toast';
 import { AuthProvider } from './contexts/AuthContext';
+import { ClientConfigProvider } from './contexts/ClientConfigContext';
 import { FilterProvider } from './contexts/FilterContext';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { ToastProvider } from './contexts/ToastContext';
@@ -28,43 +29,45 @@ export default function App() {
   return (
     <BrowserRouter>
       <ThemeProvider>
-        <AuthProvider>
-          <FilterProvider>
-            <ToastProvider>
-              <ErrorBoundary>
-                <Routes>
-                  {/* Public routes */}
-                  <Route path="/login" element={<LoginPage />} />
-                  <Route path="/register" element={<RegisterPage />} />
+        <ClientConfigProvider>
+          <AuthProvider>
+            <FilterProvider>
+              <ToastProvider>
+                <ErrorBoundary>
+                  <Routes>
+                    {/* Public routes */}
+                    <Route path="/login" element={<LoginPage />} />
+                    <Route path="/register" element={<RegisterPage />} />
 
-                  {/* Protected routes with layout */}
-                  <Route
-                    element={
-                      <ProtectedRoute>
-                        <AppLayout />
-                      </ProtectedRoute>
-                    }
-                  >
-                    <Route path="/" element={<DashboardPage />} />
-                    <Route path="/trades" element={<TradeListPage />} />
-                    <Route path="/trades/new" element={<ManualTradePage />} />
-                    <Route path="/trades/:id" element={<TradeDetailPage />} />
-                    <Route path="/import" element={<ImportPage />} />
-                    <Route path="/market-data/import" element={<MarketDataImportPage />} />
-                    <Route path="/analytics" element={<AnalyticsPage />} />
-                    <Route path="/calendar" element={<CalendarPage />} />
-                    <Route path="/whatif" element={<WhatIfPage />} />
-                    <Route path="/settings" element={<SettingsPage />} />
-                  </Route>
+                    {/* Protected routes with layout */}
+                    <Route
+                      element={
+                        <ProtectedRoute>
+                          <AppLayout />
+                        </ProtectedRoute>
+                      }
+                    >
+                      <Route path="/" element={<DashboardPage />} />
+                      <Route path="/trades" element={<TradeListPage />} />
+                      <Route path="/trades/new" element={<ManualTradePage />} />
+                      <Route path="/trades/:id" element={<TradeDetailPage />} />
+                      <Route path="/import" element={<ImportPage />} />
+                      <Route path="/market-data/import" element={<MarketDataImportPage />} />
+                      <Route path="/analytics" element={<AnalyticsPage />} />
+                      <Route path="/calendar" element={<CalendarPage />} />
+                      <Route path="/whatif" element={<WhatIfPage />} />
+                      <Route path="/settings" element={<SettingsPage />} />
+                    </Route>
 
-                  {/* Catch-all */}
-                  <Route path="*" element={<NotFoundPage />} />
-                </Routes>
-              </ErrorBoundary>
-              <ToastContainer />
-            </ToastProvider>
-          </FilterProvider>
-        </AuthProvider>
+                    {/* Catch-all */}
+                    <Route path="*" element={<NotFoundPage />} />
+                  </Routes>
+                </ErrorBoundary>
+                <ToastContainer />
+              </ToastProvider>
+            </FilterProvider>
+          </AuthProvider>
+        </ClientConfigProvider>
       </ThemeProvider>
     </BrowserRouter>
   );

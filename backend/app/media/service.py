@@ -20,6 +20,17 @@ from app.utils.errors import NotFoundError, ValidationError
 
 logger = logging.getLogger(__name__)
 
+MEDIA_ACCEPTED_EXTENSIONS = (
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".webp",
+    ".mp4",
+    ".webm",
+    ".mov",
+)
+
 # Allowed MIME types and the category they map to.
 ALLOWED_TYPES: Dict[str, str] = {
     "image/jpeg": "image",
@@ -30,6 +41,7 @@ ALLOWED_TYPES: Dict[str, str] = {
     "video/webm": "video",
     "video/quicktime": "video",
 }
+MEDIA_ACCEPTED_MIME_TYPES = tuple(ALLOWED_TYPES.keys())
 
 MAX_FILE_SIZE = 500 * 1024 * 1024  # 500 MB
 MAX_ATTACHMENTS_PER_TRADE = 20

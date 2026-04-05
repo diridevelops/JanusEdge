@@ -1,6 +1,7 @@
 import { AlertCircle, FileText, Upload } from 'lucide-react';
 import { useCallback } from 'react';
 import { useDropzone, type FileRejection } from 'react-dropzone';
+import type { UploadRuleConfig } from '../../types/clientConfig.types';
 
 interface TickDataDropZoneProps {
   onFileAccepted: (file: File) => void;
@@ -9,8 +10,8 @@ interface TickDataDropZoneProps {
   error?: string | null;
   loadingLabel?: string;
   isIndeterminate?: boolean;
-  maxSizeBytes: number;
-  maxSizeLabel: string;
+  uploadRule?: UploadRuleConfig | null;
+  helperText?: string;
   uploadProgress?: {
     loadedBytes: number;
     totalBytes: number | null;
@@ -36,20 +37,45 @@ function formatUploadBytes(bytes: number): string {
 
 function getDropzoneErrorMessage(
   rejections: FileRejection[],
-  maxSizeLabel: string
+  uploadRule?: UploadRuleConfig | null
 ): string {
   const firstError = rejections[0]?.errors[0];
 
   switch (firstError?.code) {
     case 'file-too-large':
-      return `Tick-data files must be ${maxSizeLabel} or smaller.`;
+      return uploadRule
+        ? `Tick-data files must be ${uploadRule.max_size_label} or smaller.`
+        : 'The selected tick-data file exceeds the server upload limit.';
     case 'file-invalid-type':
-      return 'Only NinjaTrader .txt exports are supported.';
+      return uploadRule
+        ? 'Only NinjaTrader .txt exports are supported.'
+        : 'Unable to upload that file. Please choose a valid tick-data export.';
     case 'too-many-files':
       return 'Only one NinjaTrader tick-data file can be uploaded at a time.';
     default:
-      return 'Unable to upload that file. Please select a valid NinjaTrader .txt export.';
+      return uploadRule
+        ? 'Unable to upload that file. Please select a valid NinjaTrader .txt export.'
+        : 'Unable to upload that file. The server will validate it after upload.';
   }
+}
+
+function buildDropzoneAccept(
+  uploadRule?: UploadRuleConfig | null
+): Record<string, string[]> | undefined {
+  if (
+    !uploadRule
+    || uploadRule.accepted_mime_types.length === 0
+    || uploadRule.accepted_extensions.length === 0
+  ) {
+    return undefined;
+  }
+
+  return Object.fromEntries(
+    uploadRule.accepted_mime_types.map((mimeType) => [
+      mimeType,
+      uploadRule.accepted_extensions,
+    ])
+  );
 }
 
 /** Drag-and-drop upload zone for NinjaTrader tick-data text files. */
@@ -60,16 +86,14 @@ export function TickDataDropZone({
   error,
   loadingLabel,
   isIndeterminate,
-  maxSizeBytes,
-  maxSizeLabel,
+  uploadRule,
+  helperText,
   uploadProgress,
 }: TickDataDropZoneProps) {
   const onDrop = useCallback(
     (acceptedFiles: File[], fileRejections: FileRejection[]) => {
       if (fileRejections.length > 0) {
-        onFileRejected?.(
-          getDropzoneErrorMessage(fileRejections, maxSizeLabel)
-        );
+        onFileRejected?.(getDropzoneErrorMessage(fileRejections, uploadRule));
         return;
       }
 
@@ -78,16 +102,13 @@ export function TickDataDropZone({
         onFileAccepted(nextFile);
       }
     },
-    [maxSizeLabel, onFileAccepted, onFileRejected]
+    [onFileAccepted, onFileRejected, uploadRule]
   );
 
   const { getRootProps, getInputProps, isDragActive, acceptedFiles } = useDropzone({
     onDrop,
-    accept: {
-      'text/plain': ['.txt'],
-      'application/octet-stream': ['.txt'],
-    },
-    maxSize: maxSizeBytes,
+    accept: buildDropzoneAccept(uploadRule),
+    maxSize: uploadRule?.max_size_bytes,
     maxFiles: 1,
     disabled: isLoading,
   });
@@ -183,16 +204,18 @@ export function TickDataDropZone({
               <Upload className="h-10 w-10 text-gray-400 dark:text-gray-500" />
               {isDragActive ? (
                 <p className="text-sm font-medium text-brand-600">
-                  Drop the NinjaTrader .txt file here...
+                  Drop the tick-data file here...
                 </p>
               ) : (
                 <>
                   <p className="text-sm text-gray-600 dark:text-gray-400">
                     <span className="font-medium text-brand-600">Click to upload</span> or drag and drop
                   </p>
-                  <p className="text-xs text-gray-500 dark:text-gray-400">
-                    One NinjaTrader tick-data .txt export - Max {maxSizeLabel}
-                  </p>
+                  {helperText ? (
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      {helperText}
+                    </p>
+                  ) : null}
                 </>
               )}
             </>

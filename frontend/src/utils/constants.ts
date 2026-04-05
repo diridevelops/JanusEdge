@@ -27,10 +27,6 @@ export const TIMEZONES = [
 /** Default pagination size. */
 export const DEFAULT_PAGE_SIZE = 25;
 
-/** Upload size limits. */
-export const MARKET_DATA_UPLOAD_LIMIT_BYTES = 1024 * 1024 * 1024;
-export const MARKET_DATA_UPLOAD_LIMIT_LABEL = '1 GB';
-
 /** Chart interval options. */
 export const CHART_INTERVALS = [
   { value: '1m', label: '1m' },
