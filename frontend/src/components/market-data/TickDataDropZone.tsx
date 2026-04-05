@@ -1,13 +1,16 @@
 import { AlertCircle, FileText, Upload } from 'lucide-react';
 import { useCallback } from 'react';
-import { useDropzone } from 'react-dropzone';
+import { useDropzone, type FileRejection } from 'react-dropzone';
 
 interface TickDataDropZoneProps {
   onFileAccepted: (file: File) => void;
+  onFileRejected?: (message: string) => void;
   isLoading: boolean;
   error?: string | null;
   loadingLabel?: string;
   isIndeterminate?: boolean;
+  maxSizeBytes: number;
+  maxSizeLabel: string;
   uploadProgress?: {
     loadedBytes: number;
     totalBytes: number | null;
@@ -31,23 +34,51 @@ function formatUploadBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
+function getDropzoneErrorMessage(
+  rejections: FileRejection[],
+  maxSizeLabel: string
+): string {
+  const firstError = rejections[0]?.errors[0];
+
+  switch (firstError?.code) {
+    case 'file-too-large':
+      return `Tick-data files must be ${maxSizeLabel} or smaller.`;
+    case 'file-invalid-type':
+      return 'Only NinjaTrader .txt exports are supported.';
+    case 'too-many-files':
+      return 'Only one NinjaTrader tick-data file can be uploaded at a time.';
+    default:
+      return 'Unable to upload that file. Please select a valid NinjaTrader .txt export.';
+  }
+}
+
 /** Drag-and-drop upload zone for NinjaTrader tick-data text files. */
 export function TickDataDropZone({
   onFileAccepted,
+  onFileRejected,
   isLoading,
   error,
   loadingLabel,
   isIndeterminate,
+  maxSizeBytes,
+  maxSizeLabel,
   uploadProgress,
 }: TickDataDropZoneProps) {
   const onDrop = useCallback(
-    (acceptedFiles: File[]) => {
+    (acceptedFiles: File[], fileRejections: FileRejection[]) => {
+      if (fileRejections.length > 0) {
+        onFileRejected?.(
+          getDropzoneErrorMessage(fileRejections, maxSizeLabel)
+        );
+        return;
+      }
+
       const nextFile = acceptedFiles[0];
       if (nextFile) {
         onFileAccepted(nextFile);
       }
     },
-    [onFileAccepted]
+    [maxSizeLabel, onFileAccepted, onFileRejected]
   );
 
   const { getRootProps, getInputProps, isDragActive, acceptedFiles } = useDropzone({
@@ -56,6 +87,7 @@ export function TickDataDropZone({
       'text/plain': ['.txt'],
       'application/octet-stream': ['.txt'],
     },
+    maxSize: maxSizeBytes,
     maxFiles: 1,
     disabled: isLoading,
   });
@@ -159,7 +191,7 @@ export function TickDataDropZone({
                     <span className="font-medium text-brand-600">Click to upload</span> or drag and drop
                   </p>
                   <p className="text-xs text-gray-500 dark:text-gray-400">
-                    One NinjaTrader tick-data .txt export
+                    One NinjaTrader tick-data .txt export - Max {maxSizeLabel}
                   </p>
                 </>
               )}

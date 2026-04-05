@@ -3,8 +3,13 @@
 import traceback
 
 from flask import current_app, jsonify
+from werkzeug.exceptions import RequestEntityTooLarge
 
 from app.utils.errors import AppError
+from app.utils.upload_limits import (
+    GLOBAL_MAX_REQUEST_SIZE,
+    format_upload_limit,
+)
 
 
 def register_error_handlers(app):
@@ -54,6 +59,27 @@ def register_error_handlers(app):
                 "message": "Method not allowed.",
             }
         }), 405
+
+    @app.errorhandler(RequestEntityTooLarge)
+    def handle_payload_too_large(error):
+        """Handle oversized request bodies."""
+
+        max_size_bytes = int(
+            current_app.config.get(
+                "MAX_CONTENT_LENGTH",
+                GLOBAL_MAX_REQUEST_SIZE,
+            )
+        )
+        return jsonify({
+            "error": {
+                "code": "PAYLOAD_TOO_LARGE",
+                "message": (
+                    "Request payload exceeds the "
+                    f"{format_upload_limit(max_size_bytes)} "
+                    "upload limit."
+                ),
+            }
+        }), 413
 
     @app.errorhandler(500)
     def handle_internal_error(error):

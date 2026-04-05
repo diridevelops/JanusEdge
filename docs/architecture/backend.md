@@ -132,7 +132,9 @@ Notable behavior from `backend/config.py`:
 - `SECRET_KEY`, `JWT_SECRET_KEY`, `MINIO_ACCESS_KEY`, and `MINIO_SECRET_KEY` must be present
 - default development MongoDB URI is `mongodb://localhost:27017/janusedge`
 - testing uses `MONGO_URI_TEST` if set, otherwise `mongodb://localhost:27017/janusedge_test`
-- maximum upload size is `500 MB`
+- global request upload ceiling is `1 GB`
+- CSV import and trade-media uploads remain capped at `500 MB`
+- market-data tick-data uploads are capped at `1 GB`
 - CORS origins are read from `CORS_ORIGINS` and split on commas
 
 For the full variable list, see [Configuration](../configuration.md).
@@ -206,6 +208,7 @@ Authenticated tick-data endpoints:
 - `GET /api/market-data/tick-imports/preview/:batch_id`: poll preview progress and completed preview payload
 - `POST /api/market-data/tick-imports`: store the upload, start a background import, and create a progress-tracked batch
 - `GET /api/market-data/tick-imports/:batch_id`: poll the current progress and status for an import batch
+- maximum tick-data upload size: `1 GB`
 
 `GET /api/market-data/ohlc` returns `{ ohlc_data: [...] }` with the
 existing bar shape. `force_refresh=true` regenerates candle datasets

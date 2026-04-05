@@ -7,6 +7,7 @@ import pytest
 
 import app.storage as storage_module
 from app import create_app
+from app.utils import upload_limits
 from config import TestingConfig
 
 
@@ -302,6 +303,32 @@ class TestUploadMedia:
         assert resp.status_code == 201
         assert resp.get_json()["media"]["size_bytes"] \
             == 1024
+
+    def test_upload_rejects_files_above_limit(
+        self, client, monkeypatch
+    ):
+        """Oversized media uploads return a specific error."""
+
+        token = _register_and_login(client)
+        trade_id = _create_trade(client, token)
+        monkeypatch.setattr(
+            upload_limits,
+            "MEDIA_MAX_FILE_SIZE",
+            1 * upload_limits.MB,
+        )
+
+        resp = _upload_file(
+            client,
+            token,
+            trade_id,
+            data=b"x" * (2 * upload_limits.MB),
+        )
+
+        assert resp.status_code == 400
+        assert (
+            resp.get_json()["error"]["message"]
+            == "File exceeds the 1 MB limit."
+        )
 
 
 # ── list tests ───────────────────────────────────────

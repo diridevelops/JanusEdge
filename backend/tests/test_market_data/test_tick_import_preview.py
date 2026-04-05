@@ -5,6 +5,7 @@ from pathlib import Path
 import time
 from uuid import uuid4
 
+from app.utils import upload_limits
 
 EXAMPLES_DIR = (
     Path(__file__).resolve().parents[3]
@@ -147,6 +148,64 @@ def test_preview_tick_import_rejects_missing_file(client):
         response.get_json()["error"]["message"]
         == "No file provided."
     )
+
+
+def test_tick_import_routes_return_413_for_oversized_requests(
+    client, app
+):
+    """Preview and import return a specific 413 payload for oversized requests."""
+
+    headers = _register_and_login(client)
+    payload = b"x" * (2 * upload_limits.MB)
+    app.config["MAX_CONTENT_LENGTH"] = 1 * upload_limits.MB
+
+    for path in (
+        "/api/market-data/tick-imports/preview",
+        "/api/market-data/tick-imports",
+    ):
+        response = client.post(
+            path,
+            data={"file": (BytesIO(payload), "ES 06-26.Last.txt")},
+            headers=headers,
+            content_type="multipart/form-data",
+        )
+
+        assert response.status_code == 413
+        assert response.get_json()["error"] == {
+            "code": "PAYLOAD_TOO_LARGE",
+            "message": "Request payload exceeds the 1 MB upload limit.",
+        }
+
+
+def test_tick_import_routes_reject_files_above_market_data_limit(
+    client, monkeypatch
+):
+    """Preview and import enforce the market-data-specific file limit."""
+
+    headers = _register_and_login(client)
+    monkeypatch.setattr(
+        upload_limits,
+        "MARKET_DATA_MAX_FILE_SIZE",
+        1 * upload_limits.MB,
+    )
+    payload = b"x" * (2 * upload_limits.MB)
+
+    for path in (
+        "/api/market-data/tick-imports/preview",
+        "/api/market-data/tick-imports",
+    ):
+        response = client.post(
+            path,
+            data={"file": (BytesIO(payload), "ES 06-26.Last.txt")},
+            headers=headers,
+            content_type="multipart/form-data",
+        )
+
+        assert response.status_code == 400
+        assert (
+            response.get_json()["error"]["message"]
+            == "Tick-data files must be 1 MB or smaller."
+        )
 
 
 def test_preview_tick_import_rejects_files_without_valid_ticks(client):

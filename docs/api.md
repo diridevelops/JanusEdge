@@ -182,6 +182,10 @@ Note: the route docstring mentions an `account` query parameter, but the code do
 | POST | `/api/market-data/tick-imports` | Yes | Start a background tick-data import | `multipart/form-data` with `file` and optional `symbol`, `raw_symbol` | Import batch document |
 | GET | `/api/market-data/tick-imports/:batch_id` | Yes | Poll tick-data import progress | Path parameter `batch_id` | Import batch document |
 
+Current server-side constraint for market-data uploads:
+
+- max file size `1 GB`
+
 The frontend currently expects each OHLC point to look like:
 
 ```json

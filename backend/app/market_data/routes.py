@@ -14,10 +14,21 @@ from app.market_data.symbol_mapper import (
 from app.repositories.user_repo import UserRepository
 from app.tick_data.service import TickDataService
 from app.utils.errors import ValidationError
+from app.utils import upload_limits
 
 market_data_service = MarketDataService()
 tick_data_service = TickDataService()
 user_repo = UserRepository()
+
+
+def _market_data_file_too_large_message() -> str:
+    """Return the current market-data oversize error message."""
+
+    return (
+        "Tick-data files must be "
+        f"{upload_limits.format_upload_limit(upload_limits.MARKET_DATA_MAX_FILE_SIZE)} "
+        "or smaller."
+    )
 
 
 @market_data_bp.route("/ohlc", methods=["GET"])
@@ -88,6 +99,12 @@ def preview_tick_import():
             "Only NinjaTrader text exports are supported."
         )
 
+    upload_limits.enforce_upload_file_size(
+        file,
+        max_size_bytes=upload_limits.MARKET_DATA_MAX_FILE_SIZE,
+        error_message=_market_data_file_too_large_message(),
+    )
+
     batch = tick_data_service.start_ninjatrader_preview(
         user_id=get_jwt_identity(),
         file_name=file.filename,
@@ -127,6 +144,12 @@ def create_tick_import():
         raise ValidationError(
             "Only NinjaTrader text exports are supported."
         )
+
+    upload_limits.enforce_upload_file_size(
+        file,
+        max_size_bytes=upload_limits.MARKET_DATA_MAX_FILE_SIZE,
+        error_message=_market_data_file_too_large_message(),
+    )
 
     user = user_repo.find_by_id(get_jwt_identity())
     batch = tick_data_service.start_ninjatrader_import(
