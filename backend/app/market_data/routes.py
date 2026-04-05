@@ -87,6 +87,23 @@ def get_saved_days():
     return jsonify({"saved_days": saved_days}), 200
 
 
+@market_data_bp.route("/saved-days", methods=["DELETE"])
+@jwt_required()
+def delete_saved_day():
+    """Delete all stored datasets for one saved market-data day."""
+
+    market_data_service.delete_saved_day(
+        symbol=request.args.get("symbol", ""),
+        trading_day=request.args.get("date", ""),
+    )
+    return (
+        jsonify(
+            {"message": "Saved market-data day deleted."}
+        ),
+        200,
+    )
+
+
 @market_data_bp.route("/tick-imports/preview", methods=["POST"])
 @jwt_required()
 def preview_tick_import():

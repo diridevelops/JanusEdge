@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from io import BytesIO
+import logging
 
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
 from app.storage import get_client, get_market_data_bucket
+
+logger = logging.getLogger(__name__)
 
 
 class MarketDataParquetStore:
@@ -64,3 +67,19 @@ class MarketDataParquetStore:
             return pd.DataFrame()
 
         return pq.read_table(BytesIO(payload)).to_pandas()
+
+    def delete_object(self, object_key: str) -> None:
+        """Delete one Parquet object from MinIO."""
+
+        client = get_client()
+        try:
+            client.remove_object(
+                get_market_data_bucket(),
+                object_key,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to remove market-data object %s",
+                object_key,
+                exc_info=True,
+            )

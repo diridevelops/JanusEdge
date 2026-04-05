@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 import hashlib
 from io import TextIOWrapper
+import logging
 import os
 from pathlib import Path
 import tempfile
@@ -42,6 +43,7 @@ from app.utils.errors import NotFoundError
 from app.utils.errors import ValidationError
 from app.utils import upload_limits
 
+logger = logging.getLogger(__name__)
 
 _PROGRESS_UPDATE_LINE_INTERVAL = 5000
 
@@ -327,6 +329,37 @@ class TickDataService:
         if batch is None:
             raise NotFoundError("Tick-data preview batch not found.")
         return self.import_batch_repo.serialize_doc(batch)
+
+    def delete_saved_day(
+        self,
+        *,
+        symbol: str,
+        trading_day: date,
+    ) -> int:
+        """Delete all stored datasets for one saved market-data day."""
+
+        documents = self.dataset_repo.find_documents_for_saved_day(
+            symbol=symbol,
+            trading_day=trading_day,
+        )
+        if not documents:
+            raise NotFoundError(
+                "Saved market-data day not found."
+            )
+
+        for document in documents:
+            object_key = document.get("object_key")
+            if not object_key:
+                logger.warning(
+                    "Skipping market-data delete for document without object key: %s",
+                    document.get("_id"),
+                )
+                continue
+            self.parquet_store.delete_object(object_key)
+
+        return self.dataset_repo.delete_documents_by_ids(
+            document["_id"] for document in documents
+        )
 
     def get_ohlc(
         self,

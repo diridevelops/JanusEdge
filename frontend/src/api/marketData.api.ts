@@ -50,6 +50,20 @@ export async function getSavedMarketDataDays(): Promise<SavedMarketDataDay[]> {
   return res.data.saved_days;
 }
 
+/** Delete one saved market-data day and all of its stored datasets. */
+export async function deleteSavedMarketDataDay(
+  symbol: string,
+  date: string
+): Promise<string> {
+  const res = await apiClient.delete<{ message: string }>(
+    '/market-data/saved-days',
+    {
+      params: { symbol, date },
+    }
+  );
+  return res.data.message;
+}
+
 function buildUploadProgress(
   event: AxiosProgressEvent
 ): UploadProgress {

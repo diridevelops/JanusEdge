@@ -4,6 +4,8 @@ from collections.abc import Iterable
 from typing import Any, List
 from datetime import date, datetime
 
+from bson import ObjectId
+
 from app.repositories.base import BaseRepository
 
 
@@ -272,6 +274,41 @@ class MarketDataRepository(BaseRepository):
                 "date": 1,
                 "updated_at": 1,
             },
+        )
+
+    def find_documents_for_saved_day(
+        self,
+        *,
+        symbol: str,
+        trading_day: date,
+    ) -> List[dict]:
+        """Return all ready dataset documents for one saved-day group."""
+
+        return self.find_many(
+            {
+                "symbol": symbol,
+                "date": self._to_datetime(trading_day),
+                "status": "ready",
+            },
+            sort=[
+                ("dataset_type", 1),
+                ("timeframe", 1),
+                ("created_at", 1),
+            ],
+        )
+
+    def delete_documents_by_ids(
+        self,
+        document_ids: Iterable[ObjectId],
+    ) -> int:
+        """Delete multiple dataset documents by ObjectId."""
+
+        normalized_ids = list(document_ids)
+        if not normalized_ids:
+            return 0
+
+        return self.delete_many(
+            {"_id": {"$in": normalized_ids}}
         )
 
     def upsert_document(self, document: dict) -> None:
