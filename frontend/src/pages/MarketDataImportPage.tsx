@@ -135,14 +135,14 @@ export function MarketDataImportPage() {
     ? `Tick-data files must be ${marketDataUploadRule.max_size_label} or smaller.`
     : 'The selected tick-data file exceeds the server upload limit.';
   const pageDescription = marketDataUploadRule
-    ? `Upload a NinjaTrader tick-data text export up to ${marketDataUploadRule.max_size_label}, review the daily summary, and ingest stored candles for charts and analytics.`
-    : 'Upload a NinjaTrader tick-data text export, review the daily summary, and ingest stored candles for charts and analytics.';
+    ? `Upload a NinjaTrader tick-data text export up to ${marketDataUploadRule.max_size_label}, review the daily summary, and ingest stored candles for charts and analytics. Symbol detection currently comes from the filename unless you override it.`
+    : 'Upload a NinjaTrader tick-data text export, review the daily summary, and ingest stored candles for charts and analytics. Symbol detection currently comes from the filename unless you override it.';
   const uploadSummaryText = marketDataUploadRule
-    ? `Supported format: NinjaTrader tick-data .txt exports, up to ${marketDataUploadRule.max_size_label}. A preview is generated before any data is written.`
-    : 'Supported format: NinjaTrader tick-data .txt exports. A preview is generated before any data is written.';
+    ? `Supported format: NinjaTrader tick-data .txt exports, up to ${marketDataUploadRule.max_size_label}. The importer currently derives the raw symbol from the filename stem, for example MES 06-26.txt -> MES 06-26. If the file is named differently, fill Raw Symbol Override before starting the import.`
+    : 'Supported format: NinjaTrader tick-data .txt exports. The importer currently derives the raw symbol from the filename stem, for example MES 06-26.txt -> MES 06-26. If the file is named differently, fill Raw Symbol Override before starting the import.';
   const dropzoneHelperText = marketDataUploadRule
-    ? `One NinjaTrader tick-data .txt export - Max ${marketDataUploadRule.max_size_label}`
-    : 'One NinjaTrader tick-data .txt export';
+    ? `One NinjaTrader tick-data .txt export - Example: MES 06-26.txt - Max ${marketDataUploadRule.max_size_label}`
+    : 'One NinjaTrader tick-data .txt export - Example: MES 06-26.txt';
 
   const clearPollTimeout = useCallback(() => {
     if (pollTimeoutRef.current !== null) {
@@ -598,11 +598,15 @@ export function MarketDataImportPage() {
                   </p>
                 </div>
 
-                <div className="grid gap-3 sm:grid-cols-2 lg:min-w-[320px]">
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 lg:min-w-[480px]">
                   <PreviewMetric label="File" value={preview.file_name} />
                   <PreviewMetric
-                    label="Detected Symbol"
+                    label="Detected Normalized Symbol"
                     value={preview.symbol_guess ?? 'Unknown'}
+                  />
+                  <PreviewMetric
+                    label="Detected Raw Symbol"
+                    value={previewBatch?.raw_symbol ?? 'Unknown'}
                   />
                 </div>
               </div>
@@ -630,7 +634,7 @@ export function MarketDataImportPage() {
                     disabled={isStartingImport || Boolean(batch && ACTIVE_BATCH_STATUSES.has(batch.status))}
                   />
                   <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                    Optional. Leave as detected unless you need to correct the stored symbol.
+                    Optional. This is the base symbol only, for example MES. Leave it as detected unless you need to correct the stored market-data symbol.
                   </p>
                 </div>
 
@@ -649,7 +653,7 @@ export function MarketDataImportPage() {
                     disabled={isStartingImport || Boolean(batch && ACTIVE_BATCH_STATUSES.has(batch.status))}
                   />
                   <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                    Optional. Use this if the filename-derived platform symbol needs to be corrected.
+                    Optional. This should match the full platform/export symbol used for lookup, for example MES 06-26. If left blank, the importer uses the filename stem.
                   </p>
                 </div>
               </div>

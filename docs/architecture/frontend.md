@@ -178,6 +178,7 @@ The frontend includes a dedicated `/market-data/import` flow for NinjaTrader tic
 That page:
 
 - uploads a single tick-data text export
+- derives the raw symbol from the filename stem and the normalized symbol from the first token unless the user supplies overrides
 - previews parsed trading dates and tick counts before ingestion
 - starts an authenticated background import batch
 - polls batch progress until completion or failure

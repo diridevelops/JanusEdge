@@ -12,6 +12,7 @@ This guide explains how to use Janus Edge as a trader or journal user.
 - [Dashboard](#dashboard)
 - [Trades](#trades)
 - [Import Trades](#import-trades)
+- [Import Market Data](#import-market-data)
 - [Add A Manual Trade](#add-a-manual-trade)
 - [Trade Detail Page](#trade-detail-page)
 - [Calendar](#calendar)
@@ -260,6 +261,28 @@ From there you can either:
 
 - import another file
 - go to the trade list
+
+## Import Market Data
+
+Open the dedicated market-data import page to upload NinjaTrader tick-data `.txt` exports used by charts, running P&L, and What-if analysis.
+
+Important current behavior:
+
+- the importer does not read the instrument symbol from the file contents
+- it derives the raw symbol from the filename stem
+- it derives the normalized symbol from the first token of that filename stem
+
+Example:
+
+- `MES 06-26.txt` becomes raw symbol `MES 06-26`
+- the normalized symbol guess becomes `MES`
+
+If your file is named differently, fill the override fields before starting the import:
+
+- `Raw Symbol Override`: the full platform/export symbol used for market-data lookup, for example `MES 06-26`
+- `Normalized Symbol Override`: the base symbol only, for example `MES`
+
+If imported market data does not appear later on trade charts or on the What-if page, the most common cause is that the filename-derived raw symbol did not match the symbol family you expected.
 
 ## Add A Manual Trade
 

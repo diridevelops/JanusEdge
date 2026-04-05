@@ -157,9 +157,12 @@ Common causes visible in the code:
 
 - intraday data older than roughly two months is unavailable from the current source
 - the imported symbol does not match any stored dataset symbol
+- the tick-data file was imported under the wrong filename-derived raw symbol
 - an explicit market-data mapping is required but not configured
 
 Point-value symbol mappings do not change chart lookup. Check market-data mappings and dataset coverage if a trade symbol should resolve to another stored symbol.
+
+For the current tick-data import flow, symbol detection comes from the filename unless you fill the overrides manually. A file named `MES 06-26.txt` imports under raw symbol `MES 06-26` and normalized symbol `MES`. If your file uses a different name, re-import it with the correct `Raw Symbol Override`.
 
 ## Resetting Local State
 

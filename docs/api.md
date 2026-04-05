@@ -256,6 +256,9 @@ The frontend currently expects each OHLC point to look like:
 ### Tick import notes
 
 - imports currently support NinjaTrader UTF-8 text exports only
+- preview and import infer `raw_symbol` from the uploaded filename stem unless an override is supplied
+- preview and import infer normalized `symbol` from the first token of that filename stem, for example `MES 06-26.txt` -> `symbol=MES`, `raw_symbol=MES 06-26`
+- if the filename does not match the platform/export symbol, the caller must provide the correct `raw_symbol` and optionally `symbol`
 - preview parsing now runs as a background batch and uses the same persisted progress shape as imports
 - the backend writes raw daily ticks and derived daily candles to Snappy-compressed Parquet in MinIO
 - deleting a saved day removes both the raw tick dataset and all derived candle datasets for that `symbol + date` group
@@ -265,9 +268,11 @@ The frontend currently expects each OHLC point to look like:
 ### Tick preview batch notes
 
 - preview batches use the same `status`, `progress`, and `stats` structure as import batches
+- the batch-level `raw_symbol` field is the filename-derived raw symbol guess
 - preview batches add:
   - `batch_type: "preview"`
   - `preview: null | { file_name, symbol_guess, total_lines, valid_ticks, skipped_lines, first_tick_at, last_tick_at, trading_dates }`
+- `preview.symbol_guess` is the normalized symbol guess only, not the full contract/raw symbol
 - while preview is still running, `preview` is `null`
 - when preview completes, `preview` contains the full daily summary payload used by the upload page
 
