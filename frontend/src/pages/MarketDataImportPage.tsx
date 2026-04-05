@@ -25,14 +25,24 @@ import type {
   SavedMarketDataDay,
   TickImportPreview,
 } from '../types/marketData.types';
+import {
+  MARKET_DATA_UPLOAD_LIMIT_BYTES,
+  MARKET_DATA_UPLOAD_LIMIT_LABEL,
+} from '../utils/constants';
 import { formatDateTime, formatDateTimeWithTimeZone } from '../utils/formatters';
 
 const POLL_INTERVAL_MS = 1500;
 const ACTIVE_BATCH_STATUSES = new Set(['queued', 'processing']);
+const MARKET_DATA_FILE_TOO_LARGE_MESSAGE = `Tick-data files must be ${MARKET_DATA_UPLOAD_LIMIT_LABEL} or smaller.`;
 
 function getErrorMessage(error: unknown, fallbackMessage: string): string {
   if (axios.isAxiosError(error)) {
-    const apiMessage = error.response?.data?.message;
+    if (error.response?.status === 413) {
+      return MARKET_DATA_FILE_TOO_LARGE_MESSAGE;
+    }
+
+    const apiMessage =
+      error.response?.data?.error?.message ?? error.response?.data?.message;
     if (typeof apiMessage === 'string' && apiMessage.trim()) {
       return apiMessage;
     }
@@ -126,6 +136,23 @@ export function MarketDataImportPage() {
     }
   }, []);
 
+  function resetImportState() {
+    clearPollTimeout();
+    clearPreviewPollTimeout();
+    notifiedBatchStateRef.current = null;
+    notifiedPreviewStateRef.current = null;
+    setPreview(null);
+    setPreviewBatch(null);
+    setBatch(null);
+    setPreviewError(null);
+    setBatchError(null);
+    setSymbolOverride('');
+    setRawSymbolOverride('');
+    setPreviewLoading(false);
+    setUploadStage(null);
+    setUploadProgress(null);
+  }
+
   const loadBatch = useCallback(
     async (batchId: string, showRefreshState: boolean = false) => {
       if (showRefreshState) {
@@ -190,18 +217,15 @@ export function MarketDataImportPage() {
   }, []);
 
   async function handleFileAccepted(file: File) {
-    clearPollTimeout();
-    clearPreviewPollTimeout();
-    notifiedBatchStateRef.current = null;
-    notifiedPreviewStateRef.current = null;
+    resetImportState();
+
+    if (file.size > MARKET_DATA_UPLOAD_LIMIT_BYTES) {
+      setSelectedFile(null);
+      setPreviewError(MARKET_DATA_FILE_TOO_LARGE_MESSAGE);
+      return;
+    }
+
     setSelectedFile(file);
-    setPreview(null);
-    setPreviewBatch(null);
-    setBatch(null);
-    setPreviewError(null);
-    setBatchError(null);
-    setSymbolOverride('');
-    setRawSymbolOverride('');
     setPreviewLoading(true);
     setUploadStage('preview');
     setUploadProgress({
@@ -232,8 +256,19 @@ export function MarketDataImportPage() {
     }
   }
 
+  function handleFileRejected(message: string) {
+    resetImportState();
+    setSelectedFile(null);
+    setPreviewError(message);
+  }
+
   async function handleStartImport() {
     if (!selectedFile || !preview) {
+      return;
+    }
+
+    if (selectedFile.size > MARKET_DATA_UPLOAD_LIMIT_BYTES) {
+      setBatchError(MARKET_DATA_FILE_TOO_LARGE_MESSAGE);
       return;
     }
 
@@ -448,7 +483,7 @@ export function MarketDataImportPage() {
       <PageHeader
         icon={Database}
         title="Import Market Data"
-        description="Upload a NinjaTrader tick-data text export, review the daily summary, and ingest stored candles for charts and analytics."
+        description={`Upload a NinjaTrader tick-data text export up to ${MARKET_DATA_UPLOAD_LIMIT_LABEL}, review the daily summary, and ingest stored candles for charts and analytics.`}
       />
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(340px,0.8fr)]">
@@ -459,16 +494,19 @@ export function MarketDataImportPage() {
                 Upload Tick Data
               </h2>
               <p className="text-sm text-gray-500 dark:text-gray-400">
-                Supported format: NinjaTrader tick-data .txt exports. A preview is generated before any data is written.
+                Supported format: NinjaTrader tick-data .txt exports, up to {MARKET_DATA_UPLOAD_LIMIT_LABEL}. A preview is generated before any data is written.
               </p>
             </div>
 
             <TickDataDropZone
               onFileAccepted={handleFileAccepted}
+              onFileRejected={handleFileRejected}
               isLoading={previewLoading || isStartingImport}
               error={previewError}
               loadingLabel={uploadLabel}
               isIndeterminate={isIndeterminateLoading}
+              maxSizeBytes={MARKET_DATA_UPLOAD_LIMIT_BYTES}
+              maxSizeLabel={MARKET_DATA_UPLOAD_LIMIT_LABEL}
               uploadProgress={dropzoneProgress}
             />
           </div>

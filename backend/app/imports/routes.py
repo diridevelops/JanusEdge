@@ -24,6 +24,7 @@ from app.repositories.execution_repo import (
 from app.repositories.trade_repo import TradeRepository
 from app.repositories.user_repo import UserRepository
 from app.utils.errors import NotFoundError, ValidationError
+from app.utils import upload_limits
 from app.whatif.cache import clear_simulation_cache
 
 import_service = ImportService()
@@ -32,6 +33,16 @@ exec_repo = ExecutionRepository()
 trade_repo = TradeRepository()
 user_repo = UserRepository()
 finalize_schema = FinalizeSchema()
+
+
+def _csv_file_too_large_message() -> str:
+    """Return the current CSV oversize error message."""
+
+    return (
+        "CSV files must be "
+        f"{upload_limits.format_upload_limit(upload_limits.CSV_IMPORT_MAX_FILE_SIZE)} "
+        "or smaller."
+    )
 
 
 @imports_bp.route("/upload", methods=["POST"])
@@ -57,9 +68,17 @@ def upload():
             "Only CSV files are supported."
         )
 
+    upload_limits.enforce_upload_file_size(
+        file,
+        max_size_bytes=upload_limits.CSV_IMPORT_MAX_FILE_SIZE,
+        error_message=_csv_file_too_large_message(),
+    )
+
     content = file.read()
     if len(content) == 0:
         raise ValidationError("File is empty.")
+    if len(content) > upload_limits.CSV_IMPORT_MAX_FILE_SIZE:
+        raise ValidationError(_csv_file_too_large_message())
 
     # Get user timezone
     user = user_repo.find_by_id(user_id)

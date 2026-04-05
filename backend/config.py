@@ -5,6 +5,7 @@ from datetime import timedelta
 from typing import Mapping
 
 from dotenv import load_dotenv
+from app.utils.upload_limits import GLOBAL_MAX_REQUEST_SIZE
 
 load_dotenv()
 
@@ -54,7 +55,7 @@ class Config:
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=1)
     JWT_TOKEN_LOCATION = ["headers"]
     JWT_HEADER_TYPE = "Bearer"
-    MAX_CONTENT_LENGTH = 500 * 1024 * 1024  # 500 MB upload
+    MAX_CONTENT_LENGTH = GLOBAL_MAX_REQUEST_SIZE
     CORS_ORIGINS = _get_env(
         "CORS_ORIGINS", "http://localhost:5173"
     )

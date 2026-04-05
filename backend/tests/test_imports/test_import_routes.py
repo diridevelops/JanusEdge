@@ -9,6 +9,7 @@ from app import create_app
 from app.market_data.symbol_mapper import (
     get_default_symbol_mappings,
 )
+from app.utils import upload_limits
 from app.whatif.cache import _sim_cache
 from config import TestingConfig
 
@@ -217,6 +218,33 @@ def test_upload_new_ninjatrader_format(client):
     assert len(payload["executions"]) == 8
     assert payload["errors"] == []
     assert payload["executions"][0]["commission"] == 0.39
+
+
+def test_upload_rejects_csv_files_above_limit(
+    client, monkeypatch
+):
+    """CSV upload returns a specific message for oversized files."""
+
+    token = _register_and_login(client)
+    monkeypatch.setattr(
+        upload_limits,
+        "CSV_IMPORT_MAX_FILE_SIZE",
+        1 * upload_limits.MB,
+    )
+    payload = b"x" * (2 * upload_limits.MB)
+
+    response = client.post(
+        "/api/imports/upload",
+        data={"file": (BytesIO(payload), "large.csv")},
+        headers=_auth(token),
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 400
+    assert (
+        response.get_json()["error"]["message"]
+        == "CSV files must be 1 MB or smaller."
+    )
 
 
 def test_finalize_new_ninjatrader_format(client):

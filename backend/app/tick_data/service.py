@@ -40,9 +40,20 @@ from app.tick_data.ninjatrader import (
 from app.tick_data.parquet_store import MarketDataParquetStore
 from app.utils.errors import NotFoundError
 from app.utils.errors import ValidationError
+from app.utils import upload_limits
 
 
 _PROGRESS_UPDATE_LINE_INTERVAL = 5000
+
+
+def _market_data_file_too_large_message() -> str:
+    """Return the current market-data oversize error message."""
+
+    return (
+        "Tick-data files must be "
+        f"{upload_limits.format_upload_limit(upload_limits.MARKET_DATA_MAX_FILE_SIZE)} "
+        "or smaller."
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,7 +189,9 @@ class TickDataService:
             raise ValidationError("File name is required.")
 
         temp_path, file_hash, file_size = self._store_upload(
-            file_stream
+            file_stream,
+            max_size_bytes=upload_limits.MARKET_DATA_MAX_FILE_SIZE,
+            error_message=_market_data_file_too_large_message(),
         )
         if file_size == 0:
             os.unlink(temp_path)
@@ -242,7 +255,9 @@ class TickDataService:
             raise ValidationError("File name is required.")
 
         temp_path, file_hash, file_size = self._store_upload(
-            file_stream
+            file_stream,
+            max_size_bytes=upload_limits.MARKET_DATA_MAX_FILE_SIZE,
+            error_message=_market_data_file_too_large_message(),
         )
         if file_size == 0:
             os.unlink(temp_path)
@@ -593,24 +608,46 @@ class TickDataService:
     def _store_upload(
         self,
         file_stream: BinaryIO,
+        *,
+        max_size_bytes: int | None = None,
+        error_message: str | None = None,
     ) -> tuple[str, str, int]:
         """Persist an uploaded file to a temporary path and hash it."""
 
         hasher = hashlib.sha256()
         total_bytes = 0
-        with tempfile.NamedTemporaryFile(
-            delete=False,
-            suffix=".txt",
-        ) as temp_file:
-            while True:
-                chunk = file_stream.read(1024 * 1024)
-                if not chunk:
-                    break
-                temp_file.write(chunk)
-                hasher.update(chunk)
-                total_bytes += len(chunk)
+        temp_path = ""
+        try:
+            with tempfile.NamedTemporaryFile(
+                delete=False,
+                suffix=".txt",
+            ) as temp_file:
+                temp_path = temp_file.name
+                while True:
+                    chunk = file_stream.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    total_bytes += len(chunk)
+                    if (
+                        max_size_bytes is not None
+                        and total_bytes > max_size_bytes
+                    ):
+                        raise ValidationError(
+                            error_message
+                            or (
+                                "Uploaded file must be "
+                                f"{upload_limits.format_upload_limit(max_size_bytes)} "
+                                "or smaller."
+                            )
+                        )
+                    temp_file.write(chunk)
+                    hasher.update(chunk)
+        except Exception:
+            if temp_path and os.path.exists(temp_path):
+                os.unlink(temp_path)
+            raise
 
-        return temp_file.name, hasher.hexdigest(), total_bytes
+        return temp_path, hasher.hexdigest(), total_bytes
 
     def _run_import_batch(
         self,

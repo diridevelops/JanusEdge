@@ -8,8 +8,19 @@ from flask_jwt_extended import (
 
 from app.media import media_bp
 from app.media.service import MediaService
+from app.utils import upload_limits
 
 media_service = MediaService()
+
+
+def _media_file_too_large_message() -> str:
+    """Return the current media oversize error message."""
+
+    return (
+        "File exceeds the "
+        f"{upload_limits.format_upload_limit(upload_limits.MEDIA_MAX_FILE_SIZE)} "
+        "limit."
+    )
 
 
 @media_bp.route(
@@ -24,6 +35,12 @@ def upload_media(trade_id: str):
     """
     user_id = get_jwt_identity()
     file = request.files.get("file")
+    if file and file.filename:
+        upload_limits.enforce_upload_file_size(
+            file,
+            max_size_bytes=upload_limits.MEDIA_MAX_FILE_SIZE,
+            error_message=_media_file_too_large_message(),
+        )
     result = media_service.upload(
         user_id, trade_id, file
     )
