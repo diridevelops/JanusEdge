@@ -7,6 +7,12 @@ import {
     type ReactNode,
 } from 'react';
 import * as authApi from '../api/auth.api';
+import {
+  clearAccessToken,
+  getAccessToken,
+  registerAuthEventHandlers,
+  setAccessToken,
+} from '../api/authSession';
 import type { User } from '../types/auth.types';
 
 interface AuthState {
@@ -43,36 +49,45 @@ interface AuthProviderProps {
 export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(
-    () => sessionStorage.getItem('token')
+    () => getAccessToken()
   );
   const [isLoading, setIsLoading] = useState(true);
 
-  // On mount, check if we have a stored token and load profile
   useEffect(() => {
-    if (token) {
-      authApi
-        .getProfile()
-        .then((profile) => {
-          setUser(profile);
-        })
-        .catch(() => {
-          // Token expired or invalid
-          sessionStorage.removeItem('token');
-          sessionStorage.removeItem('user');
-          setToken(null);
-          setUser(null);
-        })
-        .finally(() => setIsLoading(false));
-    } else {
-      setIsLoading(false);
-    }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    const unregisterHandlers = registerAuthEventHandlers({
+      onAuthResponse: (response) => {
+        setAccessToken(response.token);
+        setToken(response.token);
+        setUser(response.user);
+      },
+      onUnauthorized: () => {
+        clearAccessToken();
+        setToken(null);
+        setUser(null);
+      },
+    });
+
+    authApi
+      .refreshSession()
+      .then((response) => {
+        setAccessToken(response.token);
+        setToken(response.token);
+        setUser(response.user);
+      })
+      .catch(() => {
+        clearAccessToken();
+        setToken(null);
+        setUser(null);
+      })
+      .finally(() => setIsLoading(false));
+
+    return unregisterHandlers;
+  }, []);
 
   const login = useCallback(
     async (username: string, password: string) => {
       const res = await authApi.login({ username, password });
-      sessionStorage.setItem('token', res.token);
-      sessionStorage.setItem('user', JSON.stringify(res.user));
+      setAccessToken(res.token);
       setToken(res.token);
       setUser(res.user);
     },
@@ -86,8 +101,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
         password,
         timezone,
       });
-      sessionStorage.setItem('token', res.token);
-      sessionStorage.setItem('user', JSON.stringify(res.user));
+      setAccessToken(res.token);
       setToken(res.token);
       setUser(res.user);
     },
@@ -98,8 +112,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     authApi.logout().catch(() => {
       // Ignore errors on logout
     });
-    sessionStorage.removeItem('token');
-    sessionStorage.removeItem('user');
+    clearAccessToken();
     setToken(null);
     setUser(null);
   }, []);
@@ -108,9 +121,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
     try {
       const profile = await authApi.getProfile();
       setUser(profile);
-      sessionStorage.setItem('user', JSON.stringify(profile));
     } catch {
-      // Silently fail — profile will update on next login
+      // Silently fail; auth recovery is handled centrally
     }
   }, []);
 

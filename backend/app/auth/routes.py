@@ -1,6 +1,12 @@
 """Authentication API routes."""
 
-from flask import jsonify, request, send_file
+from flask import (
+    current_app,
+    jsonify,
+    make_response,
+    request,
+    send_file,
+)
 from flask_jwt_extended import (
     get_jwt_identity,
     jwt_required,
@@ -20,6 +26,7 @@ from app.auth.schemas import (
     UpdateStartingEquitySchema,
 )
 from app.auth.service import AuthService
+from app.utils.errors import AuthenticationError
 from app.utils.errors import ValidationError
 
 auth_service = AuthService()
@@ -34,6 +41,52 @@ update_market_data_mappings_schema = (
     UpdateMarketDataMappingsSchema()
 )
 restore_archive_schema = RestoreArchiveSchema()
+
+
+def _apply_refresh_cookie(
+    response,
+    refresh_token: str,
+):
+    """Attach the persistent refresh cookie to a response."""
+
+    response.set_cookie(
+        current_app.config["AUTH_REFRESH_COOKIE_NAME"],
+        refresh_token,
+        max_age=current_app.config[
+            "AUTH_REFRESH_COOKIE_MAX_AGE"
+        ],
+        httponly=True,
+        secure=current_app.config[
+            "AUTH_REFRESH_COOKIE_SECURE"
+        ],
+        samesite=current_app.config[
+            "AUTH_REFRESH_COOKIE_SAMESITE"
+        ],
+        path=current_app.config["AUTH_REFRESH_COOKIE_PATH"],
+    )
+    return response
+
+
+def _clear_refresh_cookie(response):
+    """Clear the persistent refresh cookie from a response."""
+
+    response.delete_cookie(
+        current_app.config["AUTH_REFRESH_COOKIE_NAME"],
+        path=current_app.config["AUTH_REFRESH_COOKIE_PATH"],
+    )
+    return response
+
+
+def _build_auth_response(result: dict, status_code: int):
+    """Return a public auth response and set the refresh cookie."""
+
+    refresh_token = result["refresh_token"]
+    payload = {
+        "token": result["token"],
+        "user": result["user"],
+    }
+    response = make_response(jsonify(payload), status_code)
+    return _apply_refresh_cookie(response, refresh_token)
 
 
 @auth_bp.route("/health", methods=["GET"])
@@ -65,8 +118,9 @@ def register():
         username=validated["username"],
         password=validated["password"],
         timezone=validated["timezone"],
+        user_agent=request.headers.get("User-Agent"),
     )
-    return jsonify(result), 201
+    return _build_auth_response(result, 201)
 
 
 @auth_bp.route("/login", methods=["POST"])
@@ -91,8 +145,50 @@ def login():
     result = auth_service.login(
         username=validated["username"],
         password=validated["password"],
+        user_agent=request.headers.get("User-Agent"),
     )
-    return jsonify(result), 200
+    return _build_auth_response(result, 200)
+
+
+@auth_bp.route("/refresh", methods=["POST"])
+def refresh():
+    """Rotate the current refresh session and issue a new access token."""
+
+    refresh_token = request.cookies.get(
+        current_app.config["AUTH_REFRESH_COOKIE_NAME"],
+        "",
+    )
+    if not refresh_token:
+        response = make_response(
+            jsonify(
+                {
+                    "error": {
+                        "code": "AUTHENTICATIONERROR",
+                        "message": "Session expired. Please log in again.",
+                    }
+                }
+            ),
+            401,
+        )
+        return _clear_refresh_cookie(response)
+
+    try:
+        result = auth_service.refresh_session(refresh_token)
+    except AuthenticationError as error:
+        response = make_response(
+            jsonify(
+                {
+                    "error": {
+                        "code": "AUTHENTICATIONERROR",
+                        "message": error.message,
+                    }
+                }
+            ),
+            401,
+        )
+        return _clear_refresh_cookie(response)
+
+    return _build_auth_response(result, 200)
 
 
 @auth_bp.route("/me", methods=["GET"])
@@ -110,14 +206,19 @@ def me():
 
 
 @auth_bp.route("/logout", methods=["POST"])
-@jwt_required()
 def logout():
     """
     Logout (client-side token discard).
 
     Returns: {message}
     """
-    return jsonify({"message": "Logged out."}), 200
+    result = auth_service.logout(
+        request.cookies.get(
+            current_app.config["AUTH_REFRESH_COOKIE_NAME"]
+        )
+    )
+    response = make_response(jsonify(result), 200)
+    return _clear_refresh_cookie(response)
 
 
 @auth_bp.route("/change-password", methods=["POST"])

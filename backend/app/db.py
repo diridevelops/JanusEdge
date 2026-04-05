@@ -12,6 +12,12 @@ def init_db(db: Database) -> None:
     """
     # Users
     db.users.create_index("username", unique=True)
+    db.auth_refresh_sessions.create_index(
+        [("token_hash", 1)], unique=True
+    )
+    db.auth_refresh_sessions.create_index(
+        [("user_id", 1), ("revoked_at", 1), ("created_at", -1)]
+    )
 
     # Trade Accounts
     db.trade_accounts.create_index(

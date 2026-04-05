@@ -3,7 +3,7 @@
 ## Base Notes
 
 - Base API namespace: `/api`
-- Authentication mechanism: JWT bearer token in the `Authorization` header
+- Authentication mechanism: short-lived JWT bearer token in the `Authorization` header plus a persistent `HttpOnly` refresh cookie for browser session restore
 - Public endpoints: `GET /api/auth/health`, `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/client-config`
 - All other endpoints currently require authentication
 
@@ -14,10 +14,11 @@ Unless otherwise noted, IDs are MongoDB ObjectId strings serialized as plain str
 | Method | Path | Auth | Purpose | Request | Response |
 | --- | --- | --- | --- | --- | --- |
 | GET | `/api/auth/health` | No | Basic health check | None | `{ "status": "ok" }` |
-| POST | `/api/auth/register` | No | Create a new user | JSON with `username`, `password`, `timezone` | `{ token, user }` |
-| POST | `/api/auth/login` | No | Log in | JSON with `username`, `password` | `{ token, user }` |
+| POST | `/api/auth/register` | No | Create a new user and start a persistent browser session | JSON with `username`, `password`, `timezone` | `{ token, user }` plus refresh cookie |
+| POST | `/api/auth/login` | No | Log in and start a persistent browser session | JSON with `username`, `password` | `{ token, user }` plus refresh cookie |
+| POST | `/api/auth/refresh` | No | Rotate the current browser session and return a fresh access token | None; reads refresh cookie | `{ token, user }` plus rotated refresh cookie |
 | GET | `/api/auth/me` | Yes | Get current profile | None | Direct serialized user object |
-| POST | `/api/auth/logout` | Yes | Client-side logout acknowledgement | None | `{ "message": "Logged out." }` |
+| POST | `/api/auth/logout` | No | Clear the current browser session | None; clears refresh cookie if present | `{ "message": "Logged out." }` |
 | POST | `/api/auth/change-password` | Yes | Change password | JSON with `current_password`, `new_password` | `{ "message": "Password changed successfully." }` |
 | PUT | `/api/auth/timezone` | Yes | Update trading timezone | JSON with `timezone` | Direct serialized user object |
 | PUT | `/api/auth/display-timezone` | Yes | Update display timezone | JSON with `display_timezone` | Direct serialized user object |
@@ -46,6 +47,14 @@ Where the backend returns a serialized user object, the frontend currently expec
 - `symbol_mappings` controls point-value resolution only.
 - `market_data_mappings` controls explicit cross-symbol market-data lookup.
 - The default `market_data_mappings` value is `{}`, which means market data lookup uses the symbol as-is.
+
+### Auth session notes
+
+- Access tokens are short-lived JWTs sent in the `Authorization` header.
+- Persistent login is handled by a long-lived refresh cookie scoped to auth routes.
+- Reopening the app in the same browser restores the session by calling `POST /api/auth/refresh`.
+- `POST /api/auth/logout` clears the current browser refresh session.
+- Changing the password revokes all persistent refresh sessions for that user.
 
 ## Client Config
 

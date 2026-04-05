@@ -52,9 +52,28 @@ class Config:
         "MONGO_URI", "mongodb://localhost:27017/janusedge"
     )
     JWT_SECRET_KEY = _get_env("JWT_SECRET_KEY")
-    JWT_ACCESS_TOKEN_EXPIRES = timedelta(hours=1)
+    JWT_ACCESS_TOKEN_EXPIRES = timedelta(minutes=15)
     JWT_TOKEN_LOCATION = ["headers"]
     JWT_HEADER_TYPE = "Bearer"
+    AUTH_REFRESH_COOKIE_NAME = _get_env(
+        "AUTH_REFRESH_COOKIE_NAME", "janusedge_refresh"
+    )
+    AUTH_REFRESH_COOKIE_PATH = _get_env(
+        "AUTH_REFRESH_COOKIE_PATH", "/api/auth"
+    )
+    AUTH_REFRESH_COOKIE_SAMESITE = _get_env(
+        "AUTH_REFRESH_COOKIE_SAMESITE", "Lax"
+    )
+    AUTH_REFRESH_COOKIE_SECURE = (
+        _get_env("AUTH_REFRESH_COOKIE_SECURE", "false").lower()
+        == "true"
+    )
+    AUTH_REFRESH_COOKIE_MAX_AGE = int(
+        _get_env(
+            "AUTH_REFRESH_COOKIE_MAX_AGE",
+            str(int(timedelta(days=3650).total_seconds())),
+        )
+    )
     MAX_CONTENT_LENGTH = GLOBAL_MAX_REQUEST_SIZE
     CORS_ORIGINS = _get_env(
         "CORS_ORIGINS", "http://localhost:5173"
@@ -114,3 +133,7 @@ class ProductionConfig(Config):
     """Production configuration."""
 
     DEBUG = False
+    AUTH_REFRESH_COOKIE_SECURE = (
+        _get_env("AUTH_REFRESH_COOKIE_SECURE", "true").lower()
+        == "true"
+    )
