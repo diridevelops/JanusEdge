@@ -81,6 +81,7 @@ interface MarketDataMappingRow {
 const EMPTY_SYMBOL_MAPPINGS: SymbolMappings = {};
 const EMPTY_MARKET_DATA_MAPPINGS: MarketDataMappings = {};
 const COMPACT_INPUT_CLASS_NAME = 'input-field h-9 px-3 py-1.5 text-sm';
+const MAPPINGS_TABLE_MAX_HEIGHT_CLASS = 'max-h-[20rem]';
 
 function createRowId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -608,17 +609,19 @@ export function SettingsPage() {
               </div>
             </div>
 
-            <div className="overflow-auto rounded-lg border border-gray-200 dark:border-gray-700">
+            <div
+              className={`overflow-auto rounded-lg border border-gray-200 dark:border-gray-700 ${MAPPINGS_TABLE_MAX_HEIGHT_CLASS}`}
+            >
               <table className="min-w-full divide-y divide-gray-200 text-sm dark:divide-gray-700">
                 <thead className="bg-gray-50 dark:bg-gray-800">
                   <tr>
-                    <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    <th className="sticky top-0 z-10 bg-gray-50 px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:bg-gray-800 dark:text-gray-400">
                       Normalized Base Symbol
                     </th>
-                    <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    <th className="sticky top-0 z-10 bg-gray-50 px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:bg-gray-800 dark:text-gray-400">
                       Dollar Value Per Point
                     </th>
-                    <th className="w-24 px-3 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                    <th className="sticky top-0 z-10 w-24 bg-gray-50 px-3 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:bg-gray-800 dark:text-gray-400">
                       Action
                     </th>
                   </tr>
@@ -721,17 +724,19 @@ export function SettingsPage() {
         </div>
 
         <form onSubmit={handleUpdateMarketDataMappings} className="mt-4 space-y-6">
-          <div className="overflow-auto rounded-lg border border-gray-200 dark:border-gray-700">
+          <div
+            className={`overflow-auto rounded-lg border border-gray-200 dark:border-gray-700 ${MAPPINGS_TABLE_MAX_HEIGHT_CLASS}`}
+          >
             <table className="min-w-full divide-y divide-gray-200 text-sm dark:divide-gray-700">
               <thead className="bg-gray-50 dark:bg-gray-800">
                 <tr>
-                  <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                  <th className="sticky top-0 z-10 bg-gray-50 px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:bg-gray-800 dark:text-gray-400">
                     Source Symbol
                   </th>
-                  <th className="px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                  <th className="sticky top-0 z-10 bg-gray-50 px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:bg-gray-800 dark:text-gray-400">
                     Use Market Data From
                   </th>
-                  <th className="w-24 px-3 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-gray-400">
+                  <th className="sticky top-0 z-10 w-24 bg-gray-50 px-3 py-2 text-right text-xs font-medium uppercase tracking-wider text-gray-500 dark:bg-gray-800 dark:text-gray-400">
                     Action
                   </th>
                 </tr>

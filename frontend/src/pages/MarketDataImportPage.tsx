@@ -30,6 +30,7 @@ import { formatDateTime, formatDateTimeWithTimeZone } from '../utils/formatters'
 
 const POLL_INTERVAL_MS = 1500;
 const ACTIVE_BATCH_STATUSES = new Set(['queued', 'processing']);
+const SAVED_DAYS_MAX_HEIGHT_CLASS = 'max-h-[20rem]';
 
 function getErrorMessage(
   error: unknown,
@@ -815,7 +816,9 @@ export function MarketDataImportPage() {
                 No saved market-data days found yet.
               </div>
             ) : (
-              <div className="mt-4 overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
+              <div
+                className={`mt-4 overflow-y-auto overflow-x-hidden rounded-lg border border-gray-200 dark:border-gray-700 ${SAVED_DAYS_MAX_HEIGHT_CLASS}`}
+              >
                 <ul className="divide-y divide-gray-100 dark:divide-gray-700">
                   {savedDays.map((day) => (
                     <li
