@@ -221,6 +221,7 @@ Note: the route docstring mentions an `account` query parameter, but the code do
 | Method | Path | Auth | Purpose | Request | Response |
 | --- | --- | --- | --- | --- | --- |
 | GET | `/api/market-data/ohlc` | Yes | Return OHLC data for charting | Query params: `symbol` required, optional `interval`, `start`, `end`, `raw_symbol`, `force_refresh` | `{ ohlc_data: [...] }` |
+| DELETE | `/api/market-data/saved-days` | Yes | Delete one saved market-data day and all stored datasets for that symbol/day | Query params: `symbol`, `date` (`YYYY-MM-DD`) | `{ "message": "Saved market-data day deleted." }` |
 | POST | `/api/market-data/tick-imports/preview` | Yes | Start a background preview for a NinjaTrader tick export | `multipart/form-data` with `file` | Preview batch document |
 | GET | `/api/market-data/tick-imports/preview/:batch_id` | Yes | Poll tick-data preview progress | Path parameter `batch_id` | Preview batch document |
 | POST | `/api/market-data/tick-imports` | Yes | Start a background tick-data import | `multipart/form-data` with `file` and optional `symbol`, `raw_symbol` | Import batch document |
@@ -248,6 +249,7 @@ The frontend currently expects each OHLC point to look like:
 - imports currently support NinjaTrader UTF-8 text exports only
 - preview parsing now runs as a background batch and uses the same persisted progress shape as imports
 - the backend writes raw daily ticks and derived daily candles to Snappy-compressed Parquet in MinIO
+- deleting a saved day removes both the raw tick dataset and all derived candle datasets for that `symbol + date` group
 - import progress is persisted in MongoDB so the frontend can poll percentage complete
 - `force_refresh=true` on the OHLC route regenerates candle datasets from stored raw ticks for the requested date range
 

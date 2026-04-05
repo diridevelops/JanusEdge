@@ -12,6 +12,7 @@ from app.market_data.symbol_mapper import (
 from app.repositories.market_data_repo import MarketDataRepository
 from app.repositories.user_repo import UserRepository
 from app.tick_data.service import TickDataService
+from app.utils.errors import ValidationError
 
 
 class MarketDataService:
@@ -165,6 +166,33 @@ class MarketDataService:
             summary["available_timeframes"].sort()
 
         return ordered_summaries
+
+    def delete_saved_day(
+        self,
+        *,
+        symbol: str,
+        trading_day: str,
+    ) -> int:
+        """Delete all datasets for one saved market-data day."""
+
+        if not symbol or not symbol.strip():
+            raise ValidationError("Symbol is required.")
+        if not trading_day or not trading_day.strip():
+            raise ValidationError("Date is required.")
+
+        try:
+            parsed_trading_day = dt.date.fromisoformat(
+                trading_day
+            )
+        except ValueError as exc:
+            raise ValidationError(
+                "Date must be in YYYY-MM-DD format."
+            ) from exc
+
+        return self.tick_data_service.delete_saved_day(
+            symbol=symbol.strip(),
+            trading_day=parsed_trading_day,
+        )
 
     @staticmethod
     def _serialize_datetime(value: dt.datetime | None) -> str | None:

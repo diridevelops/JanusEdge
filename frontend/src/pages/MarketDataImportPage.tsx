@@ -4,6 +4,7 @@ import {
   Database,
   Loader2,
   RefreshCw,
+  Trash2,
   Upload,
   XCircle,
 } from 'lucide-react';
@@ -14,6 +15,7 @@ import {
   getTickImportBatch,
   startTickImportPreview,
   startTickImport,
+  deleteSavedMarketDataDay,
 } from '../api/marketData.api';
 import type { UploadProgress } from '../api/marketData.api';
 import { TickDataDropZone } from '../components/market-data/TickDataDropZone';
@@ -31,6 +33,10 @@ import { formatDateTime, formatDateTimeWithTimeZone } from '../utils/formatters'
 const POLL_INTERVAL_MS = 1500;
 const ACTIVE_BATCH_STATUSES = new Set(['queued', 'processing']);
 const SAVED_DAYS_MAX_HEIGHT_CLASS = 'max-h-[20rem]';
+
+function getSavedDayKey(day: Pick<SavedMarketDataDay, 'symbol' | 'date'>): string {
+  return `${day.symbol}:${day.date}`;
+}
 
 function getErrorMessage(
   error: unknown,
@@ -118,6 +124,7 @@ export function MarketDataImportPage() {
   const [savedDays, setSavedDays] = useState<SavedMarketDataDay[]>([]);
   const [savedDaysError, setSavedDaysError] = useState<string | null>(null);
   const [isSavedDaysLoading, setIsSavedDaysLoading] = useState(true);
+  const [deletingSavedDayKey, setDeletingSavedDayKey] = useState<string | null>(null);
 
   const pollTimeoutRef = useRef<number | null>(null);
   const previewPollTimeoutRef = useRef<number | null>(null);
@@ -344,6 +351,41 @@ export function MarketDataImportPage() {
       await loadBatch(batch.id, true);
     } catch {
       addToast('error', 'Failed to refresh import status.');
+    }
+  }
+
+  async function handleDeleteSavedDay(day: SavedMarketDataDay) {
+    const savedDayKey = getSavedDayKey(day);
+    const confirmed = confirm(
+      `Delete saved market data for ${day.symbol} on ${day.date}? This removes stored ticks and derived candles for everyone.`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingSavedDayKey(savedDayKey);
+
+    try {
+      const message = await deleteSavedMarketDataDay(
+        day.symbol,
+        day.date
+      );
+      setSavedDays((current) =>
+        current.filter(
+          (item) => getSavedDayKey(item) !== savedDayKey
+        )
+      );
+      addToast('success', message);
+    } catch (error: unknown) {
+      addToast(
+        'error',
+        getErrorMessage(
+          error,
+          'Failed to delete the saved market-data day.'
+        )
+      );
+    } finally {
+      setDeletingSavedDayKey(null);
     }
   }
 
@@ -822,7 +864,7 @@ export function MarketDataImportPage() {
                 <ul className="divide-y divide-gray-100 dark:divide-gray-700">
                   {savedDays.map((day) => (
                     <li
-                      key={`${day.symbol}:${day.date}`}
+                      key={getSavedDayKey(day)}
                       className="flex items-start justify-between gap-4 bg-white px-4 py-3 dark:bg-gray-800"
                     >
                       <div className="min-w-0">
@@ -846,13 +888,31 @@ export function MarketDataImportPage() {
                       </div>
 
                       <div className="shrink-0 text-right text-xs text-gray-500 dark:text-gray-400">
-                        {day.updated_at ? (
-                          <span>
-                            Updated {formatDateTime(day.updated_at, user?.display_timezone ?? user?.timezone)}
-                          </span>
-                        ) : (
-                          <span>Update time unavailable</span>
-                        )}
+                        <div className="flex items-start gap-2">
+                          <div className="text-right">
+                            {day.updated_at ? (
+                              <span>
+                                Updated {formatDateTime(day.updated_at, user?.display_timezone ?? user?.timezone)}
+                              </span>
+                            ) : (
+                              <span>Update time unavailable</span>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteSavedDay(day)}
+                            disabled={deletingSavedDayKey === getSavedDayKey(day)}
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-red-600 transition hover:bg-red-50 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-50 dark:text-red-400 dark:hover:bg-red-900/20 dark:hover:text-red-300"
+                            aria-label={`Delete saved market data for ${day.symbol} on ${day.date}`}
+                            title="Delete saved day"
+                          >
+                            {deletingSavedDayKey === getSavedDayKey(day) ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-4 w-4" />
+                            )}
+                          </button>
+                        </div>
                       </div>
                     </li>
                   ))}

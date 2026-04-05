@@ -3,6 +3,7 @@
 from datetime import date, datetime, timezone
 from uuid import uuid4
 
+import app.storage as storage_module
 from app.market_data.service import MarketDataService
 from app.market_data.symbol_mapper import (
     get_default_symbol_mappings,
@@ -460,4 +461,323 @@ class TestMarketDataRoutes:
         ]
         assert payload["saved_days"][0]["updated_at"].endswith(
             "+00:00"
+        )
+
+    def test_delete_saved_day_removes_ticks_candles_and_objects(
+        self,
+        app,
+        client,
+        seed_market_data_dataset,
+    ):
+        """Deleting a saved day removes metadata and Parquet objects."""
+
+        headers, _ = _register_and_login(client)
+        trading_day = date(2026, 1, 6)
+        seed_market_data_dataset(
+            symbol="ES 06-26",
+            raw_symbol="ES 06-26",
+            dataset_type="ticks",
+            trading_day=trading_day,
+            rows=[
+                {
+                    "timestamp": "2026-01-06T14:30:00+00:00",
+                    "last_price": 5000.0,
+                    "bid_price": 4999.75,
+                    "ask_price": 5000.25,
+                    "size": 1,
+                }
+            ],
+        )
+        seed_market_data_dataset(
+            symbol="ES 06-26",
+            raw_symbol="ES 06-26",
+            dataset_type="candles",
+            timeframe="1m",
+            trading_day=trading_day,
+            rows=[
+                {
+                    "time": int(
+                        datetime(
+                            2026,
+                            1,
+                            6,
+                            14,
+                            30,
+                            tzinfo=timezone.utc,
+                        ).timestamp()
+                    ),
+                    "open": 5000.0,
+                    "high": 5001.0,
+                    "low": 4999.0,
+                    "close": 5000.5,
+                    "volume": 2,
+                }
+            ],
+        )
+        seed_market_data_dataset(
+            symbol="ES 06-26",
+            raw_symbol="ES 06-26",
+            dataset_type="candles",
+            timeframe="5m",
+            trading_day=trading_day,
+            rows=[
+                {
+                    "time": int(
+                        datetime(
+                            2026,
+                            1,
+                            6,
+                            14,
+                            30,
+                            tzinfo=timezone.utc,
+                        ).timestamp()
+                    ),
+                    "open": 5000.0,
+                    "high": 5002.0,
+                    "low": 4999.0,
+                    "close": 5001.0,
+                    "volume": 5,
+                }
+            ],
+        )
+
+        with app.app_context():
+            bucket = storage_module.get_market_data_bucket()
+            client_stub = storage_module.get_client()
+            stored_keys_before = {
+                key[1]
+                for key in client_stub.objects.keys()
+                if key[0] == bucket
+            }
+            assert stored_keys_before == {
+                "ES 06-26/ticks/2026/01/06.parquet",
+                "ES 06-26/candles/1m/2026/01/06.parquet",
+                "ES 06-26/candles/5m/2026/01/06.parquet",
+            }
+
+        response = client.delete(
+            "/api/market-data/saved-days",
+            headers=headers,
+            query_string={
+                "symbol": "ES 06-26",
+                "date": "2026-01-06",
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.get_json()["message"] == (
+            "Saved market-data day deleted."
+        )
+
+        with app.app_context():
+            from app.extensions import mongo
+
+            assert (
+                mongo.db.market_data_datasets.count_documents(
+                    {
+                        "symbol": "ES 06-26",
+                        "date": datetime(2026, 1, 6),
+                    }
+                )
+                == 0
+            )
+            bucket = storage_module.get_market_data_bucket()
+            client_stub = storage_module.get_client()
+            stored_keys_after = {
+                key[1]
+                for key in client_stub.objects.keys()
+                if key[0] == bucket
+            }
+            assert stored_keys_after == set()
+
+    def test_delete_saved_day_removes_candles_only_group(
+        self,
+        app,
+        client,
+        seed_market_data_dataset,
+    ):
+        """Deleting a candles-only saved day still succeeds."""
+
+        headers, _ = _register_and_login(client)
+        trading_day = date(2026, 1, 5)
+        seed_market_data_dataset(
+            symbol="NQ 06-26",
+            raw_symbol="NQ 06-26",
+            dataset_type="candles",
+            timeframe="1m",
+            trading_day=trading_day,
+            rows=[
+                {
+                    "time": int(
+                        datetime(
+                            2026,
+                            1,
+                            5,
+                            14,
+                            30,
+                            tzinfo=timezone.utc,
+                        ).timestamp()
+                    ),
+                    "open": 21000.0,
+                    "high": 21010.0,
+                    "low": 20990.0,
+                    "close": 21005.0,
+                    "volume": 3,
+                }
+            ],
+        )
+
+        response = client.delete(
+            "/api/market-data/saved-days",
+            headers=headers,
+            query_string={
+                "symbol": "NQ 06-26",
+                "date": "2026-01-05",
+            },
+        )
+
+        assert response.status_code == 200
+
+        with app.app_context():
+            from app.extensions import mongo
+
+            assert (
+                mongo.db.market_data_datasets.count_documents(
+                    {
+                        "symbol": "NQ 06-26",
+                        "date": datetime(2026, 1, 5),
+                    }
+                )
+                == 0
+            )
+
+    def test_delete_saved_day_returns_404_for_unknown_group(
+        self,
+        client,
+    ):
+        """Unknown saved-day groups return 404."""
+
+        headers, _ = _register_and_login(client)
+
+        response = client.delete(
+            "/api/market-data/saved-days",
+            headers=headers,
+            query_string={
+                "symbol": "ES 06-26",
+                "date": "2026-01-06",
+            },
+        )
+
+        assert response.status_code == 404
+        assert response.get_json()["error"]["message"] == (
+            "Saved market-data day not found."
+        )
+
+    def test_delete_saved_day_requires_auth(self, client):
+        """Deleting a saved day requires authentication."""
+
+        response = client.delete(
+            "/api/market-data/saved-days",
+            query_string={
+                "symbol": "ES 06-26",
+                "date": "2026-01-06",
+            },
+        )
+
+        assert response.status_code == 401
+
+    def test_delete_saved_day_tolerates_missing_objects(
+        self,
+        app,
+        client,
+        monkeypatch,
+        seed_market_data_dataset,
+    ):
+        """Metadata deletion succeeds even when object cleanup fails."""
+
+        headers, _ = _register_and_login(client)
+        trading_day = date(2026, 1, 6)
+        seed_market_data_dataset(
+            symbol="ES 06-26",
+            raw_symbol="ES 06-26",
+            dataset_type="ticks",
+            trading_day=trading_day,
+            rows=[
+                {
+                    "timestamp": "2026-01-06T14:30:00+00:00",
+                    "last_price": 5000.0,
+                    "bid_price": 4999.75,
+                    "ask_price": 5000.25,
+                    "size": 1,
+                }
+            ],
+        )
+        seed_market_data_dataset(
+            symbol="ES 06-26",
+            raw_symbol="ES 06-26",
+            dataset_type="candles",
+            timeframe="1m",
+            trading_day=trading_day,
+            rows=[
+                {
+                    "time": int(
+                        datetime(
+                            2026,
+                            1,
+                            6,
+                            14,
+                            30,
+                            tzinfo=timezone.utc,
+                        ).timestamp()
+                    ),
+                    "open": 5000.0,
+                    "high": 5001.0,
+                    "low": 4999.0,
+                    "close": 5000.5,
+                    "volume": 2,
+                }
+            ],
+        )
+
+        with app.app_context():
+            client_stub = storage_module.get_client()
+            original_remove_object = client_stub.remove_object
+
+        def failing_remove_object(*args, **kwargs):
+            raise RuntimeError("missing object")
+
+        monkeypatch.setattr(
+            client_stub,
+            "remove_object",
+            failing_remove_object,
+        )
+
+        response = client.delete(
+            "/api/market-data/saved-days",
+            headers=headers,
+            query_string={
+                "symbol": "ES 06-26",
+                "date": "2026-01-06",
+            },
+        )
+
+        assert response.status_code == 200
+
+        with app.app_context():
+            from app.extensions import mongo
+
+            assert (
+                mongo.db.market_data_datasets.count_documents(
+                    {
+                        "symbol": "ES 06-26",
+                        "date": datetime(2026, 1, 6),
+                    }
+                )
+                == 0
+            )
+
+        monkeypatch.setattr(
+            client_stub,
+            "remove_object",
+            original_remove_object,
         )
