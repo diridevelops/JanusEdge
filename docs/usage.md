@@ -642,6 +642,8 @@ This is useful for:
 - moving data between environments
 - keeping a recovery copy before major imports or edits
 
+The backup also includes stored market-data datasets currently present in the app, not only datasets referenced by exported trades.
+
 #### Restore Backup
 
 Use Restore Backup to merge a previous ZIP backup into your current account.

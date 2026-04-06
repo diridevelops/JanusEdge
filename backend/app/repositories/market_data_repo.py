@@ -276,6 +276,19 @@ class MarketDataRepository(BaseRepository):
             },
         )
 
+    def find_all_ready_documents(self) -> List[dict]:
+        """Return all ready market-data dataset documents."""
+
+        return self.find_many(
+            {"status": "ready"},
+            sort=[
+                ("symbol", 1),
+                ("dataset_type", 1),
+                ("timeframe", 1),
+                ("date", 1),
+            ],
+        )
+
     def find_documents_for_saved_day(
         self,
         *,

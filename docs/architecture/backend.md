@@ -260,7 +260,7 @@ Current behavior:
 - account and tag reuse is based on natural keys
 - import batches reuse `file_hash`
 - trade duplicates are skipped using a stable fingerprint
-- market-data datasets and referenced Parquet objects are included in the archive and restored idempotently by natural dataset key
+- all ready market-data datasets and referenced Parquet objects are included in the archive and restored idempotently by natural dataset key
 
 ## Development Commands
 

@@ -744,7 +744,7 @@ def test_export_backup_is_complete_and_self_contained(
         "trades": 2,
         "executions": 3,
         "media": 2,
-        "market_data_datasets": 3,
+        "market_data_datasets": 4,
     }
     assert payload["settings"] == {
         "timezone": "America/Chicago",
@@ -774,7 +774,8 @@ def test_export_backup_is_complete_and_self_contained(
         dataset["symbol"]
         for dataset in payload["market_data_datasets"]
     } == {
-        "MES 06-26"
+        "MES 06-26",
+        "NQ 06-26",
     }
     assert {
         dataset["archive_path"]
@@ -783,6 +784,7 @@ def test_export_backup_is_complete_and_self_contained(
         "market-data/MES 06-26/candles/1m/2026/01/02.parquet",
         "market-data/MES 06-26/candles/5m/2026/01/02.parquet",
         "market-data/MES 06-26/candles/5m/2026/01/03.parquet",
+        "market-data/NQ 06-26/candles/5m/2026/01/02.parquet",
     }
     for dataset_doc in payload["market_data_datasets"]:
         assert dataset_doc["archive_path"] in names
@@ -905,8 +907,8 @@ def test_restore_into_different_user_remaps_graph_and_media(
     }
     assert summary["media"] == {"created": 2, "skipped": 0}
     assert summary["market_data_datasets"] == {
-        "upserted": 3,
-        "objects_restored": 3,
+        "upserted": 4,
+        "objects_restored": 4,
     }
 
     with app.app_context():
@@ -1011,6 +1013,12 @@ def test_restore_into_different_user_remaps_graph_and_media(
             )
         )
         assert len(restored_cache) == 3
+        restored_nq_cache = list(
+            mongo.db.market_data_datasets.find(
+                {"symbol": "NQ 06-26"}
+            )
+        )
+        assert len(restored_nq_cache) == 1
 
 
 def test_restore_merge_into_empty_user_creates_all_records(
@@ -1036,8 +1044,8 @@ def test_restore_merge_into_empty_user_creates_all_records(
         "executions": {"created": 3, "skipped": 0},
         "media": {"created": 2, "skipped": 0},
         "market_data_datasets": {
-            "upserted": 3,
-            "objects_restored": 3,
+            "upserted": 4,
+            "objects_restored": 4,
         },
         "settings": {
             "updated": [

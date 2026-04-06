@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from datetime import timedelta
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
@@ -16,7 +15,6 @@ from app.auth.schemas import BackupManifestSchema
 from app.market_data.symbol_mapper import (
     get_effective_market_data_mappings,
     get_effective_symbol_mappings,
-    resolve_market_data_symbols,
     validate_market_data_mappings,
     validate_symbol_mappings,
 )
@@ -307,12 +305,7 @@ class PortableBackupService:
             "trades": trades,
             "executions": executions,
             "media": payload_media,
-            "market_data_datasets": self._collect_market_data(
-                trades,
-                get_effective_market_data_mappings(
-                    user.get("market_data_mappings")
-                ),
-            ),
+            "market_data_datasets": self._collect_market_data(),
         }
 
     def _build_manifest(self, payload: dict) -> dict:
@@ -789,36 +782,10 @@ class PortableBackupService:
 
     def _collect_market_data(
         self,
-        trades: List[dict],
-        market_data_mappings: dict | None = None,
     ) -> List[dict]:
-        """Collect market-data datasets related to exported trades."""
-        if not trades:
-            return []
+        """Collect all ready market-data datasets for portable backup."""
 
-        symbols: list[str] = []
-        dates = set()
-        for trade in trades:
-            for resolved_symbol in resolve_market_data_symbols(
-                trade.get("symbol", ""),
-                trade.get("raw_symbol"),
-                market_data_mappings,
-            ):
-                if resolved_symbol not in symbols:
-                    symbols.append(resolved_symbol)
-
-            entry_time = trade.get("entry_time")
-            exit_time = trade.get("exit_time") or entry_time
-            current_date = entry_time.date()
-            final_date = exit_time.date()
-            while current_date <= final_date:
-                dates.add(current_date)
-                current_date += timedelta(days=1)
-
-        datasets = self.market_data_repo.find_by_symbols_and_dates(
-            symbols,
-            dates,
-        )
+        datasets = self.market_data_repo.find_all_ready_documents()
         payload: list[dict] = []
         for dataset in datasets:
             dataset_copy = deepcopy(dataset)
