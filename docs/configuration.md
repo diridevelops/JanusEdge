@@ -41,7 +41,7 @@ The backend also has a testing-only value in code:
 | `MINIO_SECRET_KEY` | `minioadmin` | MinIO client | Required at backend startup |
 | `MINIO_BUCKET` | `janusedge-media` | Storage initialization | Bucket is created automatically if missing |
 | `MINIO_USE_SSL` | `false` | MinIO client | Parsed as a boolean in code |
-| `MINIO_PUBLIC_URL` | `http://localhost:9000` | Media presigned URLs | Browser-facing MinIO origin used to generate presigned media URLs when the backend connects through an internal endpoint such as `minio:9000` |
+| `MINIO_PUBLIC_URL` | `http://localhost:9000` | Media presigned URLs | Browser-facing MinIO origin used to generate presigned media URLs when the backend connects through an internal endpoint such as `minio:9000`. If the app is opened from another host, set this to that Docker host's browser-reachable address. |
 
 ## Docker Compose Variables
 
@@ -87,7 +87,8 @@ The repository does not yet contain a full production deployment contract, but t
 3. Use real MongoDB and MinIO endpoints instead of local or Compose hostnames.
 4. Decide whether MinIO traffic should use TLS and set `MINIO_USE_SSL` accordingly.
 5. Set `MINIO_PUBLIC_URL` to a browser-reachable MinIO origin if the backend connects through an internal hostname such as `minio:9000`.
-6. Do not rely on `VITE_APP_NAME` until the frontend reads it from `import.meta.env`.
+6. If you run Docker on one machine and open the app from another, set `MINIO_PUBLIC_URL` in the root `.env` to the Docker host address, for example `http://192.168.1.50:9000`, so trade-detail media does not point at `localhost`.
+7. Do not rely on `VITE_APP_NAME` until the frontend reads it from `import.meta.env`.
 
 ## Startup Validation And Failure Mode
 

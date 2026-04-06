@@ -36,6 +36,14 @@ To run it in the background:
 docker compose up -d --build
 ```
 
+If you open the app from another machine instead of `localhost`, set `MINIO_PUBLIC_URL` in the root `.env` to the Docker host's browser-reachable MinIO address before starting the stack. Otherwise trade-detail media URLs may still point at `localhost`.
+
+Example:
+
+```env
+MINIO_PUBLIC_URL=http://192.168.1.50:9000
+```
+
 ### Option 2: Mixed Local App plus Docker Services
 
 This is useful when you want MongoDB and MinIO in Docker, but you want to run Flask and Vite directly on your machine.

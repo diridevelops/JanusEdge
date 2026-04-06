@@ -53,6 +53,12 @@ This starts:
 
 After startup, open [http://localhost:5173](http://localhost:5173).
 
+If you run the Docker stack on a machine that you access from another host, update `MINIO_PUBLIC_URL` in the root `.env` to that machine's browser-reachable address so trade-detail media loads correctly. Example:
+
+```env
+MINIO_PUBLIC_URL=http://192.168.1.50:9000
+```
+
 To stop the stack later:
 
 ```bash

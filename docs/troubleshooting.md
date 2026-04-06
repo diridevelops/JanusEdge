@@ -114,12 +114,19 @@ If uploads still fail:
 1. verify `MINIO_BUCKET` matches the intended bucket name
 2. verify `MINIO_ACCESS_KEY` and `MINIO_SECRET_KEY` are valid for the MinIO server you are using
 3. confirm the backend can reach the MinIO endpoint you configured
+4. if the app is opened from another host, set `MINIO_PUBLIC_URL` in the root `.env` to the Docker host address instead of leaving it on `localhost`
 
 The current media rules are:
 
 - maximum file size `500 MB`
 - maximum `20` attachments per trade
 - allowed content types limited to common image and video formats
+
+Example remote-host setting:
+
+```env
+MINIO_PUBLIC_URL=http://192.168.1.50:9000
+```
 
 ## Authentication Problems After Login
 
