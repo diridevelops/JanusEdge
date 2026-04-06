@@ -175,24 +175,29 @@ def resolve_market_data_symbol(
     raw_symbol: str | None = None,
     market_data_mappings: Mapping[str, Any] | None = None,
 ) -> str:
-    """Resolve the symbol key used for stored market data."""
+    """Resolve the canonical symbol key used for stored market data."""
 
     effective_mappings = get_effective_market_data_mappings(
         market_data_mappings
     )
+    base_symbol = _resolve_base_symbol(symbol, raw_symbol)
+    return _resolve_market_data_mapping(
+        base_symbol,
+        effective_mappings,
+    )
 
-    for candidate in _iter_symbol_candidates(
+
+def resolve_market_data_storage_symbol(
+    symbol: str,
+    raw_symbol: str | None = None,
+    market_data_mappings: Mapping[str, Any] | None = None,
+) -> str:
+    """Return the canonical symbol key used for dataset storage."""
+
+    return resolve_market_data_symbol(
         symbol,
         raw_symbol,
-    ):
-        return _resolve_market_data_mapping(
-            candidate,
-            effective_mappings,
-        )
-
-    return _resolve_market_data_mapping(
-        _normalize_symbol_candidate(symbol),
-        effective_mappings,
+        market_data_mappings,
     )
 
 
@@ -208,6 +213,14 @@ def resolve_market_data_symbols(
     effective_mappings = get_effective_market_data_mappings(
         market_data_mappings
     )
+    storage_symbol = resolve_market_data_storage_symbol(
+        symbol,
+        raw_symbol,
+        effective_mappings,
+    )
+    if storage_symbol:
+        resolved_symbols.append(storage_symbol)
+        seen.add(storage_symbol)
 
     for candidate in _iter_symbol_candidates(symbol, raw_symbol):
         for resolved_candidate in (
@@ -280,7 +293,7 @@ def _iter_symbol_candidates(
     candidates: list[str] = []
     seen: set[str] = set()
 
-    for candidate in (raw_symbol, symbol):
+    for candidate in (symbol, raw_symbol):
         if candidate is None:
             continue
 
@@ -290,6 +303,31 @@ def _iter_symbol_candidates(
             seen.add(normalized)
 
     return candidates
+
+
+def _resolve_base_symbol(
+    symbol: str,
+    raw_symbol: str | None,
+) -> str:
+    """Resolve the normalized instrument/base symbol for storage."""
+
+    mappings = get_default_symbol_mappings()
+    ordered_symbols = sorted(
+        mappings,
+        key=lambda value: (-len(value), value),
+    )
+
+    for candidate in _iter_symbol_candidates(symbol, raw_symbol):
+        for base_symbol in ordered_symbols:
+            if candidate.startswith(base_symbol):
+                return base_symbol
+
+    for candidate in _iter_symbol_candidates(symbol, raw_symbol):
+        head = candidate.split(" ", 1)[0]
+        if head:
+            return head
+
+    return _normalize_symbol_candidate(symbol)
 
 
 def _normalize_symbol_candidate(value: str) -> str:

@@ -20,6 +20,7 @@ from flask import current_app
 
 from app.market_data.symbol_mapper import (
     resolve_market_data_symbol,
+    resolve_market_data_storage_symbol,
     resolve_market_data_symbols,
 )
 from app.models.market_data import create_market_data_doc
@@ -231,6 +232,8 @@ class TickDataService:
                 "app": app,
                 "batch_id": batch_id,
                 "temp_path": temp_path,
+                "base_symbol": base_symbol or guessed_raw_symbol or "",
+                "market_data_mappings": market_data_mappings,
                 "symbol": dataset_symbol,
                 "raw_symbol": guessed_raw_symbol,
                 "file_name": file_name,
@@ -335,13 +338,27 @@ class TickDataService:
         *,
         symbol: str,
         trading_day: date,
+        market_data_mappings: Mapping[str, str] | None = None,
     ) -> int:
         """Delete all stored datasets for one saved market-data day."""
 
-        documents = self.dataset_repo.find_documents_for_saved_day(
-            symbol=symbol,
-            trading_day=trading_day,
+        storage_symbol = resolve_market_data_storage_symbol(
+            symbol,
+            None,
+            market_data_mappings,
         )
+        documents = [
+            document
+            for document in self.dataset_repo.find_documents_for_day(
+                trading_day=trading_day,
+            )
+            if resolve_market_data_storage_symbol(
+                document.get("symbol", ""),
+                document.get("raw_symbol"),
+                market_data_mappings,
+            )
+            == storage_symbol
+        ]
         if not documents:
             raise NotFoundError(
                 "Saved market-data day not found."
@@ -688,6 +705,8 @@ class TickDataService:
         app,
         batch_id: str,
         temp_path: str,
+        base_symbol: str,
+        market_data_mappings: Mapping[str, str] | None,
         symbol: str,
         raw_symbol: str | None,
         file_name: str,
@@ -762,6 +781,8 @@ class TickDataService:
                         elif tick_day != current_day:
                             datasets_written += (
                                 self._flush_daily_partition(
+                                    base_symbol=base_symbol,
+                                    market_data_mappings=market_data_mappings,
                                     symbol=symbol,
                                     raw_symbol=raw_symbol,
                                     trading_day=current_day,
@@ -791,6 +812,8 @@ class TickDataService:
 
                 if current_day is not None and current_rows:
                     datasets_written += self._flush_daily_partition(
+                        base_symbol=base_symbol,
+                        market_data_mappings=market_data_mappings,
                         symbol=symbol,
                         raw_symbol=raw_symbol,
                         trading_day=current_day,
@@ -1013,6 +1036,8 @@ class TickDataService:
     def _flush_daily_partition(
         self,
         *,
+        base_symbol: str,
+        market_data_mappings: Mapping[str, str] | None,
         symbol: str,
         raw_symbol: str | None,
         trading_day: date,
@@ -1026,6 +1051,13 @@ class TickDataService:
         ticks_frame["timestamp"] = pd.to_datetime(
             ticks_frame["timestamp"],
             utc=True,
+        )
+        self._delete_alias_datasets_for_day(
+            base_symbol=base_symbol,
+            raw_symbol=raw_symbol,
+            storage_symbol=symbol,
+            trading_day=trading_day,
+            market_data_mappings=market_data_mappings,
         )
 
         datasets_written = 1
@@ -1062,6 +1094,43 @@ class TickDataService:
             import_batch_id=import_batch_id,
         )
         return datasets_written
+
+    def _delete_alias_datasets_for_day(
+        self,
+        *,
+        base_symbol: str,
+        raw_symbol: str | None,
+        storage_symbol: str,
+        trading_day: date,
+        market_data_mappings: Mapping[str, str] | None,
+    ) -> None:
+        """Remove same-day alias datasets that should collapse into one symbol."""
+
+        alias_symbols = resolve_market_data_symbols(
+            base_symbol or storage_symbol,
+            raw_symbol,
+            market_data_mappings,
+        )
+        documents = self.dataset_repo.find_documents_for_symbols_and_day(
+            symbols=alias_symbols,
+            trading_day=trading_day,
+        )
+        alias_documents = [
+            document
+            for document in documents
+            if document.get("symbol") != storage_symbol
+        ]
+        if not alias_documents:
+            return
+
+        for document in alias_documents:
+            object_key = document.get("object_key")
+            if object_key:
+                self.parquet_store.delete_object(object_key)
+
+        self.dataset_repo.delete_documents_by_ids(
+            document["_id"] for document in alias_documents
+        )
 
     def _write_candle_datasets(
         self,

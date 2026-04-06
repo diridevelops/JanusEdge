@@ -310,6 +310,52 @@ class MarketDataRepository(BaseRepository):
             ],
         )
 
+    def find_documents_for_symbols_and_day(
+        self,
+        *,
+        symbols: Iterable[str],
+        trading_day: date,
+    ) -> List[dict]:
+        """Return all ready dataset documents for any alias on one day."""
+
+        normalized_symbols = self._normalize_symbol_filters(symbols)
+        if not normalized_symbols:
+            return []
+
+        return self.find_many(
+            {
+                "symbol": {"$in": normalized_symbols},
+                "date": self._to_datetime(trading_day),
+                "status": "ready",
+            },
+            sort=[
+                ("symbol", 1),
+                ("dataset_type", 1),
+                ("timeframe", 1),
+                ("updated_at", -1),
+            ],
+        )
+
+    def find_documents_for_day(
+        self,
+        *,
+        trading_day: date,
+    ) -> List[dict]:
+        """Return all ready dataset documents for one trading day."""
+
+        return self.find_many(
+            {
+                "date": self._to_datetime(trading_day),
+                "status": "ready",
+            },
+            sort=[
+                ("symbol", 1),
+                ("dataset_type", 1),
+                ("timeframe", 1),
+                ("updated_at", -1),
+            ],
+        )
+
     def delete_documents_by_ids(
         self,
         document_ids: Iterable[ObjectId],

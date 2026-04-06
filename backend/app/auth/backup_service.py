@@ -15,6 +15,7 @@ from app.auth.schemas import BackupManifestSchema
 from app.market_data.symbol_mapper import (
     get_effective_market_data_mappings,
     get_effective_symbol_mappings,
+    resolve_market_data_storage_symbol,
     validate_market_data_mappings,
     validate_symbol_mappings,
 )
@@ -305,7 +306,11 @@ class PortableBackupService:
             "trades": trades,
             "executions": executions,
             "media": payload_media,
-            "market_data_datasets": self._collect_market_data(),
+            "market_data_datasets": self._collect_market_data(
+                get_effective_market_data_mappings(
+                    user.get("market_data_mappings")
+                )
+            ),
         }
 
     def _build_manifest(self, payload: dict) -> dict:
@@ -345,7 +350,10 @@ class PortableBackupService:
         for dataset_doc in dataset_docs:
             response = client.get_object(
                 bucket,
-                dataset_doc["object_key"],
+                dataset_doc.get(
+                    "source_object_key",
+                    dataset_doc["object_key"],
+                ),
             )
             try:
                 archive.writestr(
@@ -773,6 +781,7 @@ class PortableBackupService:
 
             new_doc = deepcopy(source_doc)
             new_doc.pop("archive_path", None)
+            new_doc.pop("source_object_key", None)
             new_doc["_id"] = ObjectId()
             self.market_data_repo.upsert_document(new_doc)
             summary["market_data_datasets"]["upserted"] += 1
@@ -782,27 +791,120 @@ class PortableBackupService:
 
     def _collect_market_data(
         self,
+        market_data_mappings: dict | None,
     ) -> List[dict]:
         """Collect all ready market-data datasets for portable backup."""
 
         datasets = self.market_data_repo.find_all_ready_documents()
-        payload: list[dict] = []
+        selected: dict[tuple[str, str, str | None, object], dict] = {}
         for dataset in datasets:
+            storage_symbol = resolve_market_data_storage_symbol(
+                dataset.get("symbol", ""),
+                dataset.get("raw_symbol"),
+                market_data_mappings,
+            )
+            if not storage_symbol:
+                continue
+
             dataset_copy = deepcopy(dataset)
             dataset_date = dataset.get("date")
             if hasattr(dataset_date, "date"):
                 dataset_date = dataset_date.date()
+            dataset_copy["source_object_key"] = dataset["object_key"]
+            dataset_copy["symbol"] = storage_symbol
+            dataset_copy["object_key"] = (
+                self._build_market_data_object_key(
+                    storage_symbol,
+                    dataset["dataset_type"],
+                    dataset.get("timeframe"),
+                    dataset_date,
+                )
+            )
             dataset_copy["archive_path"] = (
                 f"{MARKET_DATA_PREFIX}/"
-                f"{self._sanitize_filename(dataset['symbol'])}/"
+                f"{self._sanitize_filename(storage_symbol)}/"
                 f"{dataset['dataset_type']}/"
                 f"{self._sanitize_filename(dataset.get('timeframe') or 'raw')}/"
                 f"{dataset_date.year:04d}/"
                 f"{dataset_date.month:02d}/"
                 f"{dataset_date.day:02d}.parquet"
             )
-            payload.append(dataset_copy)
+            key = (
+                storage_symbol,
+                dataset["dataset_type"],
+                dataset.get("timeframe"),
+                dataset_date,
+            )
+            existing = selected.get(key)
+            if existing is None or self._prefer_market_data_export_document(
+                dataset_copy,
+                existing,
+            ):
+                selected[key] = dataset_copy
+
+        payload = sorted(
+            selected.values(),
+            key=lambda dataset: (
+                dataset["symbol"],
+                dataset["dataset_type"],
+                dataset.get("timeframe") or "",
+                dataset["date"],
+            ),
+        )
         return payload
+
+    @staticmethod
+    def _prefer_market_data_export_document(
+        candidate: dict,
+        existing: dict,
+    ) -> bool:
+        """Choose the best document when multiple aliases map to one key."""
+
+        candidate_exact = (
+            candidate.get("source_object_key", "")
+            == candidate.get("object_key", "")
+        )
+        existing_exact = (
+            existing.get("source_object_key", "")
+            == existing.get("object_key", "")
+        )
+        if candidate_exact != existing_exact:
+            return candidate_exact
+
+        candidate_updated = candidate.get("updated_at") or candidate.get(
+            "created_at"
+        )
+        existing_updated = existing.get("updated_at") or existing.get(
+            "created_at"
+        )
+        if candidate_updated != existing_updated:
+            return candidate_updated > existing_updated
+
+        return str(candidate.get("_id", "")) > str(
+            existing.get("_id", "")
+        )
+
+    @staticmethod
+    def _build_market_data_object_key(
+        symbol: str,
+        dataset_type: str,
+        timeframe: str | None,
+        trading_day,
+    ) -> str:
+        """Build the canonical object key used for backup restore."""
+
+        safe_symbol = symbol.replace("/", "_").replace("\\", "_")
+        if dataset_type == "ticks":
+            return (
+                f"{safe_symbol}/{dataset_type}/"
+                f"{trading_day.year:04d}/{trading_day.month:02d}/"
+                f"{trading_day.day:02d}.parquet"
+            )
+        return (
+            f"{safe_symbol}/{dataset_type}/{timeframe}/"
+            f"{trading_day.year:04d}/{trading_day.month:02d}/"
+            f"{trading_day.day:02d}.parquet"
+        )
 
     @staticmethod
     def _sanitize_filename(filename: str) -> str:

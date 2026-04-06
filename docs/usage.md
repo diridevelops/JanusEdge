@@ -281,6 +281,7 @@ If your file is named differently, fill the override fields before starting the 
 
 - `Raw Symbol Override`: the full platform/export symbol used for market-data lookup, for example `MES 06-26`
 - `Normalized Symbol Override`: the base symbol only, for example `MES`
+- imported market data is stored by the normalized instrument symbol, so re-importing the same symbol and trading day replaces the existing stored day instead of creating a second raw-symbol variant
 
 If imported market data does not appear later on trade charts or on the What-if page, the most common cause is that the filename-derived raw symbol did not match the symbol family you expected.
 

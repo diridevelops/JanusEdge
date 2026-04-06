@@ -224,12 +224,12 @@ Notes:
 ```json
 {
   "_id": "ObjectId",
-  "symbol": "MES 06-26",
+  "symbol": "MES",
   "raw_symbol": "MES 06-26",
   "dataset_type": "candles",
   "timeframe": "5m",
   "date": "datetime at day precision",
-  "object_key": "MES 06-26/candles/5m/2026/01/02.parquet",
+  "object_key": "MES/candles/5m/2026/01/02.parquet",
   "row_count": 0,
   "byte_size": 0,
   "source_file_name": "MES 06-26.Last.txt",

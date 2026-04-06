@@ -774,17 +774,17 @@ def test_export_backup_is_complete_and_self_contained(
         dataset["symbol"]
         for dataset in payload["market_data_datasets"]
     } == {
-        "MES 06-26",
-        "NQ 06-26",
+        "ES",
+        "NQ",
     }
     assert {
         dataset["archive_path"]
         for dataset in payload["market_data_datasets"]
     } == {
-        "market-data/MES 06-26/candles/1m/2026/01/02.parquet",
-        "market-data/MES 06-26/candles/5m/2026/01/02.parquet",
-        "market-data/MES 06-26/candles/5m/2026/01/03.parquet",
-        "market-data/NQ 06-26/candles/5m/2026/01/02.parquet",
+        "market-data/ES/candles/1m/2026/01/02.parquet",
+        "market-data/ES/candles/5m/2026/01/02.parquet",
+        "market-data/ES/candles/5m/2026/01/03.parquet",
+        "market-data/NQ/candles/5m/2026/01/02.parquet",
     }
     for dataset_doc in payload["market_data_datasets"]:
         assert dataset_doc["archive_path"] in names
@@ -873,8 +873,68 @@ def test_export_backup_market_data_archive_paths_include_year_month_day(
     }
 
     assert archive_paths == {
-        "market-data/MES 06-26/candles/1h/2026/02/19.parquet"
+        "market-data/ES/candles/1h/2026/02/19.parquet"
     }
+
+
+def test_export_backup_dedupes_legacy_market_data_symbol_aliases(
+    client, app
+):
+    """Export collapses raw-symbol aliases onto one canonical symbol/day."""
+
+    token, user_id = _register_and_login(
+        client, "source-export-dedupe"
+    )
+
+    _store_market_dataset(
+        app,
+        symbol="ES 03-26",
+        raw_symbol="ES 03-26",
+        dataset_type="candles",
+        timeframe="5m",
+        trading_day=datetime(2026, 1, 2),
+        rows=[
+            {
+                "time": 1767364200,
+                "open": 5000.0,
+                "high": 5002.0,
+                "low": 4999.0,
+                "close": 5001.0,
+                "volume": 10,
+            }
+        ],
+    )
+    _store_market_dataset(
+        app,
+        symbol="ES 202601",
+        raw_symbol="ES 202601",
+        dataset_type="candles",
+        timeframe="5m",
+        trading_day=datetime(2026, 1, 2),
+        rows=[
+            {
+                "time": 1767364200,
+                "open": 5000.0,
+                "high": 5003.0,
+                "low": 4998.0,
+                "close": 5002.0,
+                "volume": 12,
+            }
+        ],
+    )
+
+    archive_bytes = _export_archive_bytes(client, token)
+    _, payload, _ = _parse_archive(archive_bytes)
+
+    assert len(payload["market_data_datasets"]) == 1
+    exported_dataset = payload["market_data_datasets"][0]
+    assert exported_dataset["symbol"] == "ES"
+    assert exported_dataset["archive_path"] == (
+        "market-data/ES/candles/5m/2026/01/02.parquet"
+    )
+    assert exported_dataset["object_key"] == (
+        "ES/candles/5m/2026/01/02.parquet"
+    )
 
 
 def test_restore_into_different_user_remaps_graph_and_media(
@@ -1009,13 +1069,13 @@ def test_restore_into_different_user_remaps_graph_and_media(
 
         restored_cache = list(
             mongo.db.market_data_datasets.find(
-                {"symbol": "MES 06-26"}
+                {"symbol": "ES"}
             )
         )
         assert len(restored_cache) == 3
         restored_nq_cache = list(
             mongo.db.market_data_datasets.find(
-                {"symbol": "NQ 06-26"}
+                {"symbol": "NQ"}
             )
         )
         assert len(restored_nq_cache) == 1
