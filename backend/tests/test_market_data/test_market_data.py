@@ -44,7 +44,7 @@ class TestSymbolMapper:
     def test_defaults_to_self_without_explicit_mapping(self):
         assert (
             resolve_market_data_symbol("MES", "MES 03-26")
-            == "MES 03-26"
+            == "MES"
         )
         assert resolve_market_data_symbol("mes") == "MES"
 
@@ -60,7 +60,7 @@ class TestSymbolMapper:
                 "MES 03-26",
                 market_data_mappings,
             )
-            == "ES 03-26"
+            == "ES"
         )
         assert (
             resolve_market_data_symbol(
@@ -68,7 +68,7 @@ class TestSymbolMapper:
                 "MESM26",
                 market_data_mappings,
             )
-            == "ESM26"
+            == "ES"
         )
 
     def test_returns_explicit_and_original_symbol_aliases(self):
@@ -77,10 +77,10 @@ class TestSymbolMapper:
             "MES 03-26",
             {"MES": "ES"},
         ) == [
-            "ES 03-26",
-            "MES 03-26",
             "ES",
             "MES",
+            "ES 03-26",
+            "MES 03-26",
         ]
 
     def test_default_symbol_mapping_keeps_point_values_only(self):
@@ -444,7 +444,7 @@ class TestMarketDataRoutes:
         assert payload["saved_days"] == [
             {
                 "date": "2026-01-06",
-                "symbol": "ES 06-26",
+                "symbol": "ES",
                 "raw_symbol": "ES 06-26",
                 "available_timeframes": ["1m", "5m"],
                 "has_ticks": True,
@@ -452,7 +452,7 @@ class TestMarketDataRoutes:
             },
             {
                 "date": "2026-01-05",
-                "symbol": "NQ 06-26",
+                "symbol": "NQ",
                 "raw_symbol": "NQ 06-26",
                 "available_timeframes": ["1m"],
                 "has_ticks": False,
@@ -559,7 +559,7 @@ class TestMarketDataRoutes:
             "/api/market-data/saved-days",
             headers=headers,
             query_string={
-                "symbol": "ES 06-26",
+                "symbol": "ES",
                 "date": "2026-01-06",
             },
         )
@@ -631,7 +631,7 @@ class TestMarketDataRoutes:
             "/api/market-data/saved-days",
             headers=headers,
             query_string={
-                "symbol": "NQ 06-26",
+                "symbol": "NQ",
                 "date": "2026-01-05",
             },
         )
@@ -663,7 +663,7 @@ class TestMarketDataRoutes:
             "/api/market-data/saved-days",
             headers=headers,
             query_string={
-                "symbol": "ES 06-26",
+                "symbol": "ES",
                 "date": "2026-01-06",
             },
         )
@@ -679,7 +679,7 @@ class TestMarketDataRoutes:
         response = client.delete(
             "/api/market-data/saved-days",
             query_string={
-                "symbol": "ES 06-26",
+                "symbol": "ES",
                 "date": "2026-01-06",
             },
         )
@@ -756,7 +756,7 @@ class TestMarketDataRoutes:
             "/api/market-data/saved-days",
             headers=headers,
             query_string={
-                "symbol": "ES 06-26",
+                "symbol": "ES",
                 "date": "2026-01-06",
             },
         )
@@ -781,3 +781,72 @@ class TestMarketDataRoutes:
             "remove_object",
             original_remove_object,
         )
+
+    def test_saved_days_collapse_legacy_raw_symbol_aliases(
+        self,
+        client,
+        seed_market_data_dataset,
+    ):
+        """Legacy raw-symbol variants collapse into one canonical saved day."""
+
+        headers, _ = _register_and_login(client)
+        trading_day = date(2026, 1, 6)
+        seed_market_data_dataset(
+            symbol="ES 03-26",
+            raw_symbol="ES 03-26",
+            dataset_type="ticks",
+            trading_day=trading_day,
+            rows=[
+                {
+                    "timestamp": "2026-01-06T14:30:00+00:00",
+                    "last_price": 5000.0,
+                    "bid_price": 4999.75,
+                    "ask_price": 5000.25,
+                    "size": 1,
+                }
+            ],
+        )
+        seed_market_data_dataset(
+            symbol="ES 202601",
+            raw_symbol="ES 202601",
+            dataset_type="candles",
+            timeframe="1m",
+            trading_day=trading_day,
+            rows=[
+                {
+                    "time": int(
+                        datetime(
+                            2026,
+                            1,
+                            6,
+                            14,
+                            30,
+                            tzinfo=timezone.utc,
+                        ).timestamp()
+                    ),
+                    "open": 5000.0,
+                    "high": 5001.0,
+                    "low": 4999.0,
+                    "close": 5000.5,
+                    "volume": 2,
+                }
+            ],
+        )
+
+        response = client.get(
+            "/api/market-data/saved-days",
+            headers=headers,
+        )
+
+        assert response.status_code == 200
+        payload = response.get_json()
+        assert payload["saved_days"] == [
+            {
+                "date": "2026-01-06",
+                "symbol": "ES",
+                "raw_symbol": "ES 03-26",
+                "available_timeframes": ["1m"],
+                "has_ticks": True,
+                "updated_at": payload["saved_days"][0]["updated_at"],
+            }
+        ]

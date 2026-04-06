@@ -93,6 +93,7 @@ def delete_saved_day():
     """Delete all stored datasets for one saved market-data day."""
 
     market_data_service.delete_saved_day(
+        user_id=get_jwt_identity(),
         symbol=request.args.get("symbol", ""),
         trading_day=request.args.get("date", ""),
     )

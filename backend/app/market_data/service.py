@@ -8,6 +8,7 @@ from bson import ObjectId
 
 from app.market_data.symbol_mapper import (
     get_effective_market_data_mappings,
+    resolve_market_data_storage_symbol,
 )
 from app.repositories.market_data_repo import MarketDataRepository
 from app.repositories.user_repo import UserRepository
@@ -106,7 +107,16 @@ class MarketDataService:
     def list_saved_days(self, user_id: str) -> List[dict]:
         """Return saved market-data day summaries ordered by date."""
 
-        del user_id
+        user = None
+        if ObjectId.is_valid(user_id):
+            user = self.user_repo.find_by_id(user_id)
+        market_data_mappings = (
+            get_effective_market_data_mappings(
+                user.get("market_data_mappings")
+                if user
+                else None
+            )
+        )
 
         summaries: dict[tuple[str, dt.date], dict] = {}
         for document in self.dataset_repo.find_saved_day_documents():
@@ -116,12 +126,20 @@ class MarketDataService:
             else:
                 trading_day = document_date
 
-            summary_key = (document["symbol"], trading_day)
+            storage_symbol = resolve_market_data_storage_symbol(
+                document.get("symbol", ""),
+                document.get("raw_symbol"),
+                market_data_mappings,
+            )
+            if not storage_symbol:
+                continue
+
+            summary_key = (storage_symbol, trading_day)
             summary = summaries.get(summary_key)
             if summary is None:
                 summary = {
                     "date": trading_day.isoformat(),
-                    "symbol": document["symbol"],
+                    "symbol": storage_symbol,
                     "raw_symbol": document.get("raw_symbol"),
                     "available_timeframes": [],
                     "has_ticks": False,
@@ -170,6 +188,7 @@ class MarketDataService:
     def delete_saved_day(
         self,
         *,
+        user_id: str,
         symbol: str,
         trading_day: str,
     ) -> int:
@@ -189,9 +208,21 @@ class MarketDataService:
                 "Date must be in YYYY-MM-DD format."
             ) from exc
 
+        user = None
+        if ObjectId.is_valid(user_id):
+            user = self.user_repo.find_by_id(user_id)
+        market_data_mappings = (
+            get_effective_market_data_mappings(
+                user.get("market_data_mappings")
+                if user
+                else None
+            )
+        )
+
         return self.tick_data_service.delete_saved_day(
             symbol=symbol.strip(),
             trading_day=parsed_trading_day,
+            market_data_mappings=market_data_mappings,
         )
 
     @staticmethod

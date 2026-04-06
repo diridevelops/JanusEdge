@@ -206,7 +206,7 @@ Market-data lookup and point-value lookup are configured separately:
 - `market_data_mappings` controls explicit cross-symbol market-data lookup.
 - When no `market_data_mappings` entry matches, the backend looks up the imported symbol as-is. There are no built-in cross-symbol defaults.
 
-The resolved market-data key prefers `raw_symbol` when present and otherwise falls back to the normalized trade symbol. Each dataset metadata document includes the symbol, raw symbol, dataset type, timeframe, trading date, MinIO object key, row count, byte size, source file name, import batch id, and timestamps.
+The backend stores market-data datasets under the normalized instrument symbol after applying any configured market-data mapping. Raw contract strings are retained in `raw_symbol` for traceability, but same-symbol same-day reimports overwrite the existing datasets instead of creating additional raw-symbol variants. Each dataset metadata document includes the symbol, raw symbol, dataset type, timeframe, trading date, MinIO object key, row count, byte size, source file name, import batch id, and timestamps.
 
 Authenticated tick-data endpoints:
 

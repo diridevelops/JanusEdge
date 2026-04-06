@@ -259,6 +259,7 @@ The frontend currently expects each OHLC point to look like:
 - preview and import infer `raw_symbol` from the uploaded filename stem unless an override is supplied
 - preview and import infer normalized `symbol` from the first token of that filename stem, for example `MES 06-26.txt` -> `symbol=MES`, `raw_symbol=MES 06-26`
 - if the filename does not match the platform/export symbol, the caller must provide the correct `raw_symbol` and optionally `symbol`
+- stored market-data datasets are keyed by the normalized instrument symbol after applying any configured market-data mapping, so repeated imports for the same symbol and trading day overwrite the prior day instead of creating parallel raw-symbol folders
 - preview parsing now runs as a background batch and uses the same persisted progress shape as imports
 - the backend writes raw daily ticks and derived daily candles to Snappy-compressed Parquet in MinIO
 - deleting a saved day removes both the raw tick dataset and all derived candle datasets for that `symbol + date` group
