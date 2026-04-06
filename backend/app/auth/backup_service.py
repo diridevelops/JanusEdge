@@ -33,6 +33,7 @@ from app.repositories.tag_repo import TagRepository
 from app.repositories.trade_repo import TradeRepository
 from app.repositories.user_repo import UserRepository
 from app.storage import (
+    ensure_bucket_exists,
     get_bucket,
     get_client,
     get_market_data_bucket,
@@ -723,6 +724,7 @@ class PortableBackupService:
         """Restore media objects and metadata for inserted trades only."""
         client = get_client()
         bucket = get_bucket()
+        ensure_bucket_exists(client, bucket)
 
         for source_doc in media_docs:
             source_trade_id = source_doc.get("trade_id")
@@ -767,6 +769,7 @@ class PortableBackupService:
 
         client = get_client()
         bucket = get_market_data_bucket()
+        ensure_bucket_exists(client, bucket)
 
         for source_doc in market_data_docs:
             archive_path = source_doc["archive_path"]

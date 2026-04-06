@@ -58,9 +58,10 @@ export interface RestoreDuplicateSummary {
   skipped: number;
 }
 
-/** Market data cache restore summary. */
+/** Market data restore summary. */
 export interface RestoreMarketDataSummary {
   upserted: number;
+  objects_restored?: number;
 }
 
 /** User settings updated during restore. */
@@ -76,7 +77,8 @@ export interface RestoreSummary {
   trades: RestoreDuplicateSummary;
   executions: RestoreDuplicateSummary;
   media: RestoreDuplicateSummary;
-  market_data_cache: RestoreMarketDataSummary;
+  market_data_datasets?: RestoreMarketDataSummary;
+  market_data_cache?: RestoreMarketDataSummary;
   settings: RestoreSettingsSummary;
 }
 

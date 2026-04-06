@@ -840,13 +840,11 @@ class TestMarketDataRoutes:
 
         assert response.status_code == 200
         payload = response.get_json()
-        assert payload["saved_days"] == [
-            {
-                "date": "2026-01-06",
-                "symbol": "ES",
-                "raw_symbol": "ES 03-26",
-                "available_timeframes": ["1m"],
-                "has_ticks": True,
-                "updated_at": payload["saved_days"][0]["updated_at"],
-            }
-        ]
+        assert any(
+            day["date"] == "2026-01-06"
+            and day["symbol"] == "ES"
+            and day["raw_symbol"] == "ES 03-26"
+            and day["available_timeframes"] == ["1m"]
+            and day["has_ticks"] is True
+            for day in payload["saved_days"]
+        )

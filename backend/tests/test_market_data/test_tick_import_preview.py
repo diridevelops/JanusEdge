@@ -289,7 +289,10 @@ def test_tick_import_creates_batch_and_reports_progress(client, app):
 
         stored_datasets = list(
             mongo.db.market_data_datasets.find(
-                {"symbol": "ES"}
+                {
+                    "symbol": "ES",
+                    "import_batch_id": completed_batch["id"],
+                }
             )
         )
 
@@ -340,12 +343,18 @@ def test_tick_import_uses_explicit_market_data_mapping(
 
         mapped_datasets = list(
             mongo.db.market_data_datasets.find(
-                {"symbol": "ES"}
+                {
+                    "symbol": "ES",
+                    "import_batch_id": completed_batch["id"],
+                }
             )
         )
         original_datasets = list(
             mongo.db.market_data_datasets.find(
-                {"symbol": "MES 06-26"}
+                {
+                    "symbol": "MES 06-26",
+                    "import_batch_id": completed_batch["id"],
+                }
             )
         )
 

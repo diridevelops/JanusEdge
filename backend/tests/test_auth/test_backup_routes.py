@@ -24,6 +24,7 @@ from app.models.tag import create_tag_doc
 from app.models.trade import create_trade_doc
 from app.models.trade_account import create_trade_account_doc
 from app.tick_data.parquet_store import MarketDataParquetStore
+from app.repositories.market_data_repo import MarketDataRepository
 from app.utils.trade_fingerprint import (
     build_trade_fingerprint,
 )
@@ -219,9 +220,7 @@ def _store_market_dataset(
             source_file_name="backup-test.txt",
         )
         document["_id"] = ObjectId()
-        from app.extensions import mongo
-
-        mongo.db.market_data_datasets.insert_one(document)
+        MarketDataRepository().upsert_document(document)
         return document
 
 
@@ -1079,6 +1078,56 @@ def test_restore_into_different_user_remaps_graph_and_media(
             )
         )
         assert len(restored_nq_cache) == 1
+
+
+def test_restore_recreates_missing_minio_buckets_before_writes(
+    client, app, monkeypatch
+):
+    """Restore recreates missing MinIO buckets before writing objects."""
+
+    source_token, source_user_id = _register_and_login(
+        client, "source-restore-missing-buckets"
+    )
+    _seed_portable_backup_graph(app, source_user_id)
+    archive_bytes = _export_archive_bytes(client, source_token)
+
+    dest_token, _ = _register_and_login(
+        client, "destination-restore-missing-buckets"
+    )
+
+    with app.app_context():
+        from app.storage import get_client
+
+        client_store = get_client()
+        client_store.buckets.clear()
+        original_put_object = client_store.put_object
+
+        def strict_put_object(
+            bucket: str,
+            object_name: str,
+            data,
+            length: int,
+            content_type: str | None = None,
+        ) -> None:
+            if bucket not in client_store.buckets:
+                raise RuntimeError("bucket missing")
+            original_put_object(
+                bucket,
+                object_name,
+                data,
+                length,
+                content_type,
+            )
+
+        monkeypatch.setattr(
+            client_store,
+            "put_object",
+            strict_put_object,
+        )
+
+    response = _restore_archive(client, dest_token, archive_bytes)
+
+    assert response.status_code == 200
 
 
 def test_restore_merge_into_empty_user_creates_all_records(

@@ -28,6 +28,12 @@ def _ensure_bucket(client: Minio, bucket: str) -> None:
     logger.info("MinIO bucket already exists: %s", bucket)
 
 
+def ensure_bucket_exists(client: Minio, bucket: str) -> None:
+    """Public wrapper for ensuring a bucket exists before writes."""
+
+    _ensure_bucket(client, bucket)
+
+
 def _build_public_client(
     public_url: str,
     *,

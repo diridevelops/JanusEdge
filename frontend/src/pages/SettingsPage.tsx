@@ -40,7 +40,10 @@ const TIMEZONES = [
 ];
 
 const RESTORE_SUMMARY_ITEMS: Array<{
-  key: keyof Omit<RestoreSummary, 'market_data_cache' | 'settings'>;
+  key: keyof Omit<
+    RestoreSummary,
+    'market_data_cache' | 'market_data_datasets' | 'settings'
+  >;
   label: string;
 }> = [
   { key: 'accounts', label: 'Accounts' },
@@ -254,6 +257,9 @@ export function SettingsPage() {
   const [restoreLoading, setRestoreLoading] = useState(false);
   const [restoreSummary, setRestoreSummary] = useState<RestoreSummary | null>(null);
   const [restoredFilename, setRestoredFilename] = useState<string>('');
+
+  const restoreMarketDataSummary =
+    restoreSummary?.market_data_datasets ?? restoreSummary?.market_data_cache ?? null;
 
   useEffect(() => {
     setTimezone(user?.timezone ?? 'America/New_York');
@@ -891,12 +897,18 @@ export function SettingsPage() {
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
               <div className="rounded-md border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-800">
                 <div className="text-xs font-medium uppercase tracking-wide text-gray-500 dark:text-gray-400">
-                  Market Data Cache
+                  Market Data
                 </div>
                 <div className="mt-2 flex items-center justify-between text-sm text-gray-700 dark:text-gray-300">
                   <span>Upserted</span>
                   <span className="font-semibold text-gray-900 dark:text-gray-100">
-                    {restoreSummary.market_data_cache.upserted}
+                    {restoreMarketDataSummary?.upserted ?? 0}
+                  </span>
+                </div>
+                <div className="mt-1 flex items-center justify-between text-sm text-gray-700 dark:text-gray-300">
+                  <span>Objects Restored</span>
+                  <span className="font-semibold text-gray-900 dark:text-gray-100">
+                    {restoreMarketDataSummary?.objects_restored ?? 0}
                   </span>
                 </div>
               </div>
