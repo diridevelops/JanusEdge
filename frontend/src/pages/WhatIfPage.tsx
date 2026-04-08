@@ -433,12 +433,7 @@ export function WhatIfPage() {
   }, []);
 
   useEffect(() => {
-    if (filters.symbol) {
-      void fetchData(apiFilters);
-    } else {
-      setAnalysis(null);
-      setWoTrades([]);
-    }
+    void fetchData(apiFilters);
     // Reset simulation results on filter change
     setSimResult(null);
     simCache.current.clear();
@@ -514,7 +509,7 @@ export function WhatIfPage() {
       <PageHeader
         icon={FlaskConical}
         title="What-if"
-        description="Run filtered-trade simulations or inspect symbol-specific stop-management analysis."
+        description="Run filtered-trade simulations or inspect stop-management analysis across the current filters."
       />
 
       {/* Filters */}
@@ -554,10 +549,6 @@ export function WhatIfPage() {
         ) : (
           <MonteCarloSimulator summary={summary} summaryLoading={summaryLoading} filters={filters} />
         )
-      ) : !filters.symbol ? (
-        <div className="card p-8 text-center text-gray-400 dark:text-gray-500">
-          Select a symbol in the filters above to view stop-management analysis.
-        </div>
       ) : (
         <>
           {/* ---- Wicked-Out Trades ---- */}
@@ -595,7 +586,7 @@ export function WhatIfPage() {
                   </div>
                 ) : woTrades.length === 0 ? (
                   <p className="px-6 py-8 text-center text-sm text-gray-400 dark:text-gray-500">
-                    No wicked-out trades found for this instrument.
+                    No wicked-out trades found for the current filters.
                   </p>
                 ) : (
                   <div className="overflow-x-auto">
@@ -695,7 +686,7 @@ export function WhatIfPage() {
               </div>
             ) : !analysis || analysis.count === 0 ? (
               <p className="text-sm text-gray-400 dark:text-gray-500">
-                No wicked-out trades with wishful stop data for this instrument.
+                No wicked-out trades with wishful stop data for the current filters.
               </p>
             ) : (
               <>

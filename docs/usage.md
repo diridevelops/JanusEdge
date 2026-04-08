@@ -489,6 +489,7 @@ The What-if page has two tabs:
 
 - Simulator
 - Stop management
+  The symbol filter is optional here. If you leave it blank, the page shows one combined stop-management analysis across all trades matching the other filters.
 
 Both tabs work with the filter bar at the top.
 

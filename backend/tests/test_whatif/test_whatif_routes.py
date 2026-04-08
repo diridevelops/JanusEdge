@@ -193,6 +193,37 @@ class TestStopAnalysis:
         assert "ci_upper" not in data
         assert len(data["details"]) == 1
 
+    def test_analysis_without_symbol_aggregates_matching_trades(
+        self, client
+    ):
+        """Returns combined stop analysis when symbol is omitted."""
+
+        token = _register_and_login(client)
+        mes_trade = _create_trade(client, token, symbol="MES")
+        mnq_trade = _create_trade(
+            client,
+            token,
+            symbol="MNQ",
+            entry_price=20000.0,
+            exit_price=19990.0,
+        )
+        _set_wish_stop(client, token, mes_trade["id"], 4985.0)
+        _set_wish_stop(client, token, mnq_trade["id"], 19985.0)
+
+        resp = client.get(
+            "/api/whatif/stop-analysis",
+            headers=_auth(token),
+        )
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["count"] == 2
+        assert data["mean"] == 0.5
+        assert {detail["symbol"] for detail in data["details"]} == {
+            "MES",
+            "MNQ",
+        }
+
     def test_excludes_breakeven_trades(self, client):
         """Skips trades where entry == exit (zero denominator)."""
         token = _register_and_login(client)

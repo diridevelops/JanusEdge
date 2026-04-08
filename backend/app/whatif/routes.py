@@ -35,12 +35,12 @@ def stop_analysis():
     """
     Get R-normalized stop overshoot statistics.
 
-    Requires a symbol filter. Returns mean, median,
-    percentiles, IQR, bootstrap CI, and per-trade
-    detail for wicked-out trades.
+    Returns mean, median, percentiles, IQR,
+    bootstrap CI, and per-trade detail for
+    wicked-out trades matching the current filters.
 
     Query parameters:
-        symbol: Required instrument filter.
+        symbol: Optional instrument filter.
         account: Optional trade account ID.
         side: Optional side filter (Long/Short).
         tag: Optional tag filter.

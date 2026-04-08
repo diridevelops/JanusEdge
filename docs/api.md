@@ -364,7 +364,7 @@ What-if endpoints use the same filter set as trades and analytics: `account`, `s
 
 | Method | Path | Auth | Purpose | Request | Response |
 | --- | --- | --- | --- | --- | --- |
-| GET | `/api/whatif/stop-analysis` | Yes | Return R-normalized stop-overshoot statistics | Query filters; symbol is effectively required by the backend logic | Stop-analysis object |
+| GET | `/api/whatif/stop-analysis` | Yes | Return R-normalized stop-overshoot statistics | Query filters; `symbol` is optional | Stop-analysis object |
 | GET | `/api/whatif/wicked-out-trades` | Yes | List wicked-out trades and whether raw tick data exists | Query filters | `{ trades: [...] }` |
 | POST | `/api/whatif/simulate` | Yes | Run wider-stop simulation | JSON body with `r_widening` and optional `replay_mode`; query filters still apply | Simulation response |
 
