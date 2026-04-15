@@ -213,7 +213,6 @@ class UserRepository(BaseRepository):
         timezone: str,
         display_timezone: str,
         starting_equity: float,
-        whatif_target_r_multiple: float,
         symbol_mappings: dict,
         market_data_mappings: dict,
     ) -> bool:
@@ -227,9 +226,6 @@ class UserRepository(BaseRepository):
                     "timezone": timezone,
                     "display_timezone": display_timezone,
                     "starting_equity": starting_equity,
-                    "whatif_target_r_multiple": (
-                        whatif_target_r_multiple
-                    ),
                     "symbol_mappings": symbol_mappings,
                     "market_data_mappings": market_data_mappings,
                     "updated_at": utc_now(),

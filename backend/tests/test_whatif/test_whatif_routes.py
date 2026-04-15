@@ -85,22 +85,6 @@ def _update_market_data_mappings(
     assert response.status_code == 200
 
 
-def _update_whatif_target_r_multiple(
-    client, token, whatif_target_r_multiple
-):
-    """Persist the default What-if target R-multiple."""
-    response = client.put(
-        "/api/auth/whatif-target-r-multiple",
-        json={
-            "whatif_target_r_multiple": (
-                whatif_target_r_multiple
-            )
-        },
-        headers=_auth(token),
-    )
-    assert response.status_code == 200
-
-
 def _create_trade(client, token, **overrides):
     """Create a trade and return its JSON."""
     data = {
@@ -118,6 +102,28 @@ def _create_trade(client, token, **overrides):
         "/api/trades", json=data, headers=_auth(token)
     )
     return resp.get_json()["trade"]
+
+
+def _simulate(
+    client,
+    token,
+    *,
+    r_widening=0.5,
+    target_r_multiple=2.0,
+    replay_mode="ohlc",
+    query_string="",
+):
+    """Run a what-if simulation with explicit run-scoped inputs."""
+
+    return client.post(
+        f"/api/whatif/simulate{query_string}",
+        json={
+            "r_widening": r_widening,
+            "target_r_multiple": target_r_multiple,
+            "replay_mode": replay_mode,
+        },
+        headers=_auth(token),
+    )
 
 
 def _set_wish_stop(client, token, trade_id, price):
@@ -395,6 +401,16 @@ class TestSimulate:
         )
         assert resp.status_code == 400
 
+    def test_rejects_invalid_target_r_multiple(self, client):
+        """Returns 400 when target_r_multiple is not positive."""
+        token = _register_and_login(client)
+        resp = client.post(
+            "/api/whatif/simulate",
+            json={"r_widening": 0.5, "target_r_multiple": 0},
+            headers=_auth(token),
+        )
+        assert resp.status_code == 400
+
     def test_no_trades_returns_empty(self, client):
         """Returns zeros when no trades match."""
         token = _register_and_login(client)
@@ -568,17 +584,18 @@ class TestSimulate:
         assert detail["new_pnl"] == 100.0
 
     def test_invalid_explicit_target_falls_back_to_derived_target(
-        self, client, seed_market_data_dataset
+        self, client, app, seed_market_data_dataset
     ):
         """Targets on the wrong side of entry are ignored during simulation."""
         token = _register_and_login(client)
         loser = _create_trade(client, token)
-        update_resp = client.put(
-            f"/api/trades/{loser['id']}",
-            json={"target_price": 4995.0},
-            headers=_auth(token),
-        )
-        assert update_resp.status_code == 200
+        with app.app_context():
+            from app.extensions import mongo
+
+            mongo.db.trades.update_one(
+                {"_id": ObjectId(loser["id"])},
+                {"$set": {"target_price": 4995.0}},
+            )
 
         seed_market_data_dataset(
             symbol="MES",
@@ -1246,10 +1263,10 @@ class TestSimulate:
         assert data["details"][0]["status"] == "simulated"
         assert data["details"][0]["target_source"] == "explicit"
 
-    def test_simulate_cache_key_includes_whatif_target_r_multiple(
+    def test_simulate_cache_key_includes_target_r_multiple(
         self, client, seed_market_data_dataset
     ):
-        """Changing the default target setting must invalidate cached results."""
+        """Changing the run-scoped target input must invalidate cached results."""
         token = _register_and_login(client)
         _create_trade(client, token)
 
@@ -1279,22 +1296,26 @@ class TestSimulate:
             ],
         )
 
-        _update_whatif_target_r_multiple(client, token, 1.0)
-        first_resp = client.post(
-            "/api/whatif/simulate?symbol=MES",
-            json={"r_widening": 0.5, "replay_mode": "tick"},
-            headers=_auth(token),
+        first_resp = _simulate(
+            client,
+            token,
+            query_string="?symbol=MES",
+            r_widening=0.5,
+            target_r_multiple=1.0,
+            replay_mode="tick",
         )
         assert first_resp.status_code == 200
         first_detail = first_resp.get_json()["details"][0]
         assert first_detail["target_source"] == "derived"
         assert first_detail["new_pnl"] == 50.0
 
-        _update_whatif_target_r_multiple(client, token, 3.0)
-        second_resp = client.post(
-            "/api/whatif/simulate?symbol=MES",
-            json={"r_widening": 0.5, "replay_mode": "tick"},
-            headers=_auth(token),
+        second_resp = _simulate(
+            client,
+            token,
+            query_string="?symbol=MES",
+            r_widening=0.5,
+            target_r_multiple=3.0,
+            replay_mode="tick",
         )
         assert second_resp.status_code == 200
         second_detail = second_resp.get_json()["details"][0]

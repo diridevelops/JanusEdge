@@ -8,7 +8,6 @@ import { MonteCarloSimulator } from '../components/analytics/MonteCarloSimulator
 import { FilterBar } from '../components/filters/FilterBar';
 import { InfoTooltip } from '../components/ui/InfoTooltip';
 import { PageHeader } from '../components/ui/PageHeader';
-import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
 import type { AnalyticsSummary } from '../types/analytics.types';
 import type {
@@ -405,7 +404,6 @@ type WhatIfReplayMode = 'ohlc' | 'tick';
 
 /** What-if page: stop analysis, wicked-out trades, and simulation. */
 export function WhatIfPage() {
-  const { user } = useAuth();
   const { addToast } = useToast();
   const [activeTab, setActiveTab] = useState<WhatIfTab>('simulator');
 
@@ -446,6 +444,7 @@ export function WhatIfPage() {
 
   // ---- Simulation ----
   const [rWidening, setRWidening] = useState('0.5');
+  const [whatIfTargetRMultiple, setWhatIfTargetRMultiple] = useState('2');
   const [replayMode, setReplayMode] = useState<WhatIfReplayMode>('ohlc');
   const [simLoading, setSimLoading] = useState(false);
   const [simResult, setSimResult] = useState<ReturnType<typeof buildSimulationViewModel> | null>(null);
@@ -457,7 +456,6 @@ export function WhatIfPage() {
   const simCache = useRef<Map<string, ReturnType<typeof buildSimulationViewModel>>>(new Map());
   const dataRequestIdRef = useRef(0);
   const simulationRequestIdRef = useRef(0);
-  const whatIfTargetRMultiple = user?.whatif_target_r_multiple ?? 2;
 
   const fetchSummary = useCallback(async (f: Record<string, string>) => {
     const requestId = summaryRequestIdRef.current + 1;
@@ -518,7 +516,7 @@ export function WhatIfPage() {
 
   useEffect(() => {
     setSimResult(null);
-  }, [replayMode, whatIfTargetRMultiple]);
+  }, [replayMode]);
 
   // Simulation handler
   async function handleSimulate() {
@@ -527,8 +525,13 @@ export function WhatIfPage() {
       addToast('error', 'R-widening must be between 0.1 and 10');
       return;
     }
+    const targetRValue = parseFloat(whatIfTargetRMultiple);
+    if (isNaN(targetRValue) || targetRValue <= 0) {
+      addToast('error', 'Default target R-multiple must be greater than 0.');
+      return;
+    }
 
-    const cacheKey = `${rVal}_${replayMode}_${whatIfTargetRMultiple}_${JSON.stringify(apiFilters)}`;
+    const cacheKey = `${rVal}_${replayMode}_${targetRValue}_${JSON.stringify(apiFilters)}`;
     const cached = simCache.current.get(cacheKey);
     if (cached) {
       setSimResult(cached);
@@ -539,7 +542,12 @@ export function WhatIfPage() {
     simulationRequestIdRef.current = requestId;
     setSimLoading(true);
     try {
-      const response = await runSimulation(rVal, replayMode, apiFilters);
+      const response = await runSimulation(
+        rVal,
+        targetRValue,
+        replayMode,
+        apiFilters
+      );
       if (requestId !== simulationRequestIdRef.current) {
         return;
       }
@@ -818,7 +826,7 @@ export function WhatIfPage() {
                   'Simulate widening your stop across all trades:\n' +
                   '- Winners keep their P&L.\n' +
                   '- Losing trades with a saved target use that explicit target.\n' +
-                  `- Losing trades without a target derive one from original risk using your Settings default (${whatIfTargetRMultiple}R).\n` +
+                  `- Losing trades without a target derive one from original risk using the target R entered here (${whatIfTargetRMultiple}R).\n` +
                   '- Losing trades without a target and usable risk are skipped.\n' +
                   '- Calculation mode lets you choose OHLC or Tick replay.\n' +
                   '- OHLC uses stored 1-minute candles generated from tick data and is the default. It is faster, but intrabar price order is approximated.\n' +
@@ -828,13 +836,8 @@ export function WhatIfPage() {
                 widthClass="w-80"
               />
             </div>
-            <p className="mb-4 text-xs text-gray-500 dark:text-gray-400">
-              Explicit targets are reused as-is. Missing targets fall back to
-              your Settings default of {whatIfTargetRMultiple}R when original
-              risk is available; otherwise the trade is skipped.
-            </p>
 
-            <div className="flex items-end gap-4 mb-6">
+            <div className="flex flex-wrap items-end gap-4 mb-6">
               <div>
                 <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
                   Stop Widening (R)
@@ -860,15 +863,36 @@ export function WhatIfPage() {
                 >
                   <option value="ohlc">OHLC (1m)</option>
                   <option value="tick">Tick</option>
-                </select>
-              </div>
-              <button
-                type="button"
-                onClick={handleSimulate}
-                disabled={simLoading}
-                className="btn-primary px-4 py-2 text-sm font-medium disabled:opacity-50"
-              >
-                {simLoading ? (
+                  </select>
+                </div>
+                <div>
+                  <div className="mb-1 flex items-center gap-1 text-xs font-medium text-gray-500 dark:text-gray-400">
+                    <label htmlFor="whatIfDefaultTargetR">
+                      Default Target (R)
+                    </label>
+                    <InfoTooltip
+                      text="Used only for this simulation run when a losing trade has no saved target price. The What-if simulator derives a synthetic target from the trade's original risk using this multiple."
+                      ariaLabel="Info about default target R"
+                      widthClass="w-72"
+                    />
+                  </div>
+                  <input
+                    id="whatIfDefaultTargetR"
+                    type="number"
+                    min="0.01"
+                    step="any"
+                    value={whatIfTargetRMultiple}
+                    onChange={(e) => setWhatIfTargetRMultiple(e.target.value)}
+                    className="input-field text-sm w-28"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleSimulate}
+                  disabled={simLoading}
+                  className="btn-primary px-4 py-2 text-sm font-medium disabled:opacity-50"
+                >
+                  {simLoading ? (
                   <span className="flex items-center gap-2">
                     <Loader2 className="h-4 w-4 animate-spin" />
                     Simulating…

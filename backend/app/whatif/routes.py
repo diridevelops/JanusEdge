@@ -6,6 +6,7 @@ from flask_jwt_extended import (
     jwt_required,
 )
 
+from app.models.user import DEFAULT_WHATIF_TARGET_R_MULTIPLE
 from app.whatif import whatif_bp
 from app.whatif.service import WhatIfService
 
@@ -115,6 +116,9 @@ def simulate():
     user_id = get_jwt_identity()
     body = request.get_json(silent=True) or {}
     r_widening = body.get("r_widening")
+    target_r_multiple = body.get(
+        "target_r_multiple", DEFAULT_WHATIF_TARGET_R_MULTIPLE
+    )
     replay_mode = str(
         body.get("replay_mode", "ohlc")
     ).strip().lower()
@@ -146,6 +150,30 @@ def simulate():
             400,
         )
 
+    try:
+        target_r_multiple = float(target_r_multiple)
+    except (TypeError, ValueError):
+        return (
+            jsonify(
+                {
+                    "error": "target_r_multiple must be "
+                    "a number"
+                }
+            ),
+            400,
+        )
+
+    if target_r_multiple <= 0:
+        return (
+            jsonify(
+                {
+                    "error": "target_r_multiple must be "
+                    "greater than 0"
+                }
+            ),
+            400,
+        )
+
     if replay_mode not in {"ohlc", "tick"}:
         return (
             jsonify(
@@ -161,6 +189,7 @@ def simulate():
     result = whatif_service.simulate(
         user_id,
         r_widening,
+        target_r_multiple=target_r_multiple,
         replay_mode=replay_mode,
         filters=filters,
     )

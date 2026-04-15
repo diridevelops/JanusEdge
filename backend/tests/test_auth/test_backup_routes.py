@@ -179,11 +179,6 @@ def _build_custom_market_data_mappings() -> dict:
     return {"MES": "ES"}
 
 
-def _build_custom_whatif_target_r_multiple() -> float:
-    """Build a deterministic custom What-if target setting."""
-    return 3.0
-
-
 def _store_market_dataset(
     app,
     *,
@@ -239,9 +234,6 @@ def _seed_portable_backup_graph(app, user_id: str) -> dict:
     user_oid = ObjectId(user_id)
     symbol_mappings = _build_custom_symbol_mappings()
     market_data_mappings = _build_custom_market_data_mappings()
-    whatif_target_r_multiple = (
-        _build_custom_whatif_target_r_multiple()
-    )
     with app.app_context():
         user_repo = UserRepository()
         user_repo.update_portable_settings(
@@ -249,7 +241,6 @@ def _seed_portable_backup_graph(app, user_id: str) -> dict:
             timezone="America/Chicago",
             display_timezone="UTC",
             starting_equity=25000.0,
-            whatif_target_r_multiple=whatif_target_r_multiple,
             symbol_mappings=symbol_mappings,
             market_data_mappings=market_data_mappings,
         )
@@ -647,9 +638,6 @@ def _seed_portable_backup_graph(app, user_id: str) -> dict:
             "trade_one": trade_one,
             "trade_two": trade_two,
             "deleted_trade": deleted_trade,
-            "whatif_target_r_multiple": (
-                whatif_target_r_multiple
-            ),
             "symbol_mappings": symbol_mappings,
             "market_data_mappings": market_data_mappings,
             "account_one": account_one,
@@ -761,9 +749,6 @@ def test_export_backup_is_complete_and_self_contained(
         "timezone": "America/Chicago",
         "display_timezone": "UTC",
         "starting_equity": 25000.0,
-        "whatif_target_r_multiple": (
-            seeded["whatif_target_r_multiple"]
-        ),
         "symbol_mappings": seeded["symbol_mappings"],
         "market_data_mappings": seeded["market_data_mappings"],
     }
@@ -997,10 +982,6 @@ def test_restore_into_different_user_remaps_graph_and_media(
         assert restored_user["display_timezone"] == "UTC"
         assert restored_user["starting_equity"] == 25000.0
         assert (
-            restored_user["whatif_target_r_multiple"]
-            == seeded["whatif_target_r_multiple"]
-        )
-        assert (
             restored_user["symbol_mappings"]
             == seeded["symbol_mappings"]
         )
@@ -1180,7 +1161,6 @@ def test_restore_merge_into_empty_user_creates_all_records(
                 "timezone",
                 "display_timezone",
                 "starting_equity",
-                "whatif_target_r_multiple",
                 "symbol_mappings",
                 "market_data_mappings",
             ]
@@ -1437,31 +1417,6 @@ def test_restore_rejects_invalid_market_data_mappings(
     assert (
         response.get_json()["error"]["message"]
         == "Backup archive contains invalid market data mappings."
-    )
-
-
-def test_restore_rejects_invalid_whatif_target_r_multiple(
-    client, app
-):
-    """Restore rejects archives with invalid What-if target settings."""
-    token, user_id = _register_and_login(
-        client, "invalid-whatif-target"
-    )
-    _seed_portable_backup_graph(app, user_id)
-    archive_bytes = _export_archive_bytes(client, token)
-    _, payload, _ = _parse_archive(archive_bytes)
-    payload["settings"]["whatif_target_r_multiple"] = 0
-
-    response = _restore_archive(
-        client,
-        token,
-        _rewrite_archive_payload(archive_bytes, payload),
-    )
-
-    assert response.status_code == 400
-    assert (
-        response.get_json()["error"]["message"]
-        == "Backup archive contains an invalid What-if target R-multiple."
     )
 
 

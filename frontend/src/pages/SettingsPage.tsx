@@ -10,7 +10,6 @@ import {
   updateStartingEquity,
   updateSymbolMappings,
   updateTimezone,
-  updateWhatIfTargetRMultiple,
 } from '../api/auth.api';
 import { PageHeader } from '../components/ui/PageHeader';
 import { useAuth } from '../hooks/useAuth';
@@ -244,10 +243,6 @@ export function SettingsPage() {
     String(user?.starting_equity ?? 10000)
   );
   const [seLoading, setSeLoading] = useState(false);
-  const [whatIfTargetRMultiple, setWhatIfTargetRMultiple] = useState(
-    String(user?.whatif_target_r_multiple ?? 2)
-  );
-  const [whatIfTargetLoading, setWhatIfTargetLoading] = useState(false);
 
   // Symbol mappings
   const [symbolMappingRows, setSymbolMappingRows] = useState<SymbolMappingRow[]>([]);
@@ -272,13 +267,7 @@ export function SettingsPage() {
       user?.display_timezone ?? user?.timezone ?? 'America/New_York'
     );
     setStartingEquity(String(user?.starting_equity ?? 10000));
-    setWhatIfTargetRMultiple(String(user?.whatif_target_r_multiple ?? 2));
-  }, [
-    user?.display_timezone,
-    user?.starting_equity,
-    user?.timezone,
-    user?.whatif_target_r_multiple,
-  ]);
+  }, [user?.display_timezone, user?.starting_equity, user?.timezone]);
 
   useEffect(() => {
     const symbolMappings = user?.symbol_mappings ?? EMPTY_SYMBOL_MAPPINGS;
@@ -365,31 +354,6 @@ export function SettingsPage() {
       addToast('error', message);
     } finally {
       setSeLoading(false);
-    }
-  }
-
-  async function handleUpdateWhatIfTargetRMultiple(
-    e: FormEvent<HTMLFormElement>
-  ) {
-    e.preventDefault();
-    const value = parseFloat(whatIfTargetRMultiple);
-    if (isNaN(value) || value <= 0) {
-      addToast('error', 'What-if target R-multiple must be greater than 0.');
-      return;
-    }
-    setWhatIfTargetLoading(true);
-    try {
-      await updateWhatIfTargetRMultiple(value);
-      addToast('success', 'What-if target R-multiple updated successfully.');
-      await refreshProfile();
-    } catch (err: unknown) {
-      const message = getErrorMessage(
-        err,
-        'Failed to update What-if target R-multiple.'
-      );
-      addToast('error', message);
-    } finally {
-      setWhatIfTargetLoading(false);
     }
   }
 
@@ -620,49 +584,6 @@ export function SettingsPage() {
           </div>
           <button type="submit" className="btn-primary" disabled={seLoading}>
             {seLoading ? 'Saving…' : 'Update Starting Equity'}
-          </button>
-        </form>
-      </div>
-
-      {/* What-If Target R-Multiple */}
-      <div className="card p-4">
-        <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">
-          What-If Default Target R-Multiple
-        </h2>
-        <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
-          Used only when a losing trade has no saved target price. The What-if
-          simulator derives a synthetic target from the trade&apos;s original
-          risk using this multiple.
-        </p>
-        <form
-          onSubmit={handleUpdateWhatIfTargetRMultiple}
-          className="space-y-4"
-        >
-          <div>
-            <label
-              htmlFor="whatIfTargetRMultiple"
-              className="block text-sm font-medium text-gray-700 dark:text-gray-300"
-            >
-              Target (R)
-            </label>
-            <input
-              id="whatIfTargetRMultiple"
-              type="number"
-              min="0.01"
-              step="any"
-              className="input-field mt-1"
-              value={whatIfTargetRMultiple}
-              onChange={(e) => setWhatIfTargetRMultiple(e.target.value)}
-            />
-          </div>
-          <button
-            type="submit"
-            className="btn-primary"
-            disabled={whatIfTargetLoading}
-          >
-            {whatIfTargetLoading
-              ? 'Saving…'
-              : 'Update What-If Target R-Multiple'}
           </button>
         </form>
       </div>

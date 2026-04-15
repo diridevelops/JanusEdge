@@ -121,7 +121,7 @@ def _cache_key(
     filters: dict,
     r_widening: float,
     replay_mode: str,
-    whatif_target_r_multiple: float,
+    target_r_multiple: float,
 ) -> str:
     """Generate a stable cache key."""
     raw = json.dumps(
@@ -133,9 +133,7 @@ def _cache_key(
             },
             "r_widening": r_widening,
             "replay_mode": replay_mode,
-            "whatif_target_r_multiple": (
-                whatif_target_r_multiple
-            ),
+            "target_r_multiple": target_r_multiple,
         },
         sort_keys=True,
         default=str,
@@ -358,6 +356,9 @@ class WhatIfService:
         self,
         user_id: str,
         r_widening: float,
+        target_r_multiple: float = (
+            DEFAULT_WHATIF_TARGET_R_MULTIPLE
+        ),
         replay_mode: str = "ohlc",
         filters: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
@@ -385,14 +386,6 @@ class WhatIfService:
             filters = {}
 
         user = self.user_repo.find_by_id(user_id)
-        whatif_target_r_multiple = float(
-            user.get(
-                "whatif_target_r_multiple",
-                DEFAULT_WHATIF_TARGET_R_MULTIPLE,
-            )
-            if user
-            else DEFAULT_WHATIF_TARGET_R_MULTIPLE
-        )
 
         # Check cache
         ck = _cache_key(
@@ -400,7 +393,7 @@ class WhatIfService:
             filters,
             r_widening,
             replay_mode,
-            whatif_target_r_multiple,
+            target_r_multiple,
         )
         if ck in _sim_cache:
             ts, result = _sim_cache[ck]
@@ -568,7 +561,7 @@ class WhatIfService:
                     quantity=float(qty or 0),
                     point_value=point_value,
                     initial_risk=float(initial_risk or 0.0),
-                    target_r_multiple=whatif_target_r_multiple,
+                    target_r_multiple=target_r_multiple,
                 )
                 if target is None:
                     whatif_pnls.append(net_pnl)

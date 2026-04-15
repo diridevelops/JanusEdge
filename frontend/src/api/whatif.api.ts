@@ -30,12 +30,17 @@ export async function getWickedOutTrades(
 /** Run what-if stop widening simulation. */
 export async function runSimulation(
   rWidening: number,
+  targetRMultiple: number,
   replayMode: 'ohlc' | 'tick',
   params: Record<string, string>,
 ): Promise<SimulationResponse> {
   const res = await apiClient.post<SimulationResponse>(
     '/whatif/simulate',
-    { r_widening: rWidening, replay_mode: replayMode },
+    {
+      r_widening: rWidening,
+      target_r_multiple: targetRMultiple,
+      replay_mode: replayMode,
+    },
     { params },
   );
   return res.data;
