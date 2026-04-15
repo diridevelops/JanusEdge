@@ -149,6 +149,34 @@ function parseProfitFactor(value: number | string): number | null {
   return null;
 }
 
+function computeWinLossRatio(rValues: Array<number | null | undefined>): number | null {
+  const winners = rValues.filter((value): value is number => value != null && Number.isFinite(value) && value > 0);
+  const losers = rValues.filter((value): value is number => value != null && Number.isFinite(value) && value < 0);
+
+  if (winners.length === 0 || losers.length === 0) {
+    return null;
+  }
+
+  const avgWinner = winners.reduce((sum, value) => sum + value, 0) / winners.length;
+  const avgLoser = losers.reduce((sum, value) => sum + Math.abs(value), 0) / losers.length;
+
+  if (avgLoser === 0) {
+    return null;
+  }
+
+  return avgWinner / avgLoser;
+}
+
+function formatRatioValue(value: number | null) {
+  if (value == null) {
+    return <span className="text-gray-500">â€”</span>;
+  }
+  if (!Number.isFinite(value)) {
+    return value > 0 ? 'Inf' : '-Inf';
+  }
+  return value.toFixed(2);
+}
+
 function buildSimulationViewModel(response: SimulationResponse) {
   const originalProfitFactor = parseProfitFactor(response.original.profit_factor);
   const whatIfProfitFactor = parseProfitFactor(response.what_if.profit_factor);
@@ -168,6 +196,20 @@ function buildSimulationViewModel(response: SimulationResponse) {
   const skippedDetails = response.details.filter(
     (detail) => detail.status !== 'simulated' && !detail.converted,
   );
+  const convertedPnlChange = convertedDetails.reduce(
+    (sum, detail) => sum + (detail.new_pnl - detail.original_pnl),
+    0,
+  );
+  const simulatedLoserPnlChange = simulatedDetails.reduce(
+    (sum, detail) => sum + (detail.new_pnl - detail.original_pnl),
+    0,
+  );
+  const originalWinLossRatio = computeWinLossRatio(
+    response.details.map((detail) => detail.original_r),
+  );
+  const whatIfWinLossRatio = computeWinLossRatio(
+    response.details.map((detail) => detail.new_r),
+  );
 
   return {
     original: response.original,
@@ -183,6 +225,18 @@ function buildSimulationViewModel(response: SimulationResponse) {
       winners_change: response.what_if.total_winners - response.original.total_winners,
       losers_change: response.what_if.total_losers - response.original.total_losers,
       profit_factor: profitFactorDelta,
+      converted_pnl_change: convertedPnlChange,
+      simulated_loser_pnl_change: simulatedLoserPnlChange,
+      win_loss_ratio:
+        originalWinLossRatio !== null && whatIfWinLossRatio !== null
+          ? whatIfWinLossRatio - originalWinLossRatio
+          : null,
+    },
+    summary: {
+      converted_pnl_change: convertedPnlChange,
+      simulated_loser_pnl_change: simulatedLoserPnlChange,
+      original_win_loss_ratio: originalWinLossRatio,
+      whatif_win_loss_ratio: whatIfWinLossRatio,
     },
     tradesTotal: response.trades_total,
     tradesConverted: response.trades_converted,
@@ -861,6 +915,26 @@ export function WhatIfPage() {
                         </td>
                       </tr>
                       <tr className="border-b border-gray-100 dark:border-gray-700/50">
+                        <td className="px-4 py-2 text-gray-700 dark:text-gray-300">Change P&L Winners</td>
+                        <td className="px-4 py-2 text-right text-gray-500">-</td>
+                        <td className="px-4 py-2 text-right">
+                          <DeltaCell value={simResult.summary.converted_pnl_change} isCurrency />
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          <DeltaCell value={simResult.delta.converted_pnl_change} isCurrency />
+                        </td>
+                      </tr>
+                      <tr className="border-b border-gray-100 dark:border-gray-700/50">
+                        <td className="px-4 py-2 text-gray-700 dark:text-gray-300">Change P&L Losers</td>
+                        <td className="px-4 py-2 text-right text-gray-500">-</td>
+                        <td className="px-4 py-2 text-right">
+                          <DeltaCell value={simResult.summary.simulated_loser_pnl_change} isCurrency />
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          <DeltaCell value={simResult.delta.simulated_loser_pnl_change} isCurrency />
+                        </td>
+                      </tr>
+                      <tr className="border-b border-gray-100 dark:border-gray-700/50">
                         <td className="px-4 py-2 text-gray-700 dark:text-gray-300">APPT</td>
                         <td className="px-4 py-2 text-right">{formatCurrency(simResult.original.avg_pnl)}</td>
                         <td className="px-4 py-2 text-right">{formatCurrency(simResult.whatIf.avg_pnl)}</td>
@@ -894,6 +968,18 @@ export function WhatIfPage() {
                           ) : (
                             <DeltaCell value={simResult.delta.expectancy_r} suffix="R" />
                           )}
+                        </td>
+                      </tr>
+                      <tr className="border-b border-gray-100 dark:border-gray-700/50">
+                        <td className="px-4 py-2 text-gray-700 dark:text-gray-300">W:L Ratio (R)</td>
+                        <td className="px-4 py-2 text-right">
+                          {formatRatioValue(simResult.summary.original_win_loss_ratio)}
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          {formatRatioValue(simResult.summary.whatif_win_loss_ratio)}
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          <DeltaCell value={simResult.delta.win_loss_ratio} />
                         </td>
                       </tr>
                       <tr className="border-b border-gray-100 dark:border-gray-700/50">
