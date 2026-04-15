@@ -20,6 +20,10 @@ from app.market_data.symbol_mapper import (
     validate_symbol_mappings,
 )
 from app.media.service import MediaService
+from app.models.user import (
+    DEFAULT_STARTING_EQUITY,
+    DEFAULT_WHATIF_TARGET_R_MULTIPLE,
+)
 from app.repositories.account_repo import AccountRepository
 from app.repositories.execution_repo import ExecutionRepository
 from app.repositories.import_batch_repo import (
@@ -155,7 +159,17 @@ class PortableBackupService:
             ),
             starting_equity=payload["settings"].get(
                 "starting_equity",
-                destination_user.get("starting_equity", 10000.0),
+                destination_user.get(
+                    "starting_equity",
+                    DEFAULT_STARTING_EQUITY,
+                ),
+            ),
+            whatif_target_r_multiple=payload["settings"].get(
+                "whatif_target_r_multiple",
+                destination_user.get(
+                    "whatif_target_r_multiple",
+                    DEFAULT_WHATIF_TARGET_R_MULTIPLE,
+                ),
             ),
             symbol_mappings=restored_symbol_mappings,
             market_data_mappings=restored_market_data_mappings,
@@ -166,6 +180,10 @@ class PortableBackupService:
             "display_timezone",
             "starting_equity",
         ]
+        if "whatif_target_r_multiple" in payload["settings"]:
+            settings_updated.append(
+                "whatif_target_r_multiple"
+            )
         if "symbol_mappings" in payload["settings"]:
             settings_updated.append("symbol_mappings")
         if "market_data_mappings" in payload["settings"]:
@@ -286,7 +304,11 @@ class PortableBackupService:
                     user.get("timezone"),
                 ),
                 "starting_equity": user.get(
-                    "starting_equity", 10000.0
+                    "starting_equity", DEFAULT_STARTING_EQUITY
+                ),
+                "whatif_target_r_multiple": user.get(
+                    "whatif_target_r_multiple",
+                    DEFAULT_WHATIF_TARGET_R_MULTIPLE,
                 ),
                 "symbol_mappings": (
                     get_effective_symbol_mappings(
@@ -503,6 +525,9 @@ class PortableBackupService:
         timezone_value = settings.get("timezone")
         display_timezone = settings.get("display_timezone")
         starting_equity = settings.get("starting_equity")
+        whatif_target_r_multiple = settings.get(
+            "whatif_target_r_multiple"
+        )
 
         if not timezone_value or not is_valid_timezone(
             timezone_value
@@ -519,6 +544,13 @@ class PortableBackupService:
         if starting_equity is None or float(starting_equity) < 0:
             raise ValidationError(
                 "Backup archive contains an invalid starting equity."
+            )
+        if (
+            whatif_target_r_multiple is not None
+            and float(whatif_target_r_multiple) <= 0
+        ):
+            raise ValidationError(
+                "Backup archive contains an invalid What-if target R-multiple."
             )
 
         symbol_mappings = settings.get("symbol_mappings")

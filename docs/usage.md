@@ -559,6 +559,11 @@ This tool simulates the effect of widening your stop.
 
 Use it to estimate how results might change if stopped-out trades had more room.
 
+Losing trades with a saved target price use that explicit target. If a losing
+trade has no target price, the simulator uses your Settings default What-If
+target R-multiple to derive one from the trade's original risk. If the trade
+has neither a target nor usable initial risk, it is skipped.
+
 It has two calculation modes:
 
 - `OHLC (1m)`: replays stored 1-minute candles generated from imported tick data
@@ -601,6 +606,15 @@ This controls how times appear inside the app, including:
 ### Simulation Starting Equity
 
 This sets the default starting balance used to prefill Monte Carlo simulations.
+
+### What-If Default Target R-Multiple
+
+This sets the fallback target used by the What-If simulator when a losing trade
+does not have a saved target price.
+
+The derived target is based on the trade's original risk, not the widened stop.
+If original risk is missing or zero, the simulator skips that trade instead of
+guessing a target.
 
 ### Symbol Mappings
 

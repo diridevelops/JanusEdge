@@ -6,13 +6,19 @@ from app.market_data.symbol_mapper import (
 )
 from app.utils.datetime_utils import utc_now
 
+DEFAULT_STARTING_EQUITY = 10000.0
+DEFAULT_WHATIF_TARGET_R_MULTIPLE = 2.0
+
 
 def create_user_doc(
     username: str,
     password_hash: str,
     timezone: str = "America/New_York",
     display_timezone: str | None = None,
-    starting_equity: float = 10000.0,
+    starting_equity: float = DEFAULT_STARTING_EQUITY,
+    whatif_target_r_multiple: float = (
+        DEFAULT_WHATIF_TARGET_R_MULTIPLE
+    ),
     symbol_mappings: dict | None = None,
     market_data_mappings: dict | None = None,
 ) -> dict:
@@ -27,6 +33,8 @@ def create_user_doc(
             (defaults to trading timezone).
         starting_equity: Initial account equity for
             Monte Carlo simulations (default 10 000).
+        whatif_target_r_multiple: Default target size in R
+            used by What-if for trades without target_price.
         symbol_mappings: User-configurable point-value mappings
             keyed by base symbol.
         market_data_mappings: User-configurable market-data
@@ -42,6 +50,9 @@ def create_user_doc(
         "timezone": timezone,
         "display_timezone": display_timezone or timezone,
         "starting_equity": starting_equity,
+        "whatif_target_r_multiple": (
+            whatif_target_r_multiple
+        ),
         "symbol_mappings": (
             symbol_mappings
             or get_default_symbol_mappings()

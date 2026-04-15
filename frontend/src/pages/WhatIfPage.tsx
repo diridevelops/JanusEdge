@@ -8,6 +8,7 @@ import { MonteCarloSimulator } from '../components/analytics/MonteCarloSimulator
 import { FilterBar } from '../components/filters/FilterBar';
 import { InfoTooltip } from '../components/ui/InfoTooltip';
 import { PageHeader } from '../components/ui/PageHeader';
+import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
 import type { AnalyticsSummary } from '../types/analytics.types';
 import type {
@@ -204,21 +205,34 @@ function getAnalysisConfidenceInterval(
   return analysis.confidence_intervals?.[metric] ?? null;
 }
 
-function getSimulationStatusLabel(status: string) {
-  switch (status) {
+function getSimulationStatusLabel(detail: SimulationDetail) {
+  const targetSourceSuffix = detail.target_source
+    ? `: ${detail.target_source} target`
+    : '';
+
+  switch (detail.status) {
     case 'no_target':
       return 'Skipped: no target';
     case 'no_data':
-      return 'Skipped: no market data';
+      return `Skipped: no market data${targetSourceSuffix}`;
+    case 'no_target_risk':
+      return 'Skipped: no target and no risk';
     case 'no_risk':
       return 'Skipped: no risk';
     case 'simulated':
-      return 'Simulated';
+      return `Simulated${targetSourceSuffix}`;
     case 'winner':
       return 'Winner: nothing to do';
     default:
-      return status;
+      return detail.status;
   }
+}
+
+function getConvertedStatusLabel(detail: SimulationDetail) {
+  if (!detail.target_source) {
+    return 'Converted to winner';
+  }
+  return `Converted to winner: ${detail.target_source} target`;
 }
 
 function ResultSection({
@@ -311,7 +325,9 @@ function ResultSection({
                           <DeltaCell value={trade.change_r} suffix="R" />
                         </td>
                         <td className="px-4 py-2 text-gray-600 dark:text-gray-300">
-                          {trade.converted ? 'Converted to winner' : getSimulationStatusLabel(trade.status)}
+                          {trade.converted
+                            ? getConvertedStatusLabel(trade)
+                            : getSimulationStatusLabel(trade)}
                         </td>
                       </tr>
                     );
@@ -335,6 +351,7 @@ type WhatIfReplayMode = 'ohlc' | 'tick';
 
 /** What-if page: stop analysis, wicked-out trades, and simulation. */
 export function WhatIfPage() {
+  const { user } = useAuth();
   const { addToast } = useToast();
   const [activeTab, setActiveTab] = useState<WhatIfTab>('simulator');
 
@@ -386,6 +403,7 @@ export function WhatIfPage() {
   const simCache = useRef<Map<string, ReturnType<typeof buildSimulationViewModel>>>(new Map());
   const dataRequestIdRef = useRef(0);
   const simulationRequestIdRef = useRef(0);
+  const whatIfTargetRMultiple = user?.whatif_target_r_multiple ?? 2;
 
   const fetchSummary = useCallback(async (f: Record<string, string>) => {
     const requestId = summaryRequestIdRef.current + 1;
@@ -446,7 +464,7 @@ export function WhatIfPage() {
 
   useEffect(() => {
     setSimResult(null);
-  }, [replayMode]);
+  }, [replayMode, whatIfTargetRMultiple]);
 
   // Simulation handler
   async function handleSimulate() {
@@ -456,7 +474,7 @@ export function WhatIfPage() {
       return;
     }
 
-    const cacheKey = `${rVal}_${replayMode}_${JSON.stringify(apiFilters)}`;
+    const cacheKey = `${rVal}_${replayMode}_${whatIfTargetRMultiple}_${JSON.stringify(apiFilters)}`;
     const cached = simCache.current.get(cacheKey);
     if (cached) {
       setSimResult(cached);
@@ -509,7 +527,7 @@ export function WhatIfPage() {
       <PageHeader
         icon={FlaskConical}
         title="What-if"
-        description="Run filtered-trade simulations or inspect stop-management analysis across the current filters."
+        description="Run wider-stop simulations or inspect stop-management analysis. Trades without a saved target use your Settings default target R-multiple when original risk is available."
       />
 
       {/* Filters */}
@@ -745,6 +763,9 @@ export function WhatIfPage() {
                 text={
                   'Simulate widening your stop across all trades:\n' +
                   '- Winners keep their P&L.\n' +
+                  '- Losing trades with a saved target use that explicit target.\n' +
+                  `- Losing trades without a target derive one from original risk using your Settings default (${whatIfTargetRMultiple}R).\n` +
+                  '- Losing trades without a target and usable risk are skipped.\n' +
                   '- Calculation mode lets you choose OHLC or Tick replay.\n' +
                   '- OHLC uses stored 1-minute candles generated from tick data and is the default. It is faster, but intrabar price order is approximated.\n' +
                   '- Tick uses stored raw ticks for more precise but slower replay.\n' +
@@ -753,6 +774,11 @@ export function WhatIfPage() {
                 widthClass="w-80"
               />
             </div>
+            <p className="mb-4 text-xs text-gray-500 dark:text-gray-400">
+              Explicit targets are reused as-is. Missing targets fall back to
+              your Settings default of {whatIfTargetRMultiple}R when original
+              risk is available; otherwise the trade is skipped.
+            </p>
 
             <div className="flex items-end gap-4 mb-6">
               <div>

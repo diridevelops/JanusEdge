@@ -16,6 +16,9 @@ from app.market_data.symbol_mapper import (
     get_effective_symbol_mappings,
     get_point_value,
 )
+from app.models.user import (
+    DEFAULT_WHATIF_TARGET_R_MULTIPLE,
+)
 from app.repositories.tag_repo import TagRepository
 from app.repositories.trade_repo import TradeRepository
 from app.repositories.user_repo import UserRepository
@@ -118,6 +121,7 @@ def _cache_key(
     filters: dict,
     r_widening: float,
     replay_mode: str,
+    whatif_target_r_multiple: float,
 ) -> str:
     """Generate a stable cache key."""
     raw = json.dumps(
@@ -129,6 +133,9 @@ def _cache_key(
             },
             "r_widening": r_widening,
             "replay_mode": replay_mode,
+            "whatif_target_r_multiple": (
+                whatif_target_r_multiple
+            ),
         },
         sort_keys=True,
         default=str,
@@ -377,9 +384,23 @@ class WhatIfService:
         if filters is None:
             filters = {}
 
+        user = self.user_repo.find_by_id(user_id)
+        whatif_target_r_multiple = float(
+            user.get(
+                "whatif_target_r_multiple",
+                DEFAULT_WHATIF_TARGET_R_MULTIPLE,
+            )
+            if user
+            else DEFAULT_WHATIF_TARGET_R_MULTIPLE
+        )
+
         # Check cache
         ck = _cache_key(
-            user_id, filters, r_widening, replay_mode
+            user_id,
+            filters,
+            r_widening,
+            replay_mode,
+            whatif_target_r_multiple,
         )
         if ck in _sim_cache:
             ts, result = _sim_cache[ck]
@@ -390,7 +411,6 @@ class WhatIfService:
         trades = self.trade_repo.find_many(
             match, sort=[("exit_time", -1)], limit=0
         )
-        user = self.user_repo.find_by_id(user_id)
         symbol_mappings = get_effective_symbol_mappings(
             user.get("symbol_mappings") if user else None
         )
@@ -418,6 +438,7 @@ class WhatIfService:
             original_risk: float,
             fee_value: float,
             widened_risk_value: Optional[float],
+            target_source: str | None = None,
         ) -> Dict[str, Any]:
             """Build simulation detail with P&L and R-multiple deltas."""
             original_r_value = calculate_r_multiple(
@@ -456,6 +477,7 @@ class WhatIfService:
                 "change_r": change_r,
                 "converted": converted_flag,
                 "status": status,
+                "target_source": target_source,
             }
             return detail_entry
 
@@ -503,6 +525,7 @@ class WhatIfService:
                         initial_risk,
                         fee,
                         widened_risk,
+                        None,
                     )
                 )
                 continue
@@ -516,57 +539,11 @@ class WhatIfService:
                     str(entry_time)
                 ).date()
 
-            has_market_data = self._has_replay_data_for_day(
-                replay_mode=replay_mode,
-                symbol=symbol,
-                raw_symbol=raw_sym,
-                trading_day=day,
-                market_data_mappings=market_data_mappings,
+            target = t.get("target_price")
+            target_source = (
+                "explicit" if target is not None else None
             )
 
-            target = t.get("target_price")
-            if target is None and not has_market_data:
-                whatif_pnls.append(net_pnl)
-                whatif_grosses.append(gross_pnl)
-                if widened_risk:
-                    whatif_rs.append(net_pnl / widened_risk)
-                skipped += 1
-                details.append(
-                    build_detail(
-                        t,
-                        net_pnl,
-                        net_pnl,
-                        False,
-                        "no_data",
-                        initial_risk,
-                        fee,
-                        widened_risk,
-                    )
-                )
-                continue
-
-            if target is None:
-                # No target — keep P&L
-                whatif_pnls.append(net_pnl)
-                whatif_grosses.append(gross_pnl)
-                if widened_risk:
-                    whatif_rs.append(net_pnl / widened_risk)
-                skipped += 1
-                details.append(
-                    build_detail(
-                        t,
-                        net_pnl,
-                        net_pnl,
-                        False,
-                        "no_target",
-                        initial_risk,
-                        fee,
-                        widened_risk,
-                    )
-                )
-                continue
-
-            # Calculate wider stop price
             try:
                 point_value = get_point_value(
                     symbol,
@@ -575,6 +552,45 @@ class WhatIfService:
                 )
             except ValueError as exc:
                 raise ValidationError(str(exc)) from exc
+
+            if target is None:
+                target = self._derive_target_price(
+                    entry_price=float(entry or 0.0),
+                    side=side,
+                    quantity=float(qty or 0),
+                    point_value=point_value,
+                    initial_risk=float(initial_risk or 0.0),
+                    target_r_multiple=whatif_target_r_multiple,
+                )
+                if target is None:
+                    whatif_pnls.append(net_pnl)
+                    whatif_grosses.append(gross_pnl)
+                    if widened_risk:
+                        whatif_rs.append(net_pnl / widened_risk)
+                    skipped += 1
+                    details.append(
+                        build_detail(
+                            t,
+                            net_pnl,
+                            net_pnl,
+                            False,
+                            "no_target_risk",
+                            initial_risk,
+                            fee,
+                            widened_risk,
+                            None,
+                        )
+                    )
+                    continue
+                target_source = "derived"
+
+            has_market_data = self._has_replay_data_for_day(
+                replay_mode=replay_mode,
+                symbol=symbol,
+                raw_symbol=raw_sym,
+                trading_day=day,
+                market_data_mappings=market_data_mappings,
+            )
 
             # R in price points = |entry − exit| (fee-free,
             # consistent with overshoot_R formula).
@@ -596,6 +612,7 @@ class WhatIfService:
                         initial_risk,
                         fee,
                         widened_risk,
+                        target_source,
                     )
                 )
                 continue
@@ -625,6 +642,7 @@ class WhatIfService:
                         initial_risk,
                         fee,
                         widened_risk,
+                        target_source,
                     )
                 )
                 continue
@@ -676,6 +694,7 @@ class WhatIfService:
                         initial_risk,
                         fee,
                         widened_risk,
+                        target_source,
                     )
                 )
                 continue
@@ -700,6 +719,7 @@ class WhatIfService:
                     initial_risk,
                     fee,
                     widened_risk,
+                    target_source,
                 )
             )
 
@@ -752,6 +772,36 @@ class WhatIfService:
             trading_day=trading_day,
             market_data_mappings=market_data_mappings,
         )
+
+    @staticmethod
+    def _derive_target_price(
+        *,
+        entry_price: float,
+        side: str,
+        quantity: float,
+        point_value: float,
+        initial_risk: float,
+        target_r_multiple: float,
+    ) -> float | None:
+        """Return a synthetic target derived from original risk."""
+
+        if (
+            initial_risk <= 0
+            or quantity <= 0
+            or point_value <= 0
+            or target_r_multiple <= 0
+        ):
+            return None
+
+        price_risk_points = initial_risk / (
+            quantity * point_value
+        )
+        target_distance = (
+            price_risk_points * target_r_multiple
+        )
+        if side == "Short":
+            return round(entry_price - target_distance, 6)
+        return round(entry_price + target_distance, 6)
 
     def _replay_bars(
         self,

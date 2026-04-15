@@ -124,6 +124,35 @@ class UserRepository(BaseRepository):
             },
         )
 
+    def update_whatif_target_r_multiple(
+        self,
+        user_id: str,
+        whatif_target_r_multiple: float,
+    ) -> bool:
+        """
+        Update a user's default What-if target R-multiple.
+
+        Parameters:
+            user_id: The user's ObjectId string.
+            whatif_target_r_multiple: New target R-multiple.
+
+        Returns:
+            True if updated successfully.
+        """
+        from app.utils.datetime_utils import utc_now
+
+        return self.update_one(
+            user_id,
+            {
+                "$set": {
+                    "whatif_target_r_multiple": (
+                        whatif_target_r_multiple
+                    ),
+                    "updated_at": utc_now(),
+                }
+            },
+        )
+
     def update_symbol_mappings(
         self,
         user_id: str,
@@ -184,6 +213,7 @@ class UserRepository(BaseRepository):
         timezone: str,
         display_timezone: str,
         starting_equity: float,
+        whatif_target_r_multiple: float,
         symbol_mappings: dict,
         market_data_mappings: dict,
     ) -> bool:
@@ -197,6 +227,9 @@ class UserRepository(BaseRepository):
                     "timezone": timezone,
                     "display_timezone": display_timezone,
                     "starting_equity": starting_equity,
+                    "whatif_target_r_multiple": (
+                        whatif_target_r_multiple
+                    ),
                     "symbol_mappings": symbol_mappings,
                     "market_data_mappings": market_data_mappings,
                     "updated_at": utc_now(),

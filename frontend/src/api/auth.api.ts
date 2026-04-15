@@ -108,6 +108,16 @@ export async function updateStartingEquity(
   return res.data;
 }
 
+/** Update the current user's default What-if target R-multiple. */
+export async function updateWhatIfTargetRMultiple(
+  whatIfTargetRMultiple: number
+): Promise<User> {
+  const res = await apiClient.put<User>('/auth/whatif-target-r-multiple', {
+    whatif_target_r_multiple: whatIfTargetRMultiple,
+  });
+  return res.data;
+}
+
 /** Update the current user's symbol mappings. */
 export async function updateSymbolMappings(
   symbolMappings: SymbolMappings
