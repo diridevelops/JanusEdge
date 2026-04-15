@@ -34,6 +34,12 @@ from app.utils.trade_metrics import (
 
 logger = logging.getLogger(__name__)
 _RUNNING_PNL_MAX_POINTS = 600
+_CANDLE_INTERVAL_SECONDS = {
+    "1m": 60,
+    "5m": 5 * 60,
+    "15m": 15 * 60,
+    "1h": 60 * 60,
+}
 
 
 def _parse_date_from(value: str) -> datetime:
@@ -199,7 +205,9 @@ class TradeService:
         market_data_mappings = self._get_market_data_mappings(
             user_id
         )
-        market_cache: dict[tuple[str, str | None, datetime.date], bool] = {}
+        market_cache: dict[
+            tuple[str, str | None, datetime.date], list[dict]
+        ] = {}
 
         serialized_trades = []
         for trade in trades:
@@ -207,32 +215,12 @@ class TradeService:
             trade.pop("r_multiple_defined", None)
             serialized = self.trade_repo.serialize_doc(trade)
 
-            trade_day = trade.get("entry_time")
-            if isinstance(trade_day, datetime):
-                day_key = trade_day.date()
-            else:
-                day_key = datetime.fromisoformat(
-                    str(serialized.get("entry_time"))
-                ).date()
-
-            cache_key = (
-                trade.get("symbol", ""),
-                trade.get("raw_symbol"),
-                day_key,
-            )
-            if cache_key not in market_cache:
-                market_cache[cache_key] = (
-                    self.market_data_service.tick_data_service.has_ohlc_for_day(
-                        symbol=trade.get("symbol", ""),
-                        raw_symbol=trade.get("raw_symbol"),
-                        interval="5m",
-                        trading_day=day_key,
-                        market_data_mappings=market_data_mappings,
-                    )
-                )
-
             serialized["market_data_cached"] = (
-                market_cache[cache_key]
+                self._trade_window_has_cached_market_data(
+                    trade=trade,
+                    market_data_mappings=market_data_mappings,
+                    day_bar_cache=market_cache,
+                )
             )
             serialized_trades.append(serialized)
 
@@ -475,6 +463,108 @@ class TradeService:
         if isinstance(timestamp, datetime):
             return to_utc(timestamp)
         return to_utc(datetime.fromisoformat(str(timestamp)))
+
+    def _trade_window_has_cached_market_data(
+        self,
+        *,
+        trade: dict,
+        market_data_mappings: dict,
+        day_bar_cache: dict[tuple[str, str | None, date], list[dict]],
+    ) -> bool:
+        """Return True when stored candles overlap the trade window."""
+
+        entry_dt = self._get_entry_datetime(
+            trade.get("entry_time")
+        )
+        exit_time = trade.get("exit_time")
+        if exit_time is None:
+            exit_dt = entry_dt
+        else:
+            exit_dt = self._get_exit_datetime(exit_time)
+
+        window_start = min(entry_dt, exit_dt)
+        window_end = max(entry_dt, exit_dt)
+        symbol = trade.get("symbol", "")
+        raw_symbol = trade.get("raw_symbol")
+        current_day = window_start.date()
+        last_day = window_end.date()
+
+        while current_day <= last_day:
+            day_start = datetime.combine(
+                current_day,
+                datetime.min.time(),
+                tzinfo=timezone.utc,
+            )
+            day_end = day_start + timedelta(days=1)
+            segment_start = max(window_start, day_start)
+            segment_end = min(
+                window_end,
+                day_end - timedelta(microseconds=1),
+            )
+
+            if self._bars_overlap_window(
+                bars=self._get_day_bars(
+                    symbol=symbol,
+                    raw_symbol=raw_symbol,
+                    trading_day=current_day,
+                    market_data_mappings=market_data_mappings,
+                    day_bar_cache=day_bar_cache,
+                ),
+                start_dt=segment_start,
+                end_dt=segment_end,
+                interval="5m",
+            ):
+                return True
+
+            current_day += timedelta(days=1)
+
+        return False
+
+    def _get_day_bars(
+        self,
+        *,
+        symbol: str,
+        raw_symbol: str | None,
+        trading_day: date,
+        market_data_mappings: dict,
+        day_bar_cache: dict[tuple[str, str | None, date], list[dict]],
+    ) -> list[dict]:
+        """Read and cache one day's candle bars for market-data checks."""
+
+        cache_key = (symbol, raw_symbol, trading_day)
+        if cache_key not in day_bar_cache:
+            day_bar_cache[cache_key] = (
+                self.market_data_service.tick_data_service.read_bars_for_day(
+                    symbol=symbol,
+                    raw_symbol=raw_symbol,
+                    interval="5m",
+                    trading_day=trading_day,
+                    market_data_mappings=market_data_mappings,
+                )
+            )
+        return day_bar_cache[cache_key]
+
+    @staticmethod
+    def _bars_overlap_window(
+        *,
+        bars: list[dict],
+        start_dt: datetime,
+        end_dt: datetime,
+        interval: str,
+    ) -> bool:
+        """Return True when any candle interval overlaps the window."""
+
+        interval_seconds = _CANDLE_INTERVAL_SECONDS[interval]
+        start_ts = start_dt.timestamp()
+        end_ts = end_dt.timestamp()
+
+        for bar in bars:
+            bar_start = int(bar.get("time", 0) or 0)
+            bar_end = bar_start + interval_seconds
+            if bar_end > start_ts and bar_start <= end_ts:
+                return True
+
+        return False
 
     @staticmethod
     def _apply_execution_to_position(

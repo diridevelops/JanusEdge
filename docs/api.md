@@ -157,7 +157,7 @@ If you need an exact stable schema here, treat it as TODO because the preview re
 - `sort_by=r_multiple` is handled specially in the backend.
 - `account` can be either an account ObjectId or an account name.
 - `tag` can be either a tag ObjectId or a tag name.
-- each returned trade includes a computed `market_data_cached` boolean based on stored candle metadata.
+- each returned trade includes a computed `market_data_cached` boolean when stored 5-minute candles overlap that trade's time window.
 
 ### Running P&L notes
 

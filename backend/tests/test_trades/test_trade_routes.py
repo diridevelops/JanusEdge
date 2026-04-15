@@ -284,12 +284,94 @@ def test_list_trades_market_data_cached_uses_explicit_mapping(
         trading_day=date(2026, 1, 5),
         rows=[
             {
-                "time": int(1736071200),
+                "time": _to_epoch_seconds(
+                    "2026-01-05T10:00:00+00:00"
+                ),
                 "open": 5000.0,
                 "high": 5006.0,
                 "low": 4998.0,
                 "close": 5004.0,
                 "volume": 10,
+            }
+        ],
+    )
+
+    resp = client.get(
+        "/api/trades",
+        headers=_auth_header(token),
+    )
+
+    assert resp.status_code == 200
+    assert resp.get_json()["trades"][0]["market_data_cached"] is True
+
+
+def test_list_trades_market_data_cached_requires_trade_window_overlap(
+    client,
+    seed_market_data_dataset,
+):
+    token = _register_and_login(client)
+    _create_trade(
+        client,
+        token,
+        entry_time="2026-01-05T10:00:00",
+        exit_time="2026-01-05T10:05:00",
+    )
+    seed_market_data_dataset(
+        symbol="MES",
+        raw_symbol="MES",
+        dataset_type="candles",
+        timeframe="5m",
+        trading_day=date(2026, 1, 5),
+        rows=[
+            {
+                "time": _to_epoch_seconds(
+                    "2026-01-05T09:00:00+00:00"
+                ),
+                "open": 5000.0,
+                "high": 5004.0,
+                "low": 4999.0,
+                "close": 5002.0,
+                "volume": 12,
+            }
+        ],
+    )
+
+    resp = client.get(
+        "/api/trades",
+        headers=_auth_header(token),
+    )
+
+    assert resp.status_code == 200
+    assert resp.get_json()["trades"][0]["market_data_cached"] is False
+
+
+def test_list_trades_market_data_cached_accepts_covering_bar_start_before_entry(
+    client,
+    seed_market_data_dataset,
+):
+    token = _register_and_login(client)
+    _create_trade(
+        client,
+        token,
+        entry_time="2026-01-05T10:02:00",
+        exit_time="2026-01-05T10:03:00",
+    )
+    seed_market_data_dataset(
+        symbol="MES",
+        raw_symbol="MES",
+        dataset_type="candles",
+        timeframe="5m",
+        trading_day=date(2026, 1, 5),
+        rows=[
+            {
+                "time": _to_epoch_seconds(
+                    "2026-01-05T10:00:00+00:00"
+                ),
+                "open": 5000.0,
+                "high": 5006.0,
+                "low": 4998.0,
+                "close": 5004.0,
+                "volume": 18,
             }
         ],
     )
