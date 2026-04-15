@@ -201,7 +201,7 @@ Useful columns include:
 - tags
 - market-data status
 
-If a trade shows market data as available, chart data has already been cached for that trade.
+If a trade shows market data as available, stored candles overlap that trade's time window.
 
 ## Import Trades
 
