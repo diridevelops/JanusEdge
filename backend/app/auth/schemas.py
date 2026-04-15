@@ -70,6 +70,15 @@ class UpdateStartingEquitySchema(Schema):
     )
 
 
+class UpdateWhatIfTargetRMultipleSchema(Schema):
+    """Schema for the default What-if target R-multiple."""
+
+    whatif_target_r_multiple = fields.Float(
+        required=True,
+        validate=validate.Range(min=0, min_inclusive=False),
+    )
+
+
 class BaseSymbolMappingSchema(Schema):
     """Schema for a single base symbol mapping entry."""
 

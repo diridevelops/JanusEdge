@@ -42,6 +42,7 @@ def test_register_success(client, app):
     assert data["user"]["username"] == "testuser"
     assert data["user"]["timezone"] == "America/New_York"
     assert data["user"]["market_data_mappings"] == {}
+    assert data["user"]["whatif_target_r_multiple"] == 2.0
     assert (
         data["user"]["symbol_mappings"]
         == get_default_symbol_mappings()
@@ -102,6 +103,7 @@ def test_login_success(client, app):
     assert "token" in data
     assert data["user"]["username"] == "testuser"
     assert data["user"]["market_data_mappings"] == {}
+    assert data["user"]["whatif_target_r_multiple"] == 2.0
     assert (
         data["user"]["symbol_mappings"]
         == get_default_symbol_mappings()
@@ -151,6 +153,7 @@ def test_me_with_token(client):
     data = response.get_json()
     assert data["username"] == "testuser"
     assert data["market_data_mappings"] == {}
+    assert data["whatif_target_r_multiple"] == 2.0
     assert data["symbol_mappings"] == get_default_symbol_mappings()
 
 
@@ -313,6 +316,50 @@ def test_update_symbol_mappings_rejects_invalid_point_value(client):
         "/api/auth/symbol-mappings",
         headers={"Authorization": f"Bearer {token}"},
         json={"symbol_mappings": symbol_mappings},
+    )
+
+    assert response.status_code == 400
+
+
+def test_update_whatif_target_r_multiple_persists_to_profile(client):
+    """Updating the default What-if target returns and persists it."""
+    reg = client.post("/api/auth/register", json={
+        "username": "whatiftargetuser",
+        "password": "testpass123",
+        "timezone": "America/New_York",
+    })
+    token = reg.get_json()["token"]
+
+    response = client.put(
+        "/api/auth/whatif-target-r-multiple",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"whatif_target_r_multiple": 3.5},
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["whatif_target_r_multiple"] == 3.5
+
+    me_response = client.get(
+        "/api/auth/me",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert me_response.status_code == 200
+    assert me_response.get_json()["whatif_target_r_multiple"] == 3.5
+
+
+def test_update_whatif_target_r_multiple_rejects_invalid_values(client):
+    """Updating the What-if target validates positive numeric values."""
+    reg = client.post("/api/auth/register", json={
+        "username": "invalidwhatiftargetuser",
+        "password": "testpass123",
+        "timezone": "America/New_York",
+    })
+    token = reg.get_json()["token"]
+
+    response = client.put(
+        "/api/auth/whatif-target-r-multiple",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"whatif_target_r_multiple": 0},
     )
 
     assert response.status_code == 400

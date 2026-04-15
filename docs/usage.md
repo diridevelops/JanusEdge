@@ -559,6 +559,11 @@ This tool simulates the effect of widening your stop.
 
 Use it to estimate how results might change if stopped-out trades had more room.
 
+Losing trades with a saved target price use that explicit target. If a losing
+trade has no target price, the simulator uses the calculator's `Default Target
+(R)` field to derive one from the trade's original risk for that run. If the
+trade has neither a target nor usable initial risk, it is skipped.
+
 It has two calculation modes:
 
 - `OHLC (1m)`: replays stored 1-minute candles generated from imported tick data

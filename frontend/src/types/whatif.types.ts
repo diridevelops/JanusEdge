@@ -73,6 +73,7 @@ export interface SimulationDetail {
   change_r: number | null;
   converted: boolean;
   status: string;
+  target_source: 'explicit' | 'derived' | null;
 }
 
 export interface SimulationResponse {

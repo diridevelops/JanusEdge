@@ -148,6 +148,34 @@ function parseProfitFactor(value: number | string): number | null {
   return null;
 }
 
+function computeWinLossRatio(rValues: Array<number | null | undefined>): number | null {
+  const winners = rValues.filter((value): value is number => value != null && Number.isFinite(value) && value > 0);
+  const losers = rValues.filter((value): value is number => value != null && Number.isFinite(value) && value < 0);
+
+  if (winners.length === 0 || losers.length === 0) {
+    return null;
+  }
+
+  const avgWinner = winners.reduce((sum, value) => sum + value, 0) / winners.length;
+  const avgLoser = losers.reduce((sum, value) => sum + Math.abs(value), 0) / losers.length;
+
+  if (avgLoser === 0) {
+    return null;
+  }
+
+  return avgWinner / avgLoser;
+}
+
+function formatRatioValue(value: number | null) {
+  if (value == null) {
+    return <span className="text-gray-500">â€”</span>;
+  }
+  if (!Number.isFinite(value)) {
+    return value > 0 ? 'Inf' : '-Inf';
+  }
+  return value.toFixed(2);
+}
+
 function buildSimulationViewModel(response: SimulationResponse) {
   const originalProfitFactor = parseProfitFactor(response.original.profit_factor);
   const whatIfProfitFactor = parseProfitFactor(response.what_if.profit_factor);
@@ -167,6 +195,20 @@ function buildSimulationViewModel(response: SimulationResponse) {
   const skippedDetails = response.details.filter(
     (detail) => detail.status !== 'simulated' && !detail.converted,
   );
+  const convertedPnlChange = convertedDetails.reduce(
+    (sum, detail) => sum + (detail.new_pnl - detail.original_pnl),
+    0,
+  );
+  const simulatedLoserPnlChange = simulatedDetails.reduce(
+    (sum, detail) => sum + (detail.new_pnl - detail.original_pnl),
+    0,
+  );
+  const originalWinLossRatio = computeWinLossRatio(
+    response.details.map((detail) => detail.original_r),
+  );
+  const whatIfWinLossRatio = computeWinLossRatio(
+    response.details.map((detail) => detail.new_r),
+  );
 
   return {
     original: response.original,
@@ -182,6 +224,18 @@ function buildSimulationViewModel(response: SimulationResponse) {
       winners_change: response.what_if.total_winners - response.original.total_winners,
       losers_change: response.what_if.total_losers - response.original.total_losers,
       profit_factor: profitFactorDelta,
+      converted_pnl_change: convertedPnlChange,
+      simulated_loser_pnl_change: simulatedLoserPnlChange,
+      win_loss_ratio:
+        originalWinLossRatio !== null && whatIfWinLossRatio !== null
+          ? whatIfWinLossRatio - originalWinLossRatio
+          : null,
+    },
+    summary: {
+      converted_pnl_change: convertedPnlChange,
+      simulated_loser_pnl_change: simulatedLoserPnlChange,
+      original_win_loss_ratio: originalWinLossRatio,
+      whatif_win_loss_ratio: whatIfWinLossRatio,
     },
     tradesTotal: response.trades_total,
     tradesConverted: response.trades_converted,
@@ -204,21 +258,34 @@ function getAnalysisConfidenceInterval(
   return analysis.confidence_intervals?.[metric] ?? null;
 }
 
-function getSimulationStatusLabel(status: string) {
-  switch (status) {
+function getSimulationStatusLabel(detail: SimulationDetail) {
+  const targetSourceSuffix = detail.target_source
+    ? `: ${detail.target_source} target`
+    : '';
+
+  switch (detail.status) {
     case 'no_target':
       return 'Skipped: no target';
     case 'no_data':
-      return 'Skipped: no market data';
+      return `Skipped: no market data${targetSourceSuffix}`;
+    case 'no_target_risk':
+      return 'Skipped: no target and no risk';
     case 'no_risk':
       return 'Skipped: no risk';
     case 'simulated':
-      return 'Simulated';
+      return `Simulated${targetSourceSuffix}`;
     case 'winner':
       return 'Winner: nothing to do';
     default:
-      return status;
+      return detail.status;
   }
+}
+
+function getConvertedStatusLabel(detail: SimulationDetail) {
+  if (!detail.target_source) {
+    return 'Converted to winner';
+  }
+  return `Converted to winner: ${detail.target_source} target`;
 }
 
 function ResultSection({
@@ -311,7 +378,9 @@ function ResultSection({
                           <DeltaCell value={trade.change_r} suffix="R" />
                         </td>
                         <td className="px-4 py-2 text-gray-600 dark:text-gray-300">
-                          {trade.converted ? 'Converted to winner' : getSimulationStatusLabel(trade.status)}
+                          {trade.converted
+                            ? getConvertedStatusLabel(trade)
+                            : getSimulationStatusLabel(trade)}
                         </td>
                       </tr>
                     );
@@ -375,6 +444,7 @@ export function WhatIfPage() {
 
   // ---- Simulation ----
   const [rWidening, setRWidening] = useState('0.5');
+  const [whatIfTargetRMultiple, setWhatIfTargetRMultiple] = useState('2');
   const [replayMode, setReplayMode] = useState<WhatIfReplayMode>('ohlc');
   const [simLoading, setSimLoading] = useState(false);
   const [simResult, setSimResult] = useState<ReturnType<typeof buildSimulationViewModel> | null>(null);
@@ -455,8 +525,13 @@ export function WhatIfPage() {
       addToast('error', 'R-widening must be between 0.1 and 10');
       return;
     }
+    const targetRValue = parseFloat(whatIfTargetRMultiple);
+    if (isNaN(targetRValue) || targetRValue <= 0) {
+      addToast('error', 'Default target R-multiple must be greater than 0.');
+      return;
+    }
 
-    const cacheKey = `${rVal}_${replayMode}_${JSON.stringify(apiFilters)}`;
+    const cacheKey = `${rVal}_${replayMode}_${targetRValue}_${JSON.stringify(apiFilters)}`;
     const cached = simCache.current.get(cacheKey);
     if (cached) {
       setSimResult(cached);
@@ -467,7 +542,12 @@ export function WhatIfPage() {
     simulationRequestIdRef.current = requestId;
     setSimLoading(true);
     try {
-      const response = await runSimulation(rVal, replayMode, apiFilters);
+      const response = await runSimulation(
+        rVal,
+        targetRValue,
+        replayMode,
+        apiFilters
+      );
       if (requestId !== simulationRequestIdRef.current) {
         return;
       }
@@ -509,7 +589,7 @@ export function WhatIfPage() {
       <PageHeader
         icon={FlaskConical}
         title="What-if"
-        description="Run filtered-trade simulations or inspect stop-management analysis across the current filters."
+        description="Run wider-stop simulations or inspect stop-management analysis. Trades without a saved target use your Settings default target R-multiple when original risk is available."
       />
 
       {/* Filters */}
@@ -745,6 +825,9 @@ export function WhatIfPage() {
                 text={
                   'Simulate widening your stop across all trades:\n' +
                   '- Winners keep their P&L.\n' +
+                  '- Losing trades with a saved target use that explicit target.\n' +
+                  `- Losing trades without a target derive one from original risk using the target R entered here (${whatIfTargetRMultiple}R).\n` +
+                  '- Losing trades without a target and usable risk are skipped.\n' +
                   '- Calculation mode lets you choose OHLC or Tick replay.\n' +
                   '- OHLC uses stored 1-minute candles generated from tick data and is the default. It is faster, but intrabar price order is approximated.\n' +
                   '- Tick uses stored raw ticks for more precise but slower replay.\n' +
@@ -754,7 +837,7 @@ export function WhatIfPage() {
               />
             </div>
 
-            <div className="flex items-end gap-4 mb-6">
+            <div className="flex flex-wrap items-end gap-4 mb-6">
               <div>
                 <label className="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">
                   Stop Widening (R)
@@ -780,15 +863,36 @@ export function WhatIfPage() {
                 >
                   <option value="ohlc">OHLC (1m)</option>
                   <option value="tick">Tick</option>
-                </select>
-              </div>
-              <button
-                type="button"
-                onClick={handleSimulate}
-                disabled={simLoading}
-                className="btn-primary px-4 py-2 text-sm font-medium disabled:opacity-50"
-              >
-                {simLoading ? (
+                  </select>
+                </div>
+                <div>
+                  <div className="mb-1 flex items-center gap-1 text-xs font-medium text-gray-500 dark:text-gray-400">
+                    <label htmlFor="whatIfDefaultTargetR">
+                      Default Target (R)
+                    </label>
+                    <InfoTooltip
+                      text="Used only for this simulation run when a losing trade has no saved target price. The What-if simulator derives a synthetic target from the trade's original risk using this multiple."
+                      ariaLabel="Info about default target R"
+                      widthClass="w-72"
+                    />
+                  </div>
+                  <input
+                    id="whatIfDefaultTargetR"
+                    type="number"
+                    min="0.01"
+                    step="any"
+                    value={whatIfTargetRMultiple}
+                    onChange={(e) => setWhatIfTargetRMultiple(e.target.value)}
+                    className="input-field text-sm w-28"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleSimulate}
+                  disabled={simLoading}
+                  className="btn-primary px-4 py-2 text-sm font-medium disabled:opacity-50"
+                >
+                  {simLoading ? (
                   <span className="flex items-center gap-2">
                     <Loader2 className="h-4 w-4 animate-spin" />
                     Simulating…
@@ -835,6 +939,26 @@ export function WhatIfPage() {
                         </td>
                       </tr>
                       <tr className="border-b border-gray-100 dark:border-gray-700/50">
+                        <td className="px-4 py-2 text-gray-700 dark:text-gray-300">Change P&L Winners</td>
+                        <td className="px-4 py-2 text-right text-gray-500">-</td>
+                        <td className="px-4 py-2 text-right">
+                          <DeltaCell value={simResult.summary.converted_pnl_change} isCurrency />
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          <DeltaCell value={simResult.delta.converted_pnl_change} isCurrency />
+                        </td>
+                      </tr>
+                      <tr className="border-b border-gray-100 dark:border-gray-700/50">
+                        <td className="px-4 py-2 text-gray-700 dark:text-gray-300">Change P&L Losers</td>
+                        <td className="px-4 py-2 text-right text-gray-500">-</td>
+                        <td className="px-4 py-2 text-right">
+                          <DeltaCell value={simResult.summary.simulated_loser_pnl_change} isCurrency />
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          <DeltaCell value={simResult.delta.simulated_loser_pnl_change} isCurrency />
+                        </td>
+                      </tr>
+                      <tr className="border-b border-gray-100 dark:border-gray-700/50">
                         <td className="px-4 py-2 text-gray-700 dark:text-gray-300">APPT</td>
                         <td className="px-4 py-2 text-right">{formatCurrency(simResult.original.avg_pnl)}</td>
                         <td className="px-4 py-2 text-right">{formatCurrency(simResult.whatIf.avg_pnl)}</td>
@@ -868,6 +992,18 @@ export function WhatIfPage() {
                           ) : (
                             <DeltaCell value={simResult.delta.expectancy_r} suffix="R" />
                           )}
+                        </td>
+                      </tr>
+                      <tr className="border-b border-gray-100 dark:border-gray-700/50">
+                        <td className="px-4 py-2 text-gray-700 dark:text-gray-300">W:L Ratio (R)</td>
+                        <td className="px-4 py-2 text-right">
+                          {formatRatioValue(simResult.summary.original_win_loss_ratio)}
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          {formatRatioValue(simResult.summary.whatif_win_loss_ratio)}
+                        </td>
+                        <td className="px-4 py-2 text-right">
+                          <DeltaCell value={simResult.delta.win_loss_ratio} />
                         </td>
                       </tr>
                       <tr className="border-b border-gray-100 dark:border-gray-700/50">

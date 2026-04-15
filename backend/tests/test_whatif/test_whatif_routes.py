@@ -104,6 +104,28 @@ def _create_trade(client, token, **overrides):
     return resp.get_json()["trade"]
 
 
+def _simulate(
+    client,
+    token,
+    *,
+    r_widening=0.5,
+    target_r_multiple=2.0,
+    replay_mode="ohlc",
+    query_string="",
+):
+    """Run a what-if simulation with explicit run-scoped inputs."""
+
+    return client.post(
+        f"/api/whatif/simulate{query_string}",
+        json={
+            "r_widening": r_widening,
+            "target_r_multiple": target_r_multiple,
+            "replay_mode": replay_mode,
+        },
+        headers=_auth(token),
+    )
+
+
 def _set_wish_stop(client, token, trade_id, price):
     """Set wish_stop_price on a trade."""
     return client.put(
@@ -379,6 +401,16 @@ class TestSimulate:
         )
         assert resp.status_code == 400
 
+    def test_rejects_invalid_target_r_multiple(self, client):
+        """Returns 400 when target_r_multiple is not positive."""
+        token = _register_and_login(client)
+        resp = client.post(
+            "/api/whatif/simulate",
+            json={"r_widening": 0.5, "target_r_multiple": 0},
+            headers=_auth(token),
+        )
+        assert resp.status_code == 400
+
     def test_no_trades_returns_empty(self, client):
         """Returns zeros when no trades match."""
         token = _register_and_login(client)
@@ -417,6 +449,7 @@ class TestSimulate:
         assert detail["symbol"] == "MES"
         assert detail["side"] == "Long"
         assert detail["status"] == "winner"
+        assert detail["target_source"] is None
         assert detail["original_r"] == 1.0
         assert detail["new_r"] == 0.67
         assert detail["change_r"] == -0.33
@@ -448,35 +481,94 @@ class TestSimulate:
         assert detail["new_r"] == 0.69
         assert detail["change_r"] == -0.31
 
-    def test_loser_without_target_skipped(self, client):
-        """Losers without target_price are skipped."""
+    def test_loser_without_target_uses_default_derived_target(
+        self, client, seed_market_data_dataset
+    ):
+        """Losers without target_price use the default target R-multiple."""
         token = _register_and_login(client)
-        _create_trade(client, token)  # loser, no target
+        _create_trade(client, token)
+        seed_market_data_dataset(
+            symbol="MES",
+            dataset_type="candles",
+            timeframe="1m",
+            trading_day=datetime(2026, 1, 5).date(),
+            rows=[
+                {
+                    "time": int(
+                        datetime(
+                            2026,
+                            1,
+                            5,
+                            10,
+                            0,
+                            tzinfo=timezone.utc,
+                        ).timestamp()
+                    ),
+                    "open": 5000.0,
+                    "high": 5021.0,
+                    "low": 4986.0,
+                    "close": 5018.0,
+                    "volume": 2,
+                }
+            ],
+        )
 
         resp = client.post(
             "/api/whatif/simulate",
             json={"r_widening": 0.5},
             headers=_auth(token),
         )
-        data = resp.get_json()
-        assert data["trades_skipped"] >= 1
-        d = data["details"][0]
-        assert d["status"] in ("no_target", "no_risk", "no_data")
-        assert d["original_pnl"] == d["new_pnl"]
-        assert d["original_r"] == -1.0
-        assert d["new_r"] == -0.67
-        assert d["change_r"] == 0.33
+        assert resp.status_code == 200
 
-    def test_loser_without_target_r_multiple_includes_fees(
-        self, client
+        data = resp.get_json()
+        assert data["trades_converted"] == 1
+        detail = data["details"][0]
+        assert detail["status"] == "simulated"
+        assert detail["target_source"] == "derived"
+        assert detail["new_pnl"] == 100.0
+        assert detail["original_r"] == -1.0
+        assert detail["new_r"] == 1.33
+        assert detail["change_r"] == 2.33
+
+    def test_loser_without_target_derived_target_uses_original_risk_for_short_trade(
+        self, client, seed_market_data_dataset
     ):
-        """Skipped losers still report fee-inclusive R values."""
+        """Derived targets use original risk and correct short direction."""
         token = _register_and_login(client)
         _create_trade(
             client,
             token,
-            initial_risk=100.0,
-            fee=10.0,
+            side="Short",
+            entry_price=5000.0,
+            exit_price=5010.0,
+            initial_risk=50.0,
+            entry_time="2026-01-05T10:00:00+00:00",
+            exit_time="2026-01-05T10:05:00+00:00",
+        )
+        seed_market_data_dataset(
+            symbol="MES",
+            dataset_type="candles",
+            timeframe="1m",
+            trading_day=datetime(2026, 1, 5).date(),
+            rows=[
+                {
+                    "time": int(
+                        datetime(
+                            2026,
+                            1,
+                            5,
+                            10,
+                            0,
+                            tzinfo=timezone.utc,
+                        ).timestamp()
+                    ),
+                    "open": 5000.0,
+                    "high": 5014.0,
+                    "low": 4979.0,
+                    "close": 4981.0,
+                    "volume": 2,
+                }
+            ],
         )
 
         resp = client.post(
@@ -486,16 +578,91 @@ class TestSimulate:
         )
 
         assert resp.status_code == 200
-        data = resp.get_json()
-        detail = data["details"][0]
-        assert detail["original_r"] == -0.55
-        assert detail["new_r"] == -0.38
-        assert detail["change_r"] == 0.17
+        detail = resp.get_json()["details"][0]
+        assert detail["status"] == "simulated"
+        assert detail["target_source"] == "derived"
+        assert detail["new_pnl"] == 100.0
 
-    def test_missing_market_data_takes_priority_over_no_target(
+    def test_invalid_explicit_target_falls_back_to_derived_target(
+        self, client, app, seed_market_data_dataset
+    ):
+        """Targets on the wrong side of entry are ignored during simulation."""
+        token = _register_and_login(client)
+        loser = _create_trade(client, token)
+        with app.app_context():
+            from app.extensions import mongo
+
+            mongo.db.trades.update_one(
+                {"_id": ObjectId(loser["id"])},
+                {"$set": {"target_price": 4995.0}},
+            )
+
+        seed_market_data_dataset(
+            symbol="MES",
+            dataset_type="candles",
+            timeframe="1m",
+            trading_day=datetime(2026, 1, 5).date(),
+            rows=[
+                {
+                    "time": int(
+                        datetime(
+                            2026,
+                            1,
+                            5,
+                            10,
+                            0,
+                            tzinfo=timezone.utc,
+                        ).timestamp()
+                    ),
+                    "open": 5000.0,
+                    "high": 5021.0,
+                    "low": 4986.0,
+                    "close": 5018.0,
+                    "volume": 2,
+                }
+            ],
+        )
+
+        resp = client.post(
+            "/api/whatif/simulate",
+            json={"r_widening": 0.5},
+            headers=_auth(token),
+        )
+
+        assert resp.status_code == 200
+        detail = resp.get_json()["details"][0]
+        assert detail["status"] == "simulated"
+        assert detail["target_source"] == "derived"
+        assert detail["new_pnl"] == 100.0
+
+    def test_loser_without_target_and_without_usable_risk_is_skipped(
         self, client
     ):
-        """Losers with no target and no tick data are labeled no_data."""
+        """Trades without target and usable initial risk are skipped distinctly."""
+        token = _register_and_login(client)
+        loser = _create_trade(client, token)
+        update_resp = client.put(
+            f"/api/trades/{loser['id']}",
+            json={"initial_risk": 0.0},
+            headers=_auth(token),
+        )
+        assert update_resp.status_code == 200
+
+        resp = client.post(
+            "/api/whatif/simulate",
+            json={"r_widening": 0.5},
+            headers=_auth(token),
+        )
+
+        assert resp.status_code == 200
+        detail = resp.get_json()["details"][0]
+        assert detail["status"] == "no_target_risk"
+        assert detail["target_source"] is None
+
+    def test_missing_market_data_skips_derived_target_trades_as_no_data(
+        self, client
+    ):
+        """Derived-target trades without replay data are still labeled no_data."""
         token = _register_and_login(client)
         _create_trade(
             client,
@@ -517,6 +684,7 @@ class TestSimulate:
             if detail["status"] == "no_data"
         ]
         assert skipped_details
+        assert skipped_details[0]["target_source"] == "derived"
 
     def test_profit_factor_includes_fee_only_breakeven(
         self, client, app
@@ -687,6 +855,7 @@ class TestSimulate:
         detail = data["details"][0]
         assert detail["trade_id"] == loser["id"]
         assert detail["converted"] is True
+        assert detail["target_source"] == "explicit"
         assert detail["new_pnl"] > 0
 
     def test_short_trade_stop_hit_is_replayed_from_ticks(
@@ -751,6 +920,7 @@ class TestSimulate:
         assert detail["trade_id"] == loser["id"]
         assert detail["status"] == "simulated"
         assert detail["converted"] is False
+        assert detail["target_source"] == "explicit"
         assert detail["new_pnl"] == -75.0
 
     def test_default_simulation_uses_ohlc_candles(
@@ -805,6 +975,7 @@ class TestSimulate:
         assert detail["trade_id"] == loser["id"]
         assert detail["status"] == "simulated"
         assert detail["converted"] is True
+        assert detail["target_source"] == "explicit"
 
     def test_ohlc_mode_includes_entry_bar_for_mid_bar_entries(
         self, client, seed_market_data_dataset
@@ -880,6 +1051,7 @@ class TestSimulate:
         assert detail["trade_id"] == loser["id"]
         assert detail["status"] == "simulated"
         assert detail["converted"] is False
+        assert detail["target_source"] == "explicit"
         assert detail["new_pnl"] < 0
 
     def test_tick_mode_requires_raw_ticks(
@@ -933,6 +1105,7 @@ class TestSimulate:
         detail = resp.get_json()["details"][0]
         assert detail["trade_id"] == loser["id"]
         assert detail["status"] == "no_data"
+        assert detail["target_source"] == "explicit"
 
     def test_ticks_before_entry_are_treated_as_no_data(
         self, client, seed_market_data_dataset
@@ -973,6 +1146,7 @@ class TestSimulate:
         detail = resp.get_json()["details"][0]
         assert detail["trade_id"] == loser["id"]
         assert detail["status"] == "no_data"
+        assert detail["target_source"] == "explicit"
 
     def test_simulate_uses_user_symbol_mapping_point_value(
         self, client, app, seed_market_data_dataset
@@ -1029,6 +1203,7 @@ class TestSimulate:
         detail = resp.get_json()["details"][0]
         assert detail["trade_id"] == loser["id"]
         assert detail["new_pnl"] == 50.0
+        assert detail["target_source"] == "explicit"
 
     def test_simulate_replays_with_market_data_mapping(
         self, client, seed_market_data_dataset
@@ -1086,6 +1261,66 @@ class TestSimulate:
         data = resp.get_json()
         assert data["trades_converted"] == 1
         assert data["details"][0]["status"] == "simulated"
+        assert data["details"][0]["target_source"] == "explicit"
+
+    def test_simulate_cache_key_includes_target_r_multiple(
+        self, client, seed_market_data_dataset
+    ):
+        """Changing the run-scoped target input must invalidate cached results."""
+        token = _register_and_login(client)
+        _create_trade(client, token)
+
+        seed_market_data_dataset(
+            symbol="MES",
+            dataset_type="ticks",
+            trading_day=datetime(2026, 1, 5).date(),
+            rows=[
+                _tick_row(
+                    datetime(
+                        2026, 1, 5, 10, 0, tzinfo=timezone.utc
+                    ),
+                    5000.0,
+                ),
+                _tick_row(
+                    datetime(
+                        2026, 1, 5, 10, 1, tzinfo=timezone.utc
+                    ),
+                    5011.0,
+                ),
+                _tick_row(
+                    datetime(
+                        2026, 1, 5, 10, 2, tzinfo=timezone.utc
+                    ),
+                    4992.0,
+                ),
+            ],
+        )
+
+        first_resp = _simulate(
+            client,
+            token,
+            query_string="?symbol=MES",
+            r_widening=0.5,
+            target_r_multiple=1.0,
+            replay_mode="tick",
+        )
+        assert first_resp.status_code == 200
+        first_detail = first_resp.get_json()["details"][0]
+        assert first_detail["target_source"] == "derived"
+        assert first_detail["new_pnl"] == 50.0
+
+        second_resp = _simulate(
+            client,
+            token,
+            query_string="?symbol=MES",
+            r_widening=0.5,
+            target_r_multiple=3.0,
+            replay_mode="tick",
+        )
+        assert second_resp.status_code == 200
+        second_detail = second_resp.get_json()["details"][0]
+        assert second_detail["target_source"] == "derived"
+        assert second_detail["new_pnl"] == -40.0
 
     def test_simulate_filters_by_tag(self, client, app):
         """Simulation respects the selected tag filter."""

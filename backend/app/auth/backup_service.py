@@ -20,6 +20,9 @@ from app.market_data.symbol_mapper import (
     validate_symbol_mappings,
 )
 from app.media.service import MediaService
+from app.models.user import (
+    DEFAULT_STARTING_EQUITY,
+)
 from app.repositories.account_repo import AccountRepository
 from app.repositories.execution_repo import ExecutionRepository
 from app.repositories.import_batch_repo import (
@@ -155,7 +158,10 @@ class PortableBackupService:
             ),
             starting_equity=payload["settings"].get(
                 "starting_equity",
-                destination_user.get("starting_equity", 10000.0),
+                destination_user.get(
+                    "starting_equity",
+                    DEFAULT_STARTING_EQUITY,
+                ),
             ),
             symbol_mappings=restored_symbol_mappings,
             market_data_mappings=restored_market_data_mappings,
@@ -286,7 +292,7 @@ class PortableBackupService:
                     user.get("timezone"),
                 ),
                 "starting_equity": user.get(
-                    "starting_equity", 10000.0
+                    "starting_equity", DEFAULT_STARTING_EQUITY
                 ),
                 "symbol_mappings": (
                     get_effective_symbol_mappings(

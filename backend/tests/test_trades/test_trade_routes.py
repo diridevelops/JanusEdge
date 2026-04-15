@@ -1121,6 +1121,98 @@ def test_update_trade_initial_risk(client):
     assert trade["initial_risk"] == 120.0
 
 
+def test_update_trade_rejects_unprofitable_long_target(client):
+    token = _register_and_login(client)
+    create_resp = _create_trade(
+        client,
+        token,
+        exit_price=4990.0,
+    )
+    trade_id = create_resp.get_json()["trade"]["id"]
+
+    resp = client.put(
+        f"/api/trades/{trade_id}",
+        json={"target_price": 4995.0},
+        headers=_auth_header(token),
+    )
+
+    assert resp.status_code == 400
+    assert (
+        resp.get_json()["error"]["message"]
+        == "Target price must be above the entry price for long trades."
+    )
+
+
+def test_update_trade_rejects_unprofitable_short_target(client):
+    token = _register_and_login(client)
+    create_resp = _create_trade(
+        client,
+        token,
+        side="Short",
+        entry_price=5000.0,
+        exit_price=5010.0,
+    )
+    trade_id = create_resp.get_json()["trade"]["id"]
+
+    resp = client.put(
+        f"/api/trades/{trade_id}",
+        json={"target_price": 5005.0},
+        headers=_auth_header(token),
+    )
+
+    assert resp.status_code == 400
+    assert (
+        resp.get_json()["error"]["message"]
+        == "Target price must be below the entry price for short trades."
+    )
+
+
+def test_update_trade_rejects_non_wider_long_wish_stop(client):
+    token = _register_and_login(client)
+    create_resp = _create_trade(
+        client,
+        token,
+        exit_price=4990.0,
+    )
+    trade_id = create_resp.get_json()["trade"]["id"]
+
+    resp = client.put(
+        f"/api/trades/{trade_id}",
+        json={"wish_stop_price": 4992.0},
+        headers=_auth_header(token),
+    )
+
+    assert resp.status_code == 400
+    assert (
+        resp.get_json()["error"]["message"]
+        == "Wishful stop must be below the current stop price for long trades."
+    )
+
+
+def test_update_trade_rejects_non_wider_short_wish_stop(client):
+    token = _register_and_login(client)
+    create_resp = _create_trade(
+        client,
+        token,
+        side="Short",
+        entry_price=5000.0,
+        exit_price=5010.0,
+    )
+    trade_id = create_resp.get_json()["trade"]["id"]
+
+    resp = client.put(
+        f"/api/trades/{trade_id}",
+        json={"wish_stop_price": 5008.0},
+        headers=_auth_header(token),
+    )
+
+    assert resp.status_code == 400
+    assert (
+        resp.get_json()["error"]["message"]
+        == "Wishful stop must be above the current stop price for short trades."
+    )
+
+
 def test_update_trade_notes(client):
     token = _register_and_login(client)
     create_resp = _create_trade(client, token)

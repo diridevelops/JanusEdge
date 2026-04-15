@@ -23,6 +23,7 @@ Unless otherwise noted, IDs are MongoDB ObjectId strings serialized as plain str
 | PUT | `/api/auth/timezone` | Yes | Update trading timezone | JSON with `timezone` | Direct serialized user object |
 | PUT | `/api/auth/display-timezone` | Yes | Update display timezone | JSON with `display_timezone` | Direct serialized user object |
 | PUT | `/api/auth/starting-equity` | Yes | Update starting equity used by simulations | JSON with `starting_equity` | Direct serialized user object |
+| PUT | `/api/auth/whatif-target-r-multiple` | Yes | Update the default derived target used by What-if simulation | JSON with `whatif_target_r_multiple` | Direct serialized user object |
 | PUT | `/api/auth/symbol-mappings` | Yes | Replace user symbol mappings | JSON with `symbol_mappings` | Direct serialized user object |
 | PUT | `/api/auth/market-data-mappings` | Yes | Replace user market-data mappings | JSON with `market_data_mappings` | Direct serialized user object |
 | GET | `/api/auth/export` | Yes | Export a portable backup ZIP | None | ZIP download |
@@ -39,6 +40,7 @@ Where the backend returns a serialized user object, the frontend currently expec
   "timezone": "America/New_York",
   "display_timezone": "America/New_York",
   "starting_equity": 10000,
+  "whatif_target_r_multiple": 2.0,
   "symbol_mappings": {},
   "market_data_mappings": {}
 }
@@ -366,7 +368,7 @@ What-if endpoints use the same filter set as trades and analytics: `account`, `s
 | --- | --- | --- | --- | --- | --- |
 | GET | `/api/whatif/stop-analysis` | Yes | Return R-normalized stop-overshoot statistics | Query filters; `symbol` is optional | Stop-analysis object |
 | GET | `/api/whatif/wicked-out-trades` | Yes | List wicked-out trades and whether raw tick data exists | Query filters | `{ trades: [...] }` |
-| POST | `/api/whatif/simulate` | Yes | Run wider-stop simulation | JSON body with `r_widening` and optional `replay_mode`; query filters still apply | Simulation response |
+| POST | `/api/whatif/simulate` | Yes | Run wider-stop simulation | JSON body with `r_widening`, `target_r_multiple`, and optional `replay_mode`; query filters still apply | Simulation response |
 
 ### Stop-analysis response
 
@@ -400,6 +402,9 @@ Behavior notes:
 - `replay_mode` defaults to `ohlc`
 - OHLC mode is less precise because intrabar price order is approximated from candle highs and lows
 - tick mode is more precise because it replays stored raw ticks in order
+- losing trades with an explicit `target_price` keep using that target
+- losing trades without `target_price` derive a synthetic target from `initial_risk` and the request's `target_r_multiple`
+- trades without both a target and usable `initial_risk` are skipped with detail status `no_target_risk`
 - trades without usable data for the selected mode are skipped with detail status `no_data`
 - the wicked-out trade list exposes `has_tick_data`
 
@@ -408,6 +413,7 @@ Request body:
 ```json
 {
   "r_widening": 1.0,
+  "target_r_multiple": 2.0,
   "replay_mode": "ohlc"
 }
 ```
@@ -438,7 +444,22 @@ Response shape inferred from frontend types:
   "trades_converted": 0,
   "trades_simulated": 0,
   "trades_skipped": 0,
-  "details": []
+  "details": [
+    {
+      "trade_id": "...",
+      "symbol": "MES",
+      "side": "Long",
+      "entry_time": "2026-01-05T10:00:00+00:00",
+      "original_pnl": -50.0,
+      "new_pnl": 100.0,
+      "original_r": -1.0,
+      "new_r": 1.33,
+      "change_r": 2.33,
+      "converted": true,
+      "status": "simulated",
+      "target_source": "derived"
+    }
+  ]
 }
 ```
 

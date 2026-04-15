@@ -2,14 +2,14 @@ import axios from 'axios';
 import { Download, Plus, Settings, Trash2, Upload } from 'lucide-react';
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import {
-    changePassword,
-    exportBackup,
-    restoreBackup,
+  changePassword,
+  exportBackup,
+  restoreBackup,
   updateMarketDataMappings,
-    updateDisplayTimezone,
-    updateStartingEquity,
-    updateSymbolMappings,
-    updateTimezone,
+  updateDisplayTimezone,
+  updateStartingEquity,
+  updateSymbolMappings,
+  updateTimezone,
 } from '../api/auth.api';
 import { PageHeader } from '../components/ui/PageHeader';
 import { useAuth } from '../hooks/useAuth';
@@ -587,7 +587,7 @@ export function SettingsPage() {
           </button>
         </form>
       </div>
-      
+
       {/* Symbol Mappings */}
       <div className="card p-4">
         <div className="space-y-2">

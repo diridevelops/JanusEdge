@@ -1260,6 +1260,8 @@ class TradeService:
         if trade.get("status") == "deleted":
             raise NotFoundError("Trade not found.")
 
+        self._validate_stop_analysis_updates(trade, data)
+
         updates = {}
         if "fee" in data:
             new_fee = data["fee"]
@@ -1347,6 +1349,44 @@ class TradeService:
         trade = self.trade_repo.find_by_id(trade_id)
         clear_simulation_cache()
         return self.trade_repo.serialize_doc(trade)
+
+    @staticmethod
+    def _validate_stop_analysis_updates(
+        trade: dict, data: dict
+    ) -> None:
+        """Validate target and wish-stop edits on the trade detail form."""
+
+        side = trade.get("side", "")
+        entry_price = float(trade.get("avg_entry_price", 0.0))
+        current_stop = float(trade.get("avg_exit_price", 0.0))
+
+        if "target_price" in data and data["target_price"] is not None:
+            target_price = float(data["target_price"])
+            if side == "Short":
+                if target_price >= entry_price:
+                    raise ValidationError(
+                        "Target price must be below the entry price for short trades."
+                    )
+            elif target_price <= entry_price:
+                raise ValidationError(
+                    "Target price must be above the entry price for long trades."
+                )
+
+        if (
+            "wish_stop_price" in data
+            and data["wish_stop_price"] is not None
+            and float(trade.get("net_pnl", 0.0)) < 0
+        ):
+            wish_stop_price = float(data["wish_stop_price"])
+            if side == "Short":
+                if wish_stop_price <= current_stop:
+                    raise ValidationError(
+                        "Wishful stop must be above the current stop price for short trades."
+                    )
+            elif wish_stop_price >= current_stop:
+                raise ValidationError(
+                    "Wishful stop must be below the current stop price for long trades."
+                )
 
     def delete_trade(
         self, user_id: str, trade_id: str

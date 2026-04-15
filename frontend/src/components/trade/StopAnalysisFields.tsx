@@ -58,10 +58,35 @@ export function StopAnalysisFields({ tradeId, trade, onSaved }: StopAnalysisFiel
   const origTarget = defaultTarget;
   const hasChanges = (!isWinningTrade && wishStop !== origWish) || targetPrice !== origTarget;
 
+  function isProfitableTarget(price: number) {
+    return trade.side === 'Short'
+      ? price < trade.avg_entry_price
+      : price > trade.avg_entry_price;
+  }
+
+  function isWiderWishStop(price: number) {
+    return trade.side === 'Short'
+      ? price > trade.avg_exit_price
+      : price < trade.avg_exit_price;
+  }
+
   async function handleSave() {
     setIsSaving(true);
     try {
       const targetVal = targetPrice.trim() ? parseFloat(targetPrice) : null;
+      if (targetPrice.trim() && Number.isNaN(targetVal)) {
+        addToast('error', 'Target price must be a valid number.');
+        return;
+      }
+      if (targetVal != null && !isProfitableTarget(targetVal)) {
+        addToast(
+          'error',
+          trade.side === 'Short'
+            ? 'Target price must be below the entry price for short trades.'
+            : 'Target price must be above the entry price for long trades.'
+        );
+        return;
+      }
 
       const updates: UpdateTradeRequest = {
         target_price: targetVal,
@@ -69,6 +94,19 @@ export function StopAnalysisFields({ tradeId, trade, onSaved }: StopAnalysisFiel
 
       if (!isWinningTrade) {
         const wishVal = wishStop.trim() ? parseFloat(wishStop) : null;
+        if (wishStop.trim() && Number.isNaN(wishVal)) {
+          addToast('error', 'Wishful stop must be a valid number.');
+          return;
+        }
+        if (wishVal != null && !isWiderWishStop(wishVal)) {
+          addToast(
+            'error',
+            trade.side === 'Short'
+              ? 'Wishful stop must be above the current stop price for short trades.'
+              : 'Wishful stop must be below the current stop price for long trades.'
+          );
+          return;
+        }
 
         // Auto-manage wicked-out tag
         let tagIds = [...trade.tag_ids];
@@ -94,8 +132,8 @@ export function StopAnalysisFields({ tradeId, trade, onSaved }: StopAnalysisFiel
       addToast('success', 'Stop analysis saved');
       setIsEditing(false);
       onSaved?.();
-    } catch {
-      addToast('error', 'Failed to save');
+    } catch (error) {
+      addToast('error', getErrorMessage(error, 'Failed to save'));
     } finally {
       setIsSaving(false);
     }
