@@ -540,6 +540,14 @@ class WhatIfService:
                 ).date()
 
             target = t.get("target_price")
+            if not self._is_favorable_target_price(
+                entry_price=float(entry or 0.0),
+                side=side,
+                target_price=(
+                    float(target) if target is not None else None
+                ),
+            ):
+                target = None
             target_source = (
                 "explicit" if target is not None else None
             )
@@ -802,6 +810,21 @@ class WhatIfService:
         if side == "Short":
             return round(entry_price - target_distance, 6)
         return round(entry_price + target_distance, 6)
+
+    @staticmethod
+    def _is_favorable_target_price(
+        *,
+        entry_price: float,
+        side: str,
+        target_price: float | None,
+    ) -> bool:
+        """Return whether a target is on the profit side of entry."""
+
+        if target_price is None:
+            return False
+        if side == "Short":
+            return target_price < entry_price
+        return target_price > entry_price
 
     def _replay_bars(
         self,

@@ -567,6 +567,57 @@ class TestSimulate:
         assert detail["target_source"] == "derived"
         assert detail["new_pnl"] == 100.0
 
+    def test_invalid_explicit_target_falls_back_to_derived_target(
+        self, client, seed_market_data_dataset
+    ):
+        """Targets on the wrong side of entry are ignored during simulation."""
+        token = _register_and_login(client)
+        loser = _create_trade(client, token)
+        update_resp = client.put(
+            f"/api/trades/{loser['id']}",
+            json={"target_price": 4995.0},
+            headers=_auth(token),
+        )
+        assert update_resp.status_code == 200
+
+        seed_market_data_dataset(
+            symbol="MES",
+            dataset_type="candles",
+            timeframe="1m",
+            trading_day=datetime(2026, 1, 5).date(),
+            rows=[
+                {
+                    "time": int(
+                        datetime(
+                            2026,
+                            1,
+                            5,
+                            10,
+                            0,
+                            tzinfo=timezone.utc,
+                        ).timestamp()
+                    ),
+                    "open": 5000.0,
+                    "high": 5021.0,
+                    "low": 4986.0,
+                    "close": 5018.0,
+                    "volume": 2,
+                }
+            ],
+        )
+
+        resp = client.post(
+            "/api/whatif/simulate",
+            json={"r_widening": 0.5},
+            headers=_auth(token),
+        )
+
+        assert resp.status_code == 200
+        detail = resp.get_json()["details"][0]
+        assert detail["status"] == "simulated"
+        assert detail["target_source"] == "derived"
+        assert detail["new_pnl"] == 100.0
+
     def test_loser_without_target_and_without_usable_risk_is_skipped(
         self, client
     ):
