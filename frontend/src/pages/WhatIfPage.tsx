@@ -522,8 +522,8 @@ export function WhatIfPage() {
   // Simulation handler
   async function handleSimulate() {
     const rVal = parseFloat(rWidening);
-    if (isNaN(rVal) || rVal <= 0 || rVal > 10) {
-      addToast('error', 'R-widening must be between 0.1 and 10');
+    if (isNaN(rVal) || rVal < 0 || rVal > 10) {
+      addToast('error', 'R-widening must be between 0 and 10');
       return;
     }
     const targetRValue = parseFloat(whatIfTargetRMultiple);
@@ -828,10 +828,12 @@ export function WhatIfPage() {
                   'Simulate widening your stop with two modes:\n' +
                   '- With the checkbox off, winners keep their original P&L and only losing trades are replayed.\n' +
                   '- With the checkbox on, all eligible trades are replayed to the run-scoped default target and saved trade targets are ignored for that run.\n' +
+                  '- A stop widening of 0 keeps the original stop distance and lets you simulate the target rule only.\n' +
                   `- Default Target (R) is measured from the widened stop, not the original risk (${whatIfTargetRMultiple}R for this run).\n` +
                   '- Trades without usable risk for the selected mode are skipped.\n' +
                   '- Calculation mode lets you choose OHLC or Tick replay.\n' +
                   '- OHLC uses stored 1-minute candles generated from tick data and is the default. It is faster, but intrabar price order is approximated.\n' +
+                  '- In OHLC mode, if the recorded exit is in a later candle, the entry candle can still hit the target but will not trigger the stop.\n' +
                   '- Tick uses stored raw ticks for more precise but slower replay.\n' +
                   '- Trades without usable data for the selected mode are skipped.'
                 }
@@ -846,7 +848,7 @@ export function WhatIfPage() {
                 </label>
                 <input
                   type="number"
-                  min="0.1"
+                  min="0"
                   max="10"
                   step="0.1"
                   value={rWidening}
@@ -873,7 +875,7 @@ export function WhatIfPage() {
                     Default Target (R)
                   </label>
                   <InfoTooltip
-                    text="Used only for this simulation run. This value is measured from the widened stop, not the original risk. When full replay is enabled, every eligible trade uses this run target and saved trade targets are ignored."
+                    text="Used only for this simulation run. This value is measured from the widened stop, not the original risk. A stop widening of 0 preserves the original stop distance and only simulates the target rule. When full replay is enabled, every eligible trade uses this run target and saved trade targets are ignored."
                     ariaLabel="Info about default target R"
                     widthClass="w-80"
                   />

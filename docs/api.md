@@ -399,9 +399,12 @@ Behavior notes:
 
 - `replay_mode` defaults to `ohlc`
 - OHLC mode is less precise because intrabar price order is approximated from candle highs and lows
+- when a trade's recorded exit falls in a later candle, OHLC replay suppresses stop fills from the entry candle while still allowing an entry-candle target fill
 - tick mode is more precise because it replays stored raw ticks in order
+- `r_widening` accepts values from `0` to `10`
 - with `replay_all_to_default_target=false`, winners keep their realized P&L, losing trades with an explicit `target_price` keep using that target, and losing trades without `target_price` derive a synthetic target from widened-risk `R`
 - with `replay_all_to_default_target=true`, all eligible trades are replayed and the run-scoped default target overrides any saved `target_price`
+- `r_widening = 0` preserves the original stop distance so the simulation acts as a target-only replay
 - `target_r_multiple` is measured from widened stop risk, not original risk
 - trades without both a usable derived target and usable risk are skipped with detail status `no_target_risk`
 - trades without usable data for the selected mode are skipped with detail status `no_data`
@@ -411,7 +414,7 @@ Request body:
 
 ```json
 {
-  "r_widening": 1.0,
+  "r_widening": 0.0,
   "target_r_multiple": 2.0,
   "replay_all_to_default_target": false,
   "replay_mode": "ohlc"

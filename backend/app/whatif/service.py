@@ -919,6 +919,21 @@ class WhatIfService:
                 ).replace(tzinfo=timezone.utc).timestamp()
             )
 
+        exit_time = trade.get("exit_time")
+        exit_ts = None
+        if exit_time is not None:
+            if isinstance(exit_time, datetime):
+                utc_exit = exit_time.replace(
+                    tzinfo=timezone.utc
+                )
+                exit_ts = int(utc_exit.timestamp())
+            else:
+                exit_ts = int(
+                    datetime.fromisoformat(
+                        str(exit_time)
+                    ).replace(tzinfo=timezone.utc).timestamp()
+                )
+
         # Include the bar that contains the trade entry time,
         # not just bars that start after it. Otherwise a mid-bar
         # entry can incorrectly skip adverse movement that
@@ -931,12 +946,32 @@ class WhatIfService:
         if not trade_bars:
             return None
 
+        entry_bar_time = (
+            entry_ts // interval_seconds
+        ) * interval_seconds
+        exit_bar_time = (
+            (exit_ts // interval_seconds) * interval_seconds
+            if exit_ts is not None
+            else None
+        )
+        suppress_entry_bar_stop = (
+            exit_bar_time is not None
+            and entry_bar_time != exit_bar_time
+        )
+
         for bar in trade_bars:
             high = bar["high"]
             low = bar["low"]
+            is_entry_bar = bar["time"] == entry_bar_time
 
             if side == "Long":
-                if low <= new_stop:
+                if (
+                    not (
+                        suppress_entry_bar_stop
+                        and is_entry_bar
+                    )
+                    and low <= new_stop
+                ):
                     exit_price = new_stop
                     gross = (
                         (exit_price - entry)
@@ -953,7 +988,13 @@ class WhatIfService:
                     )
                     return round(gross - fee, 2)
             else:
-                if high >= new_stop:
+                if (
+                    not (
+                        suppress_entry_bar_stop
+                        and is_entry_bar
+                    )
+                    and high >= new_stop
+                ):
                     exit_price = new_stop
                     gross = (
                         (entry - exit_price)
