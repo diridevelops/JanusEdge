@@ -6,8 +6,8 @@ from flask_jwt_extended import (
     jwt_required,
 )
 
-from app.models.user import DEFAULT_WHATIF_TARGET_R_MULTIPLE
 from app.whatif import whatif_bp
+from app.whatif.constants import DEFAULT_TARGET_R_MULTIPLE
 from app.whatif.service import WhatIfService
 
 whatif_service = WhatIfService()
@@ -117,7 +117,7 @@ def simulate():
     body = request.get_json(silent=True) or {}
     r_widening = body.get("r_widening")
     target_r_multiple = body.get(
-        "target_r_multiple", DEFAULT_WHATIF_TARGET_R_MULTIPLE
+        "target_r_multiple", DEFAULT_TARGET_R_MULTIPLE
     )
     replay_all_to_default_target = body.get(
         "replay_all_to_default_target", False

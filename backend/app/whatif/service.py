@@ -16,9 +16,6 @@ from app.market_data.symbol_mapper import (
     get_effective_symbol_mappings,
     get_point_value,
 )
-from app.models.user import (
-    DEFAULT_WHATIF_TARGET_R_MULTIPLE,
-)
 from app.repositories.tag_repo import TagRepository
 from app.repositories.trade_repo import TradeRepository
 from app.repositories.user_repo import UserRepository
@@ -32,6 +29,7 @@ from app.whatif.bootstrap import (
     build_confidence_intervals,
     empty_confidence_intervals,
 )
+from app.whatif.constants import DEFAULT_TARGET_R_MULTIPLE
 
 
 _BAR_INTERVAL_SECONDS = {
@@ -360,9 +358,7 @@ class WhatIfService:
         self,
         user_id: str,
         r_widening: float,
-        target_r_multiple: float = (
-            DEFAULT_WHATIF_TARGET_R_MULTIPLE
-        ),
+        target_r_multiple: float = DEFAULT_TARGET_R_MULTIPLE,
         replay_all_to_default_target: bool = False,
         replay_mode: str = "ohlc",
         filters: Optional[Dict[str, Any]] = None,

@@ -9,6 +9,7 @@ from app import create_app
 from app.market_data.symbol_mapper import (
     get_default_symbol_mappings,
 )
+from app.whatif.constants import DEFAULT_TARGET_R_MULTIPLE
 from config import TestingConfig
 
 
@@ -414,6 +415,56 @@ class TestSimulate:
             headers=_auth(token),
         )
         assert resp.status_code == 200
+
+    def test_missing_target_r_multiple_uses_whatif_default(
+        self, client, seed_market_data_dataset
+    ):
+        """Omitted target_r_multiple falls back to the What-if module default."""
+
+        token = _register_and_login(client)
+        _create_trade(
+            client,
+            token,
+            entry_time="2026-01-05T10:00:00+00:00",
+            exit_time="2026-01-05T10:05:00+00:00",
+        )
+
+        seed_market_data_dataset(
+            symbol="MES",
+            dataset_type="ticks",
+            trading_day=datetime(2026, 1, 5).date(),
+            rows=[
+                _tick_row(
+                    datetime(
+                        2026, 1, 5, 10, 0, tzinfo=timezone.utc
+                    ),
+                    5000.0,
+                ),
+                _tick_row(
+                    datetime(
+                        2026, 1, 5, 10, 1, tzinfo=timezone.utc
+                    ),
+                    5000.0
+                    + (10.0 * DEFAULT_TARGET_R_MULTIPLE),
+                ),
+            ],
+        )
+
+        resp = client.post(
+            "/api/whatif/simulate?symbol=MES",
+            json={
+                "r_widening": 0.0,
+                "replay_all_to_default_target": True,
+                "replay_mode": "tick",
+            },
+            headers=_auth(token),
+        )
+        assert resp.status_code == 200
+
+        data = resp.get_json()
+        detail = data["details"][0]
+        assert detail["target_source"] == "derived"
+        assert detail["new_pnl"] == 50.0 * DEFAULT_TARGET_R_MULTIPLE
 
     def test_rejects_invalid_target_r_multiple(self, client):
         """Returns 400 when target_r_multiple is not positive."""

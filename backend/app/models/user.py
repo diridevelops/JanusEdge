@@ -7,7 +7,6 @@ from app.market_data.symbol_mapper import (
 from app.utils.datetime_utils import utc_now
 
 DEFAULT_STARTING_EQUITY = 10000.0
-DEFAULT_WHATIF_TARGET_R_MULTIPLE = 2.0
 
 
 def create_user_doc(
