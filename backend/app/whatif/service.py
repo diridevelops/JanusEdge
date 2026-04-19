@@ -122,6 +122,7 @@ def _cache_key(
     r_widening: float,
     replay_mode: str,
     target_r_multiple: float,
+    replay_all_to_default_target: bool,
 ) -> str:
     """Generate a stable cache key."""
     raw = json.dumps(
@@ -134,6 +135,9 @@ def _cache_key(
             "r_widening": r_widening,
             "replay_mode": replay_mode,
             "target_r_multiple": target_r_multiple,
+            "replay_all_to_default_target": (
+                replay_all_to_default_target
+            ),
         },
         sort_keys=True,
         default=str,
@@ -359,23 +363,23 @@ class WhatIfService:
         target_r_multiple: float = (
             DEFAULT_WHATIF_TARGET_R_MULTIPLE
         ),
+        replay_all_to_default_target: bool = False,
         replay_mode: str = "ohlc",
         filters: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
-        Simulate widening stops by xR across losing trades.
+        Simulate widened-stop outcomes for the filtered trade set.
 
-        For each losing trade with target_price and market data:
-        replay either 1-minute candles or raw ticks to determine if wider stop would
-        have reached the target.
-
-        Winners: keep original P&L, recalculate R with wider stop.
-        Losers with target + market data: replay the selected dataset.
-        Losers without target or usable market data: keep original P&L.
+        Default mode keeps winners unchanged and replays losing trades.
+        Full-replay mode replays every eligible trade and derives the
+        run-scoped target from widened-risk R, ignoring saved targets.
 
         Parameters:
             user_id: User ObjectId string.
             r_widening: Stop widening factor in R units.
+            target_r_multiple: Run-scoped target size in widened-risk R.
+            replay_all_to_default_target: Whether to replay all trades
+                and override saved targets with the run target.
             replay_mode: 'ohlc' or 'tick'.
             filters: Optional query filters.
 
@@ -394,6 +398,7 @@ class WhatIfService:
             r_widening,
             replay_mode,
             target_r_multiple,
+            replay_all_to_default_target,
         )
         if ck in _sim_cache:
             ts, result = _sim_cache[ck]
@@ -501,7 +506,7 @@ class WhatIfService:
             if original_r is not None:
                 original_rs.append(original_r)
 
-            if net_pnl >= 0:
+            if net_pnl >= 0 and not replay_all_to_default_target:
                 # Winner — keep P&L, widen initial risk
                 whatif_pnls.append(net_pnl)
                 whatif_grosses.append(gross_pnl)
@@ -532,19 +537,6 @@ class WhatIfService:
                     str(entry_time)
                 ).date()
 
-            target = t.get("target_price")
-            if not self._is_favorable_target_price(
-                entry_price=float(entry or 0.0),
-                side=side,
-                target_price=(
-                    float(target) if target is not None else None
-                ),
-            ):
-                target = None
-            target_source = (
-                "explicit" if target is not None else None
-            )
-
             try:
                 point_value = get_point_value(
                     symbol,
@@ -554,13 +546,31 @@ class WhatIfService:
             except ValueError as exc:
                 raise ValidationError(str(exc)) from exc
 
+            target = None
+            target_source = None
+            if not replay_all_to_default_target:
+                target = t.get("target_price")
+                if not self._is_favorable_target_price(
+                    entry_price=float(entry or 0.0),
+                    side=side,
+                    target_price=(
+                        float(target)
+                        if target is not None
+                        else None
+                    ),
+                ):
+                    target = None
+                target_source = (
+                    "explicit" if target is not None else None
+                )
+
             if target is None:
                 target = self._derive_target_price(
                     entry_price=float(entry or 0.0),
                     side=side,
                     quantity=float(qty or 0),
                     point_value=point_value,
-                    initial_risk=float(initial_risk or 0.0),
+                    widened_risk=float(widened_risk or 0.0),
                     target_r_multiple=target_r_multiple,
                 )
                 if target is None:
@@ -596,6 +606,34 @@ class WhatIfService:
             # R in price points = |entry − exit| (fee-free,
             # consistent with overshoot_R formula).
             price_risk = abs(entry - exit_p)
+            if replay_all_to_default_target:
+                if (
+                    float(initial_risk or 0.0) <= 0
+                    or float(qty or 0) <= 0
+                    or point_value <= 0
+                ):
+                    whatif_pnls.append(net_pnl)
+                    whatif_grosses.append(gross_pnl)
+                    if widened_risk:
+                        whatif_rs.append(net_pnl / widened_risk)
+                    skipped += 1
+                    details.append(
+                        build_detail(
+                            t,
+                            net_pnl,
+                            net_pnl,
+                            False,
+                            "no_risk",
+                            initial_risk,
+                            fee,
+                            widened_risk,
+                            target_source,
+                        )
+                    )
+                    continue
+                price_risk = float(initial_risk) / (
+                    float(qty) * point_value
+                )
             if price_risk == 0:
                 # Breakeven — can't compute R
                 whatif_pnls.append(net_pnl)
@@ -622,10 +660,17 @@ class WhatIfService:
 
             # Original stop ≈ exit price (that's where the
             # loser actually got stopped).  Widen from there.
-            if side == "Long":
-                new_stop = exit_p - widening_pts
+            if replay_all_to_default_target:
+                stop_distance = price_risk * (1 + r_widening)
+                if side == "Long":
+                    new_stop = entry - stop_distance
+                else:
+                    new_stop = entry + stop_distance
             else:
-                new_stop = exit_p + widening_pts
+                if side == "Long":
+                    new_stop = exit_p - widening_pts
+                else:
+                    new_stop = exit_p + widening_pts
 
             if not has_market_data:
                 whatif_pnls.append(net_pnl)
@@ -700,8 +745,8 @@ class WhatIfService:
                 )
                 continue
 
-            was_converted = new_pnl > net_pnl
-            if was_converted and new_pnl > 0:
+            was_converted = net_pnl < 0 and new_pnl > 0
+            if was_converted:
                 converted += 1
             else:
                 simulated += 1
@@ -715,7 +760,7 @@ class WhatIfService:
                     t,
                     net_pnl,
                     new_pnl,
-                    was_converted and new_pnl > 0,
+                    was_converted,
                     "simulated",
                     initial_risk,
                     fee,
@@ -781,20 +826,20 @@ class WhatIfService:
         side: str,
         quantity: float,
         point_value: float,
-        initial_risk: float,
+        widened_risk: float,
         target_r_multiple: float,
     ) -> float | None:
-        """Return a synthetic target derived from original risk."""
+        """Return a synthetic target derived from widened risk."""
 
         if (
-            initial_risk <= 0
+            widened_risk <= 0
             or quantity <= 0
             or point_value <= 0
             or target_r_multiple <= 0
         ):
             return None
 
-        price_risk_points = initial_risk / (
+        price_risk_points = widened_risk / (
             quantity * point_value
         )
         target_distance = (

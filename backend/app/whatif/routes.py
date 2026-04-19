@@ -119,6 +119,9 @@ def simulate():
     target_r_multiple = body.get(
         "target_r_multiple", DEFAULT_WHATIF_TARGET_R_MULTIPLE
     )
+    replay_all_to_default_target = body.get(
+        "replay_all_to_default_target", False
+    )
     replay_mode = str(
         body.get("replay_mode", "ohlc")
     ).strip().lower()
@@ -174,6 +177,17 @@ def simulate():
             400,
         )
 
+    if not isinstance(replay_all_to_default_target, bool):
+        return (
+            jsonify(
+                {
+                    "error": "replay_all_to_default_target "
+                    "must be a boolean"
+                }
+            ),
+            400,
+        )
+
     if replay_mode not in {"ohlc", "tick"}:
         return (
             jsonify(
@@ -190,6 +204,9 @@ def simulate():
         user_id,
         r_widening,
         target_r_multiple=target_r_multiple,
+        replay_all_to_default_target=(
+            replay_all_to_default_target
+        ),
         replay_mode=replay_mode,
         filters=filters,
     )

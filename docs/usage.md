@@ -559,10 +559,12 @@ This tool simulates the effect of widening your stop.
 
 Use it to estimate how results might change if stopped-out trades had more room.
 
-Losing trades with a saved target price use that explicit target. If a losing
-trade has no target price, the simulator uses the calculator's `Default Target
-(R)` field to derive one from the trade's original risk for that run. If the
-trade has neither a target nor usable initial risk, it is skipped.
+Current calculator behavior:
+
+- with `Replay all trades to the default target` turned off, winners keep their realized P&L, losing trades with a saved target price use that explicit target, and losing trades without a target derive one from the run-scoped `Default Target (R)` input
+- with that checkbox turned on, all eligible trades are replayed to the run-scoped default target and saved trade targets are ignored for that run
+- `Default Target (R)` is measured from the widened stop, not from the trade's original risk
+- if a trade has neither a usable derived target nor usable risk, it is skipped
 
 It has two calculation modes:
 

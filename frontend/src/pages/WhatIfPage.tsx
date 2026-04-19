@@ -199,7 +199,7 @@ function buildSimulationViewModel(response: SimulationResponse) {
     (sum, detail) => sum + (detail.new_pnl - detail.original_pnl),
     0,
   );
-  const simulatedLoserPnlChange = simulatedDetails.reduce(
+  const simulatedPnlChange = simulatedDetails.reduce(
     (sum, detail) => sum + (detail.new_pnl - detail.original_pnl),
     0,
   );
@@ -225,7 +225,7 @@ function buildSimulationViewModel(response: SimulationResponse) {
       losers_change: response.what_if.total_losers - response.original.total_losers,
       profit_factor: profitFactorDelta,
       converted_pnl_change: convertedPnlChange,
-      simulated_loser_pnl_change: simulatedLoserPnlChange,
+      simulated_pnl_change: simulatedPnlChange,
       win_loss_ratio:
         originalWinLossRatio !== null && whatIfWinLossRatio !== null
           ? whatIfWinLossRatio - originalWinLossRatio
@@ -233,7 +233,7 @@ function buildSimulationViewModel(response: SimulationResponse) {
     },
     summary: {
       converted_pnl_change: convertedPnlChange,
-      simulated_loser_pnl_change: simulatedLoserPnlChange,
+      simulated_pnl_change: simulatedPnlChange,
       original_win_loss_ratio: originalWinLossRatio,
       whatif_win_loss_ratio: whatIfWinLossRatio,
     },
@@ -445,6 +445,7 @@ export function WhatIfPage() {
   // ---- Simulation ----
   const [rWidening, setRWidening] = useState('0.5');
   const [whatIfTargetRMultiple, setWhatIfTargetRMultiple] = useState('2');
+  const [replayAllToDefaultTarget, setReplayAllToDefaultTarget] = useState(false);
   const [replayMode, setReplayMode] = useState<WhatIfReplayMode>('ohlc');
   const [simLoading, setSimLoading] = useState(false);
   const [simResult, setSimResult] = useState<ReturnType<typeof buildSimulationViewModel> | null>(null);
@@ -516,7 +517,7 @@ export function WhatIfPage() {
 
   useEffect(() => {
     setSimResult(null);
-  }, [replayMode]);
+  }, [replayAllToDefaultTarget, replayMode]);
 
   // Simulation handler
   async function handleSimulate() {
@@ -531,7 +532,7 @@ export function WhatIfPage() {
       return;
     }
 
-    const cacheKey = `${rVal}_${replayMode}_${targetRValue}_${JSON.stringify(apiFilters)}`;
+    const cacheKey = `${rVal}_${replayMode}_${targetRValue}_${replayAllToDefaultTarget}_${JSON.stringify(apiFilters)}`;
     const cached = simCache.current.get(cacheKey);
     if (cached) {
       setSimResult(cached);
@@ -545,6 +546,7 @@ export function WhatIfPage() {
       const response = await runSimulation(
         rVal,
         targetRValue,
+        replayAllToDefaultTarget,
         replayMode,
         apiFilters
       );
@@ -589,7 +591,7 @@ export function WhatIfPage() {
       <PageHeader
         icon={FlaskConical}
         title="What-if"
-        description="Run wider-stop simulations or inspect stop-management analysis. Trades without a saved target use your Settings default target R-multiple when original risk is available."
+        description="Run wider-stop simulations or inspect stop-management analysis. The calculator target is run-scoped and measured in widened-stop R."
       />
 
       {/* Filters */}
@@ -823,11 +825,11 @@ export function WhatIfPage() {
               </h2>
               <InfoTooltip
                 text={
-                  'Simulate widening your stop across all trades:\n' +
-                  '- Winners keep their P&L.\n' +
-                  '- Losing trades with a saved target use that explicit target.\n' +
-                  `- Losing trades without a target derive one from original risk using the target R entered here (${whatIfTargetRMultiple}R).\n` +
-                  '- Losing trades without a target and usable risk are skipped.\n' +
+                  'Simulate widening your stop with two modes:\n' +
+                  '- With the checkbox off, winners keep their original P&L and only losing trades are replayed.\n' +
+                  '- With the checkbox on, all eligible trades are replayed to the run-scoped default target and saved trade targets are ignored for that run.\n' +
+                  `- Default Target (R) is measured from the widened stop, not the original risk (${whatIfTargetRMultiple}R for this run).\n` +
+                  '- Trades without usable risk for the selected mode are skipped.\n' +
                   '- Calculation mode lets you choose OHLC or Tick replay.\n' +
                   '- OHLC uses stored 1-minute candles generated from tick data and is the default. It is faster, but intrabar price order is approximated.\n' +
                   '- Tick uses stored raw ticks for more precise but slower replay.\n' +
@@ -863,30 +865,41 @@ export function WhatIfPage() {
                 >
                   <option value="ohlc">OHLC (1m)</option>
                   <option value="tick">Tick</option>
-                  </select>
-                </div>
-                <div>
-                  <div className="mb-1 flex items-center gap-1 text-xs font-medium text-gray-500 dark:text-gray-400">
-                    <label htmlFor="whatIfDefaultTargetR">
-                      Default Target (R)
-                    </label>
-                    <InfoTooltip
-                      text="Used only for this simulation run when a losing trade has no saved target price. The What-if simulator derives a synthetic target from the trade's original risk using this multiple."
-                      ariaLabel="Info about default target R"
-                      widthClass="w-72"
-                    />
-                  </div>
-                  <input
-                    id="whatIfDefaultTargetR"
-                    type="number"
-                    min="0.01"
-                    step="any"
-                    value={whatIfTargetRMultiple}
-                    onChange={(e) => setWhatIfTargetRMultiple(e.target.value)}
-                    className="input-field text-sm w-28"
+                </select>
+              </div>
+              <div>
+                <div className="mb-1 flex items-center gap-1 text-xs font-medium text-gray-500 dark:text-gray-400">
+                  <label htmlFor="whatIfDefaultTargetR">
+                    Default Target (R)
+                  </label>
+                  <InfoTooltip
+                    text="Used only for this simulation run. This value is measured from the widened stop, not the original risk. When full replay is enabled, every eligible trade uses this run target and saved trade targets are ignored."
+                    ariaLabel="Info about default target R"
+                    widthClass="w-80"
                   />
                 </div>
-                <button
+                <input
+                  id="whatIfDefaultTargetR"
+                  type="number"
+                  min="0.01"
+                  step="any"
+                  value={whatIfTargetRMultiple}
+                  onChange={(e) => setWhatIfTargetRMultiple(e.target.value)}
+                  className="input-field text-sm w-28"
+                />
+              </div>
+              <label className="flex max-w-xs items-start gap-2 pb-1 text-sm text-gray-700 dark:text-gray-300">
+                <input
+                  type="checkbox"
+                  checked={replayAllToDefaultTarget}
+                  onChange={(e) => setReplayAllToDefaultTarget(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-gray-300 text-brand-600 focus:ring-brand-500"
+                />
+                <span>
+                  Replay all trades to the default target
+                </span>
+              </label>
+              <button
                   type="button"
                   onClick={handleSimulate}
                   disabled={simLoading}
@@ -949,13 +962,13 @@ export function WhatIfPage() {
                         </td>
                       </tr>
                       <tr className="border-b border-gray-100 dark:border-gray-700/50">
-                        <td className="px-4 py-2 text-gray-700 dark:text-gray-300">Change P&L Losers</td>
+                        <td className="px-4 py-2 text-gray-700 dark:text-gray-300">Change P&L Replayed</td>
                         <td className="px-4 py-2 text-right text-gray-500">-</td>
                         <td className="px-4 py-2 text-right">
-                          <DeltaCell value={simResult.summary.simulated_loser_pnl_change} isCurrency />
+                          <DeltaCell value={simResult.summary.simulated_pnl_change} isCurrency />
                         </td>
                         <td className="px-4 py-2 text-right">
-                          <DeltaCell value={simResult.delta.simulated_loser_pnl_change} isCurrency />
+                          <DeltaCell value={simResult.delta.simulated_pnl_change} isCurrency />
                         </td>
                       </tr>
                       <tr className="border-b border-gray-100 dark:border-gray-700/50">
