@@ -930,6 +930,62 @@ class TestSimulate:
         assert detail["target_source"] == "derived"
         assert detail["new_pnl"] == 75.0
 
+    def test_full_replay_counts_winner_to_loser_as_converted(
+        self, client, seed_market_data_dataset
+    ):
+        """Any strict winner/loser sign flip counts as converted."""
+
+        token = _register_and_login(client)
+        _create_trade(
+            client,
+            token,
+            exit_price=5010.0,
+            entry_time="2026-01-05T10:00:00+00:00",
+            exit_time="2026-01-05T10:05:00+00:00",
+        )
+
+        seed_market_data_dataset(
+            symbol="MES",
+            dataset_type="ticks",
+            trading_day=datetime(2026, 1, 5).date(),
+            rows=[
+                _tick_row(
+                    datetime(
+                        2026, 1, 5, 10, 0, tzinfo=timezone.utc
+                    ),
+                    5000.0,
+                ),
+                _tick_row(
+                    datetime(
+                        2026, 1, 5, 10, 1, tzinfo=timezone.utc
+                    ),
+                    4990.0,
+                ),
+            ],
+        )
+
+        resp = _simulate(
+            client,
+            token,
+            query_string="?symbol=MES",
+            r_widening=0.0,
+            target_r_multiple=1.0,
+            replay_all_to_default_target=True,
+            replay_mode="tick",
+        )
+        assert resp.status_code == 200
+
+        data = resp.get_json()
+        detail = data["details"][0]
+        assert data["trades_converted"] == 1
+        assert data["trades_simulated"] == 0
+        assert data["trades_skipped"] == 0
+        assert detail["status"] == "simulated"
+        assert detail["converted"] is True
+        assert detail["target_source"] == "derived"
+        assert detail["original_pnl"] > 0
+        assert detail["new_pnl"] < 0
+
     def test_full_replay_ignores_explicit_targets(
         self, client, seed_market_data_dataset
     ):
@@ -989,6 +1045,62 @@ class TestSimulate:
         assert detail["converted"] is False
         assert detail["target_source"] == "derived"
         assert detail["new_pnl"] == -40.0
+
+    def test_breakeven_to_winner_is_not_counted_as_converted(
+        self, client, seed_market_data_dataset
+    ):
+        """Breakeven trades do not count as converted when replay becomes profitable."""
+
+        token = _register_and_login(client)
+        _create_trade(
+            client,
+            token,
+            exit_price=5000.0,
+            initial_risk=50.0,
+            entry_time="2026-01-05T10:00:00+00:00",
+            exit_time="2026-01-05T10:05:00+00:00",
+        )
+
+        seed_market_data_dataset(
+            symbol="MES",
+            dataset_type="ticks",
+            trading_day=datetime(2026, 1, 5).date(),
+            rows=[
+                _tick_row(
+                    datetime(
+                        2026, 1, 5, 10, 0, tzinfo=timezone.utc
+                    ),
+                    5000.0,
+                ),
+                _tick_row(
+                    datetime(
+                        2026, 1, 5, 10, 1, tzinfo=timezone.utc
+                    ),
+                    5010.0,
+                ),
+            ],
+        )
+
+        resp = _simulate(
+            client,
+            token,
+            query_string="?symbol=MES",
+            r_widening=0.0,
+            target_r_multiple=1.0,
+            replay_all_to_default_target=True,
+            replay_mode="tick",
+        )
+        assert resp.status_code == 200
+
+        data = resp.get_json()
+        detail = data["details"][0]
+        assert data["trades_converted"] == 0
+        assert data["trades_simulated"] == 1
+        assert detail["status"] == "simulated"
+        assert detail["converted"] is False
+        assert detail["target_source"] == "derived"
+        assert detail["original_pnl"] == 0.0
+        assert detail["new_pnl"] > 0
 
     def test_zero_widening_full_replay_preserves_original_stop_distance(
         self, client, seed_market_data_dataset

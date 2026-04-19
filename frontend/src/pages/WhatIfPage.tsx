@@ -282,10 +282,17 @@ function getSimulationStatusLabel(detail: SimulationDetail) {
 }
 
 function getConvertedStatusLabel(detail: SimulationDetail) {
+  const convertedDirection =
+    detail.original_pnl < 0 && detail.new_pnl > 0
+      ? 'Converted to winner'
+      : detail.original_pnl > 0 && detail.new_pnl < 0
+        ? 'Converted to loser'
+        : 'Converted';
+
   if (!detail.target_source) {
-    return 'Converted to winner';
+    return convertedDirection;
   }
-  return `Converted to winner: ${detail.target_source} target`;
+  return `${convertedDirection}: ${detail.target_source} target`;
 }
 
 function ResultSection({
@@ -930,7 +937,7 @@ export function WhatIfPage() {
                 <>
                 {/* Summary line */}
                 <p className="text-xs text-gray-500 dark:text-gray-400">
-                  {simResult.tradesTotal} trades: {simResult.tradesConverted} converted to winners, {simResult.tradesSimulated} simulated, {simResult.tradesSkipped} skipped
+                  {simResult.tradesTotal} trades: {simResult.tradesConverted} converted, {simResult.tradesSimulated} simulated, {simResult.tradesSkipped} skipped
                 </p>
 
                 {/* Comparison table */}
@@ -954,7 +961,7 @@ export function WhatIfPage() {
                         </td>
                       </tr>
                       <tr className="border-b border-gray-100 dark:border-gray-700/50">
-                        <td className="px-4 py-2 text-gray-700 dark:text-gray-300">Change P&L Winners</td>
+                        <td className="px-4 py-2 text-gray-700 dark:text-gray-300">Change P&L Converted</td>
                         <td className="px-4 py-2 text-right text-gray-500">-</td>
                         <td className="px-4 py-2 text-right">
                           <DeltaCell value={simResult.summary.converted_pnl_change} isCurrency />

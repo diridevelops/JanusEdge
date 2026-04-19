@@ -565,6 +565,7 @@ Current calculator behavior:
 - with that checkbox turned on, all eligible trades are replayed to the run-scoped default target and saved trade targets are ignored for that run
 - `Stop Widening (R)` accepts values from `0` to `10`; setting it to `0` preserves the original stop distance and lets you simulate only the target rule
 - `Default Target (R)` is measured from the widened stop, not from the trade's original risk
+- the `Converted` section includes any replay that flips a trade from winner to loser or from loser to winner
 - if a trade has neither a usable derived target nor usable risk, it is skipped
 
 It has two calculation modes:

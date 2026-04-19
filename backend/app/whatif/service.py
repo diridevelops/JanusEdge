@@ -745,7 +745,10 @@ class WhatIfService:
                 )
                 continue
 
-            was_converted = net_pnl < 0 and new_pnl > 0
+            was_converted = (
+                (net_pnl < 0 and new_pnl > 0)
+                or (net_pnl > 0 and new_pnl < 0)
+            )
             if was_converted:
                 converted += 1
             else:

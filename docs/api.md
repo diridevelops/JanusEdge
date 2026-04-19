@@ -406,6 +406,8 @@ Behavior notes:
 - with `replay_all_to_default_target=true`, all eligible trades are replayed and the run-scoped default target overrides any saved `target_price`
 - `r_widening = 0` preserves the original stop distance so the simulation acts as a target-only replay
 - `target_r_multiple` is measured from widened stop risk, not original risk
+- `converted: true` means the replay changed the trade from loser to winner or from winner to loser
+- `trades_converted` counts any strict sign flip between original and replayed P&L
 - trades without both a usable derived target and usable risk are skipped with detail status `no_target_risk`
 - trades without usable data for the selected mode are skipped with detail status `no_data`
 - the wicked-out trade list exposes `has_tick_data`
