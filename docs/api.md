@@ -23,7 +23,6 @@ Unless otherwise noted, IDs are MongoDB ObjectId strings serialized as plain str
 | PUT | `/api/auth/timezone` | Yes | Update trading timezone | JSON with `timezone` | Direct serialized user object |
 | PUT | `/api/auth/display-timezone` | Yes | Update display timezone | JSON with `display_timezone` | Direct serialized user object |
 | PUT | `/api/auth/starting-equity` | Yes | Update starting equity used by simulations | JSON with `starting_equity` | Direct serialized user object |
-| PUT | `/api/auth/whatif-target-r-multiple` | Yes | Update the default derived target used by What-if simulation | JSON with `whatif_target_r_multiple` | Direct serialized user object |
 | PUT | `/api/auth/symbol-mappings` | Yes | Replace user symbol mappings | JSON with `symbol_mappings` | Direct serialized user object |
 | PUT | `/api/auth/market-data-mappings` | Yes | Replace user market-data mappings | JSON with `market_data_mappings` | Direct serialized user object |
 | GET | `/api/auth/export` | Yes | Export a portable backup ZIP | None | ZIP download |
@@ -40,7 +39,6 @@ Where the backend returns a serialized user object, the frontend currently expec
   "timezone": "America/New_York",
   "display_timezone": "America/New_York",
   "starting_equity": 10000,
-  "whatif_target_r_multiple": 2.0,
   "symbol_mappings": {},
   "market_data_mappings": {}
 }
@@ -368,7 +366,7 @@ What-if endpoints use the same filter set as trades and analytics: `account`, `s
 | --- | --- | --- | --- | --- | --- |
 | GET | `/api/whatif/stop-analysis` | Yes | Return R-normalized stop-overshoot statistics | Query filters; `symbol` is optional | Stop-analysis object |
 | GET | `/api/whatif/wicked-out-trades` | Yes | List wicked-out trades and whether raw tick data exists | Query filters | `{ trades: [...] }` |
-| POST | `/api/whatif/simulate` | Yes | Run wider-stop simulation | JSON body with `r_widening`, `target_r_multiple`, and optional `replay_mode`; query filters still apply | Simulation response |
+| POST | `/api/whatif/simulate` | Yes | Run wider-stop simulation | JSON body with `r_widening`, `target_r_multiple`, optional `replay_all_to_default_target`, and optional `replay_mode`; query filters still apply | Simulation response |
 
 ### Stop-analysis response
 
@@ -401,10 +399,16 @@ Behavior notes:
 
 - `replay_mode` defaults to `ohlc`
 - OHLC mode is less precise because intrabar price order is approximated from candle highs and lows
+- when a trade's recorded exit falls in a later candle, OHLC replay suppresses stop fills from the entry candle while still allowing an entry-candle target fill
 - tick mode is more precise because it replays stored raw ticks in order
-- losing trades with an explicit `target_price` keep using that target
-- losing trades without `target_price` derive a synthetic target from `initial_risk` and the request's `target_r_multiple`
-- trades without both a target and usable `initial_risk` are skipped with detail status `no_target_risk`
+- `r_widening` accepts values from `0` to `10`
+- with `replay_all_to_default_target=false`, winners keep their realized P&L, losing trades with an explicit `target_price` keep using that target, and losing trades without `target_price` derive a synthetic target from widened-risk `R`
+- with `replay_all_to_default_target=true`, all eligible trades are replayed and the run-scoped default target overrides any saved `target_price`
+- `r_widening = 0` preserves the original stop distance so the simulation acts as a target-only replay
+- `target_r_multiple` is measured from widened stop risk, not original risk
+- `converted: true` means the replay changed the trade from loser to winner or from winner to loser
+- `trades_converted` counts any strict sign flip between original and replayed P&L
+- trades without both a usable derived target and usable risk are skipped with detail status `no_target_risk`
 - trades without usable data for the selected mode are skipped with detail status `no_data`
 - the wicked-out trade list exposes `has_tick_data`
 
@@ -412,8 +416,9 @@ Request body:
 
 ```json
 {
-  "r_widening": 1.0,
+  "r_widening": 0.0,
   "target_r_multiple": 2.0,
+  "replay_all_to_default_target": false,
   "replay_mode": "ohlc"
 }
 ```

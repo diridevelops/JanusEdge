@@ -16,7 +16,6 @@ export interface User {
   timezone: string;
   display_timezone: string;
   starting_equity: number;
-  whatif_target_r_multiple: number;
   symbol_mappings: SymbolMappings;
   market_data_mappings: MarketDataMappings;
   created_at: string;

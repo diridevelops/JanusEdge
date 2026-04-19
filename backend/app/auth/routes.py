@@ -24,7 +24,6 @@ from app.auth.schemas import (
     UpdateTimezoneSchema,
     UpdateDisplayTimezoneSchema,
     UpdateStartingEquitySchema,
-    UpdateWhatIfTargetRMultipleSchema,
 )
 from app.auth.service import AuthService
 from app.utils.errors import AuthenticationError
@@ -37,9 +36,6 @@ change_password_schema = ChangePasswordSchema()
 update_timezone_schema = UpdateTimezoneSchema()
 update_display_timezone_schema = UpdateDisplayTimezoneSchema()
 update_starting_equity_schema = UpdateStartingEquitySchema()
-update_whatif_target_r_multiple_schema = (
-    UpdateWhatIfTargetRMultipleSchema()
-)
 update_symbol_mappings_schema = UpdateSymbolMappingsSchema()
 update_market_data_mappings_schema = (
     UpdateMarketDataMappingsSchema()
@@ -338,38 +334,6 @@ def update_starting_equity():
     profile = auth_service.update_starting_equity(
         user_id=user_id,
         starting_equity=validated["starting_equity"],
-    )
-    return jsonify(profile), 200
-
-
-@auth_bp.route("/whatif-target-r-multiple", methods=["PUT"])
-@jwt_required()
-def update_whatif_target_r_multiple():
-    """
-    Update the current user's default What-if target R-multiple.
-
-    Expects JSON: {whatif_target_r_multiple}
-    Returns: {user}
-    """
-    data = request.get_json()
-    if not data:
-        raise ValidationError("Request body is required.")
-
-    try:
-        validated = (
-            update_whatif_target_r_multiple_schema.load(data)
-        )
-    except MarshmallowError as e:
-        raise ValidationError(
-            "Validation failed.", details=e.messages
-        )
-
-    user_id = get_jwt_identity()
-    profile = auth_service.update_whatif_target_r_multiple(
-        user_id=user_id,
-        whatif_target_r_multiple=validated[
-            "whatif_target_r_multiple"
-        ],
     )
     return jsonify(profile), 200
 

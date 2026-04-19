@@ -31,6 +31,7 @@ export async function getWickedOutTrades(
 export async function runSimulation(
   rWidening: number,
   targetRMultiple: number,
+  replayAllToDefaultTarget: boolean,
   replayMode: 'ohlc' | 'tick',
   params: Record<string, string>,
 ): Promise<SimulationResponse> {
@@ -39,6 +40,7 @@ export async function runSimulation(
     {
       r_widening: rWidening,
       target_r_multiple: targetRMultiple,
+      replay_all_to_default_target: replayAllToDefaultTarget,
       replay_mode: replayMode,
     },
     { params },

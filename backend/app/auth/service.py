@@ -18,7 +18,6 @@ from app.models.auth_refresh_session import (
 )
 from app.models.user import (
     DEFAULT_STARTING_EQUITY,
-    DEFAULT_WHATIF_TARGET_R_MULTIPLE,
     create_user_doc,
 )
 from app.repositories.auth_refresh_session_repo import (
@@ -358,38 +357,6 @@ class AuthService:
         updated_user["starting_equity"] = starting_equity
         return self._serialize_user_profile(updated_user)
 
-    def update_whatif_target_r_multiple(
-        self,
-        user_id: str,
-        whatif_target_r_multiple: float,
-    ) -> dict:
-        """
-        Update a user's default What-if target R-multiple.
-
-        Parameters:
-            user_id: The user's ObjectId string.
-            whatif_target_r_multiple: New target R-multiple.
-
-        Returns:
-            Updated user profile dict.
-
-        Raises:
-            AuthenticationError: If user not found.
-        """
-        user = self.user_repo.find_by_id(user_id)
-        if not user:
-            raise AuthenticationError("User not found.")
-
-        self.user_repo.update_whatif_target_r_multiple(
-            user_id,
-            whatif_target_r_multiple,
-        )
-        updated_user = dict(user)
-        updated_user["whatif_target_r_multiple"] = (
-            whatif_target_r_multiple
-        )
-        return self._serialize_user_profile(updated_user)
-
     def update_symbol_mappings(
         self,
         user_id: str,
@@ -500,10 +467,6 @@ class AuthService:
             ),
             "starting_equity": user.get(
                 "starting_equity", DEFAULT_STARTING_EQUITY
-            ),
-            "whatif_target_r_multiple": user.get(
-                "whatif_target_r_multiple",
-                DEFAULT_WHATIF_TARGET_R_MULTIPLE,
             ),
             "symbol_mappings": get_effective_symbol_mappings(
                 user.get("symbol_mappings")

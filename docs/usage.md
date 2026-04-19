@@ -559,10 +559,14 @@ This tool simulates the effect of widening your stop.
 
 Use it to estimate how results might change if stopped-out trades had more room.
 
-Losing trades with a saved target price use that explicit target. If a losing
-trade has no target price, the simulator uses the calculator's `Default Target
-(R)` field to derive one from the trade's original risk for that run. If the
-trade has neither a target nor usable initial risk, it is skipped.
+Current calculator behavior:
+
+- with `Replay all trades to the default target` turned off, winners keep their realized P&L, losing trades with a saved target price use that explicit target, and losing trades without a target derive one from the run-scoped `Default Target (R)` input
+- with that checkbox turned on, all eligible trades are replayed to the run-scoped default target and saved trade targets are ignored for that run
+- `Stop Widening (R)` accepts values from `0` to `10`; setting it to `0` preserves the original stop distance and lets you simulate only the target rule
+- `Default Target (R)` is measured from the widened stop, not from the trade's original risk
+- the `Converted` section includes any replay that flips a trade from winner to loser or from loser to winner
+- if a trade has neither a usable derived target nor usable risk, it is skipped
 
 It has two calculation modes:
 
@@ -570,6 +574,7 @@ It has two calculation modes:
 - `Tick`: replays stored raw ticks directly
 
 OHLC mode is the default and is faster, but it is less precise because each candle only preserves open, high, low, and close.
+When a trade's recorded exit falls in a later candle, OHLC replay suppresses stop fills from the entry candle while still allowing an entry-candle target fill.
 
 Tick mode is more precise because it replays the stored ticks in order.
 
