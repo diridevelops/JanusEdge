@@ -7,6 +7,7 @@ import {
   restoreBackup,
   updateMarketDataMappings,
   updateDisplayTimezone,
+  updateRiskBreakevenEnabled,
   updateStartingEquity,
   updateSymbolMappings,
   updateTimezone,
@@ -244,6 +245,12 @@ export function SettingsPage() {
   );
   const [seLoading, setSeLoading] = useState(false);
 
+  // Risk-based breakeven classification
+  const [riskBreakevenEnabled, setRiskBreakevenEnabled] = useState(
+    user?.risk_breakeven_enabled ?? false
+  );
+  const [riskBreakevenLoading, setRiskBreakevenLoading] = useState(false);
+
   // Symbol mappings
   const [symbolMappingRows, setSymbolMappingRows] = useState<SymbolMappingRow[]>([]);
   const [symbolMappingsLoading, setSymbolMappingsLoading] = useState(false);
@@ -267,7 +274,13 @@ export function SettingsPage() {
       user?.display_timezone ?? user?.timezone ?? 'America/New_York'
     );
     setStartingEquity(String(user?.starting_equity ?? 10000));
-  }, [user?.display_timezone, user?.starting_equity, user?.timezone]);
+    setRiskBreakevenEnabled(user?.risk_breakeven_enabled ?? false);
+  }, [
+    user?.display_timezone,
+    user?.risk_breakeven_enabled,
+    user?.starting_equity,
+    user?.timezone,
+  ]);
 
   useEffect(() => {
     const symbolMappings = user?.symbol_mappings ?? EMPTY_SYMBOL_MAPPINGS;
@@ -354,6 +367,25 @@ export function SettingsPage() {
       addToast('error', message);
     } finally {
       setSeLoading(false);
+    }
+  }
+
+  async function handleUpdateRiskBreakeven(
+    e: FormEvent<HTMLFormElement>
+  ) {
+    e.preventDefault();
+    setRiskBreakevenLoading(true);
+    try {
+      await updateRiskBreakevenEnabled(riskBreakevenEnabled);
+      addToast('success', 'Outcome classification updated successfully.');
+      await refreshProfile();
+    } catch (err: unknown) {
+      addToast(
+        'error',
+        getErrorMessage(err, 'Failed to update outcome classification.')
+      );
+    } finally {
+      setRiskBreakevenLoading(false);
     }
   }
 
@@ -584,6 +616,40 @@ export function SettingsPage() {
           </div>
           <button type="submit" className="btn-primary" disabled={seLoading}>
             {seLoading ? 'Saving…' : 'Update Starting Equity'}
+          </button>
+        </form>
+      </div>
+
+      {/* Outcome Classification */}
+      <div className="card p-4">
+        <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+          Outcome Classification
+        </h2>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+          When enabled, closed trades with an absolute net P&amp;L at or below
+          their initial risk are counted as breakeven in analytics. Recorded
+          trade P&amp;L is not changed.
+        </p>
+        <form onSubmit={handleUpdateRiskBreakeven} className="space-y-4">
+          <label
+            htmlFor="riskBreakevenEnabled"
+            className="flex cursor-pointer items-start gap-3 text-sm text-gray-700 dark:text-gray-300"
+          >
+            <input
+              id="riskBreakevenEnabled"
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-primary focus:ring-primary"
+              checked={riskBreakevenEnabled}
+              onChange={(event) => setRiskBreakevenEnabled(event.target.checked)}
+            />
+            <span>Treat trades at or below initial risk as breakeven</span>
+          </label>
+          <button
+            type="submit"
+            className="btn-primary"
+            disabled={riskBreakevenLoading}
+          >
+            {riskBreakevenLoading ? 'Savingâ€¦' : 'Update Outcome Classification'}
           </button>
         </form>
       </div>

@@ -140,7 +140,7 @@ export function StatsGrid({
                   text={
                     'Sum of net P&L across all closed trades after fees.\n'
                     + 'Also shows total fees and fees as a % of |gross P&L|.\n'
-                    + 'Breakeven = trades with gross P&L = 0.'
+                    + 'Breakeven includes gross-flat trades and, when enabled in Settings, trades at or below their initial risk.'
                   }
                   ariaLabel="Info about Cumulated Net P&L"
                 />

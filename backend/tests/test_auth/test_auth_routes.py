@@ -370,3 +370,32 @@ def test_update_market_data_mappings_rejects_invalid_values(client):
     )
 
     assert response.status_code == 400
+
+
+def test_update_risk_breakeven_persists_to_profile(client):
+    """Risk-based breakeven defaults off and persists when enabled."""
+    reg = client.post("/api/auth/register", json={
+        "username": "riskbreakevenuser",
+        "password": "testpass123",
+        "timezone": "America/New_York",
+    })
+    token = reg.get_json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    profile_response = client.get(
+        "/api/auth/me", headers=headers
+    )
+    assert profile_response.get_json()["risk_breakeven_enabled"] is False
+
+    response = client.put(
+        "/api/auth/risk-breakeven",
+        json={"risk_breakeven_enabled": True},
+        headers=headers,
+    )
+    assert response.status_code == 200
+    assert response.get_json()["risk_breakeven_enabled"] is True
+
+    profile_response = client.get(
+        "/api/auth/me", headers=headers
+    )
+    assert profile_response.get_json()["risk_breakeven_enabled"] is True

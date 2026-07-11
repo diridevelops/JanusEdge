@@ -124,6 +124,22 @@ class UserRepository(BaseRepository):
             },
         )
 
+    def update_risk_breakeven_enabled(
+        self, user_id: str, risk_breakeven_enabled: bool
+    ) -> bool:
+        """Update the user's risk-based breakeven preference."""
+        from app.utils.datetime_utils import utc_now
+
+        return self.update_one(
+            user_id,
+            {
+                "$set": {
+                    "risk_breakeven_enabled": risk_breakeven_enabled,
+                    "updated_at": utc_now(),
+                }
+            },
+        )
+
     def update_symbol_mappings(
         self,
         user_id: str,
@@ -186,6 +202,7 @@ class UserRepository(BaseRepository):
         starting_equity: float,
         symbol_mappings: dict,
         market_data_mappings: dict,
+        risk_breakeven_enabled: bool = False,
     ) -> bool:
         """Update all portable user settings in one write."""
         from app.utils.datetime_utils import utc_now
@@ -197,6 +214,7 @@ class UserRepository(BaseRepository):
                     "timezone": timezone,
                     "display_timezone": display_timezone,
                     "starting_equity": starting_equity,
+                    "risk_breakeven_enabled": risk_breakeven_enabled,
                     "symbol_mappings": symbol_mappings,
                     "market_data_mappings": market_data_mappings,
                     "updated_at": utc_now(),
