@@ -33,6 +33,12 @@ export async function updateTag(
 }
 
 /** Delete a tag. */
-export async function deleteTag(id: string): Promise<void> {
-  await apiClient.delete(`/tags/${id}`);
+export async function deleteTag(
+  id: string
+): Promise<{ message: string; trades_updated: number }> {
+  const res = await apiClient.delete<{
+    message: string;
+    trades_updated: number;
+  }>(`/tags/${id}`);
+  return res.data;
 }

@@ -9,6 +9,7 @@ from bson import ObjectId
 
 from app.tags import tags_bp
 from app.models.tag import create_tag_doc
+from app.extensions import mongo
 from app.repositories.tag_repo import TagRepository
 from app.utils.errors import (
     NotFoundError,
@@ -127,5 +128,15 @@ def delete_tag(tag_id):
     if str(tag["user_id"]) != user_id:
         raise NotFoundError("Tag not found.")
 
+    cleanup_result = mongo.db.trades.update_many(
+        {
+            "user_id": ObjectId(user_id),
+            "tag_ids": tag["_id"],
+        },
+        {"$pull": {"tag_ids": tag["_id"]}},
+    )
     tag_repo.delete_one(tag_id)
-    return jsonify({"message": "Tag deleted."}), 200
+    return jsonify({
+        "message": "Tag deleted.",
+        "trades_updated": cleanup_result.modified_count,
+    }), 200
