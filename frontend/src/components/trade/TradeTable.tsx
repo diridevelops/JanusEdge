@@ -186,13 +186,14 @@ export function TradeTable({ trades, sortBy, sortDir, onSortChange }: TradeTable
                   {trade.tag_ids.map((tagId) => {
                     const tag = tagMap.get(tagId);
                     if (!tag) return null;
+                    const tagColor = tag.category_color || tag.color;
                     return (
                       <span
                         key={tagId}
                         className="inline-flex px-2 py-0.5 rounded-full text-xs font-medium"
                         style={{
-                          backgroundColor: tag.color + '20',
-                          color: tag.color,
+                          backgroundColor: tagColor + '20',
+                          color: tagColor,
                         }}
                       >
                         {tag.name}

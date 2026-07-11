@@ -1320,12 +1320,13 @@ class TradeService:
                     from app.models.tag import (
                         create_tag_doc,
                     )
+                    from app.tags.categories import ensure_tag_categories
 
+                    categories = ensure_tag_categories(user_id)
                     doc = create_tag_doc(
                         user_id=ObjectId(user_id),
                         name="wicked-out",
-                        category="custom",
-                        color="#ef4444",
+                        category_id=categories["mistakes"]["_id"],
                     )
                     wo_id = self.tag_repo.insert_one(doc)
                     wo_oid = ObjectId(wo_id)
@@ -1467,7 +1468,9 @@ class TradeService:
     ) -> list:
         """Resolve tag names to ObjectIds, creating if needed."""
         from app.models.tag import create_tag_doc
+        from app.tags.categories import ensure_tag_categories
 
+        categories = ensure_tag_categories(user_id)
         tag_ids = []
         for name in tag_names:
             tag = self.tag_repo.find_by_name(
@@ -1477,6 +1480,7 @@ class TradeService:
                 doc = create_tag_doc(
                     user_id=ObjectId(user_id),
                     name=name,
+                    category_id=categories["general"]["_id"],
                 )
                 tag_id = self.tag_repo.insert_one(doc)
                 tag_ids.append(ObjectId(tag_id))

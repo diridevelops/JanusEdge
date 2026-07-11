@@ -86,6 +86,14 @@ def init_db(db: Database) -> None:
     db.tags.create_index(
         [("user_id", 1), ("category", 1)]
     )
+    db.tags.create_index([("user_id", 1), ("category_id", 1)])
+    db.tag_categories.create_index(
+        [("user_id", 1), ("name", 1)], unique=True
+    )
+    db.tag_categories.create_index(
+        [("user_id", 1), ("system_key", 1)], unique=True,
+        partialFilterExpression={"system_key": {"$ne": None}},
+    )
 
     # Market data datasets
     db.market_data_datasets.create_index(

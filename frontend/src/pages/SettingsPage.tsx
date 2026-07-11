@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { Download, Plus, Settings, Trash2, Upload } from 'lucide-react';
+import { Download, Plus, Settings, Trash2, Upload, X } from 'lucide-react';
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import {
   changePassword,
@@ -12,7 +12,7 @@ import {
   updateSymbolMappings,
   updateTimezone,
 } from '../api/auth.api';
-import { deleteTag, listTags } from '../api/tags.api';
+import { createTag, createTagCategory, deleteTag, deleteTagCategory, listTagCategories, listTags, moveTag, updateTagCategory } from '../api/tags.api';
 import { PageHeader } from '../components/ui/PageHeader';
 import { useAuth } from '../hooks/useAuth';
 import { useFilters } from '../hooks/useFilters';
@@ -22,7 +22,7 @@ import type {
   RestoreSummary,
   SymbolMappings,
 } from '../types/auth.types';
-import type { Tag } from '../types/marketData.types';
+import type { Tag, TagCategory } from '../types/marketData.types';
 import { APP_NAME } from '../utils/constants';
 
 const TIMEZONES = [
@@ -60,7 +60,8 @@ const RESTORE_SUMMARY_ITEMS: Array<{
 
 function getErrorMessage(error: unknown, fallbackMessage: string): string {
   if (axios.isAxiosError(error)) {
-    const apiMessage = error.response?.data?.message;
+    const apiMessage = error.response?.data?.message
+      ?? error.response?.data?.error?.message;
     if (typeof apiMessage === 'string' && apiMessage.trim()) {
       return apiMessage;
     }
@@ -267,6 +268,10 @@ export function SettingsPage() {
   const [tags, setTags] = useState<Tag[]>([]);
   const [tagsLoading, setTagsLoading] = useState(false);
   const [deletingTagId, setDeletingTagId] = useState<string | null>(null);
+  const [tagCategories, setTagCategories] = useState<TagCategory[]>([]);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [newCategoryColor, setNewCategoryColor] = useState('#6366F1');
+  const [newTagNames, setNewTagNames] = useState<Record<string, string>>({});
 
   // Backup / restore
   const [exportLoading, setExportLoading] = useState(false);
@@ -307,8 +312,8 @@ export function SettingsPage() {
       return;
     }
     setTagsLoading(true);
-    listTags()
-      .then(setTags)
+    Promise.all([listTags(), listTagCategories()])
+      .then(([loadedTags, loadedCategories]) => { setTags(loadedTags); setTagCategories(loadedCategories); })
       .catch(() => addToast('error', 'Failed to load tags.'))
       .finally(() => setTagsLoading(false));
   }, [user?.id]);
@@ -488,6 +493,46 @@ export function SettingsPage() {
     } finally {
       setDeletingTagId(null);
     }
+  }
+
+  async function handleCreateCategory() {
+    if (!newCategoryName.trim()) return;
+    try {
+      const category = await createTagCategory(newCategoryName.trim(), newCategoryColor);
+      setTagCategories((current) => [...current, category]);
+      setNewCategoryName('');
+    } catch (err: unknown) { addToast('error', getErrorMessage(err, 'Failed to create category.')); }
+  }
+
+  async function handleMoveTag(tag: Tag, category: TagCategory) {
+    if (tag.category_id === category.id) return;
+    try {
+      await moveTag(tag.id, category.id);
+      setTags((current) => current.map((item) => item.id === tag.id ? { ...item, category_id: category.id, category_name: category.name, category_color: category.color } : item));
+    } catch { addToast('error', 'Failed to move tag.'); }
+  }
+
+  async function handleCreateTagInCategory(category: TagCategory) {
+    const name = newTagNames[category.id]?.trim();
+    if (!name) return;
+    try {
+      const tag = await createTag(name, category.color, category.id);
+      setTags((current) => [...current, {
+        ...tag,
+        category_id: category.id,
+        category_name: category.name,
+        category_color: category.color,
+      }]);
+      setNewTagNames((current) => ({ ...current, [category.id]: '' }));
+    } catch (err: unknown) { addToast('error', getErrorMessage(err, 'Failed to create tag.')); }
+  }
+
+  async function handleUpdateCategory(category: TagCategory, updates: { name?: string; color?: string }) {
+    try {
+      const updated = await updateTagCategory(category.id, updates);
+      setTagCategories((current) => current.map((item) => item.id === updated.id ? updated : item));
+      setTags((current) => current.map((tag) => tag.category_id === updated.id ? { ...tag, category_name: updated.name, category_color: updated.color } : tag));
+    } catch (err: unknown) { addToast('error', getErrorMessage(err, 'Failed to update category.')); }
   }
 
   async function handleExportBackup() {
@@ -948,10 +993,33 @@ export function SettingsPage() {
         <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
           Tags
         </h2>
+        <div className="mt-3 flex gap-2">
+          <input className="input-field h-8 text-sm" value={newCategoryName} onChange={(event) => setNewCategoryName(event.target.value)} placeholder="New category" />
+          <input type="color" className="h-8 w-10 cursor-pointer rounded border border-gray-300 bg-transparent p-0.5 dark:border-gray-600" value={newCategoryColor} onChange={(event) => setNewCategoryColor(event.target.value)} aria-label="New category color" />
+          <button type="button" className="btn-secondary h-8 shrink-0 whitespace-nowrap px-3 py-1 text-sm" onClick={() => void handleCreateCategory()}>Add Category</button>
+        </div>
+        <div className="mt-4 space-y-3">
+          {tagCategories.map((category) => (
+            <div key={category.id} onDragOver={(event) => event.preventDefault()} onDrop={(event) => { event.preventDefault(); const tag = tags.find((item) => item.id === event.dataTransfer.getData('tag-id')); if (tag) void handleMoveTag(tag, category); }} className="rounded-md border border-gray-200 p-3 dark:border-gray-700">
+              <div className="flex items-center justify-between gap-2 text-sm font-semibold" style={{ color: category.color }}>
+                <div className="flex min-w-0 flex-1 items-center gap-2">
+                  <input className="input-field h-8 min-w-0 flex-1 text-sm" value={category.name} disabled={category.system_key === 'general'} onChange={(event) => setTagCategories((current) => current.map((item) => item.id === category.id ? { ...item, name: event.target.value } : item))} onBlur={(event) => { if (category.system_key !== 'general') void handleUpdateCategory(category, { name: event.target.value }); }} />
+                  <input type="color" className="h-8 w-10 shrink-0 cursor-pointer rounded border border-gray-300 bg-transparent p-0.5 dark:border-gray-600" value={category.color} onChange={(event) => { const color = event.target.value; setTagCategories((current) => current.map((item) => item.id === category.id ? { ...item, color } : item)); void handleUpdateCategory(category, { color }); }} aria-label={`${category.name} category color`} />
+                </div>
+                {category.system_key !== 'general' && <button type="button" className="text-xs text-red-600" onClick={() => void deleteTagCategory(category.id).then(() => setTagCategories((current) => current.filter((item) => item.id !== category.id))).catch((err) => addToast('error', getErrorMessage(err, 'Move or delete all tags in this category first.')))}>Delete category</button>}
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {tags.filter((tag) => tag.category_id === category.id).map((tag) => <span key={tag.id} draggable onDragStart={(event) => event.dataTransfer.setData('tag-id', tag.id)} className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium" style={{ backgroundColor: `${category.color}20`, color: category.color }}>{tag.name}<button type="button" onClick={() => void handleDeleteTag(tag)}><X className="h-3 w-3" /></button></span>)}
+                <button type="button" className="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2.5 py-1 text-xs font-medium text-gray-600 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-400 dark:hover:bg-gray-600" onClick={() => setNewTagNames((current) => ({ ...current, [category.id]: current[category.id] ?? '' }))}><Plus className="h-3 w-3" />Add Tag</button>
+              </div>
+              {Object.prototype.hasOwnProperty.call(newTagNames, category.id) && <div className="mt-2 flex gap-2"><input className="input-field h-8 text-sm" value={newTagNames[category.id]} onChange={(event) => setNewTagNames((current) => ({ ...current, [category.id]: event.target.value }))} placeholder="New tag name" /><button type="button" className="btn-primary py-1 text-xs" onClick={() => void handleCreateTagInCategory(category)}>Create</button></div>}
+            </div>
+          ))}
+        </div>
         <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
           Deleting a tag removes it from every trade that uses it.
         </p>
-        <div className="mt-4 space-y-2">
+        <div className="mt-4 hidden space-y-2">
           {tagsLoading ? (
             <p className="text-sm text-gray-500 dark:text-gray-400">Loading tags…</p>
           ) : tags.length === 0 ? (
