@@ -220,6 +220,28 @@ def test_upload_new_ninjatrader_format(client):
     assert payload["executions"][0]["commission"] == 0.39
 
 
+def test_upload_grid2_ninjatrader_format(client):
+    """The upload endpoint maps Grid2 account display names."""
+    token = _register_and_login(client)
+    filename = "NinjaTrader Grid2 example1.csv"
+    content = _load_example_bytes(filename)
+
+    response = client.post(
+        "/api/imports/upload",
+        data={"file": (BytesIO(content), filename)},
+        headers=_auth(token),
+        content_type="multipart/form-data",
+    )
+
+    assert response.status_code == 200
+    payload = response.get_json()
+    assert payload["platform"] == "ninjatrader"
+    assert len(payload["executions"]) == 4
+    assert payload["errors"] == []
+    assert payload["executions"][0]["account"] == "TSTACC"
+    assert payload["executions"][0]["commission"] == 0.95
+
+
 def test_upload_rejects_csv_files_above_limit(
     client, monkeypatch
 ):
@@ -259,6 +281,20 @@ def test_finalize_new_ninjatrader_format(client):
 
     assert result["trades_imported"] == 4
     assert result["executions_imported"] == 8
+
+
+def test_finalize_grid2_ninjatrader_format(client):
+    """The complete import flow supports the Grid2 account header."""
+    token = _register_and_login(client)
+
+    result = _upload_reconstruct_finalize(
+        client,
+        token,
+        "NinjaTrader Grid2 example1.csv",
+    )
+
+    assert result["trades_imported"] == 2
+    assert result["executions_imported"] == 4
 
 
 def test_reconstruct_uses_user_symbol_mapping_point_value(client):

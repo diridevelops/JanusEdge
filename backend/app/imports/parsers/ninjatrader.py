@@ -20,13 +20,15 @@ class NinjaTraderParser(BaseParser):
 
     Supports both legacy semicolon-delimited exports with
     comma decimals and newer comma-delimited exports with
-    dot decimals. Timestamps use DD/MM/YYYY HH:mm:ss.
+    dot decimals. Account names may use either Account or
+    Account display name. Timestamps use DD/MM/YYYY HH:mm:ss.
     """
 
     EXPECTED_HEADERS = [
         "Instrument", "Action", "Quantity", "Price",
         "Time", "ID", "E/X",
     ]
+    ACCOUNT_HEADERS = ("Account", "Account display name")
 
     def detect(self, content: str) -> bool:
         """
@@ -38,16 +40,25 @@ class NinjaTraderParser(BaseParser):
         Returns:
             True if headers match NinjaTrader format.
         """
-        first_line = content.splitlines()[0].strip() if content else ""
+        first_line = next(
+            (line.strip() for line in content.splitlines() if line.strip()),
+            "",
+        )
         if not first_line:
             return False
 
+        delimiter = self._detect_delimiter(first_line)
+        headers = next(
+            csv.reader(
+                [self._strip_trailing_delimiter(first_line, delimiter)],
+                delimiter=delimiter,
+            )
+        )
+        normalized_headers = {header.strip() for header in headers}
+
         return all(
-            h in first_line
-            for h in self.EXPECTED_HEADERS
-        ) and any(
-            delimiter in first_line
-            for delimiter in (";", ",")
+            header in normalized_headers
+            for header in self.EXPECTED_HEADERS
         )
 
     def parse(
@@ -178,7 +189,15 @@ class NinjaTraderParser(BaseParser):
         commission = self._parse_commission(
             row.get("Commission", "0")
         )
-        account = row.get("Account", "").strip()
+        account_column = next(
+            (
+                header
+                for header in self.ACCOUNT_HEADERS
+                if header in row
+            ),
+            "",
+        )
+        account = row.get(account_column, "").strip()
         connection = row.get("Connection", "").strip()
 
         return ParsedExecution(
