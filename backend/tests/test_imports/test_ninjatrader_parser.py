@@ -38,6 +38,12 @@ class TestNinjaTraderParser:
         )
         assert self.parser.detect(content) is True
 
+    def test_detect_grid2_format(self):
+        content = self._load_csv(
+            "NinjaTrader Grid2 example1.csv"
+        )
+        assert self.parser.detect(content) is True
+
     def test_detect_invalid_file(self):
         content = "col1,col2\na,b\n"
         assert self.parser.detect(content) is False
@@ -133,6 +139,22 @@ class TestNinjaTraderParser:
         assert ex.price == 6734.00
         assert ex.commission == 0.39
         assert ex.account == "FNFTCH"
+
+    def test_parse_grid2_account_display_name(self):
+        """Grid2 exports use Account display name for the account."""
+        content = self._load_csv(
+            "NinjaTrader Grid2 example1.csv"
+        )
+        result = self.parser.parse(
+            content, "America/New_York"
+        )
+
+        assert len(result.executions) == 4
+        assert result.errors == []
+        ex = result.executions[0]
+        assert ex.account == "TSTACC"
+        assert ex.commission == 0.95
+        assert ex.timestamp == "2026-07-09T15:18:46+00:00"
 
     def test_parse_decimal_comma_to_dot(self):
         content = self._load_csv(

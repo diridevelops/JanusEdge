@@ -357,5 +357,3 @@ yarn.lock
 *.njsproj
 *.sln
 *.sw?
-
-.github
