@@ -70,6 +70,12 @@ class UpdateStartingEquitySchema(Schema):
     )
 
 
+class UpdateRiskBreakevenSchema(Schema):
+    """Schema for risk-based breakeven preference updates."""
+
+    risk_breakeven_enabled = fields.Bool(required=True)
+
+
 class BaseSymbolMappingSchema(Schema):
     """Schema for a single base symbol mapping entry."""
 

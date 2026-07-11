@@ -12,6 +12,7 @@ from app.analytics.monte_carlo import (
     run_monte_carlo_simulation,
 )
 from app.extensions import mongo
+from app.repositories.user_repo import UserRepository
 from app.utils.trade_metrics import calculate_r_multiple
 
 
@@ -125,6 +126,70 @@ def _mongo_effective_risk_expr() -> Dict[str, Any]:
     }
 
 
+def _mongo_outcome_expr(risk_breakeven_enabled: bool) -> Dict[str, Any]:
+    """Build the three-state analytics outcome expression."""
+    breakeven_conditions: List[Dict[str, Any]] = [
+        {"$eq": ["$gross_pnl", 0]},
+    ]
+    if risk_breakeven_enabled:
+        breakeven_conditions.append(
+            {
+                "$and": [
+                    {"$gt": ["$initial_risk", 0]},
+                    {
+                        "$lte": [
+                            {"$abs": "$net_pnl"},
+                            "$initial_risk",
+                        ]
+                    },
+                ]
+            }
+        )
+
+    return {
+        "$switch": {
+            "branches": [
+                {
+                    "case": {"$or": breakeven_conditions},
+                    "then": "breakeven",
+                },
+                {
+                    "case": {"$gt": ["$net_pnl", 0]},
+                    "then": "winner",
+                },
+                {
+                    "case": {"$lt": ["$net_pnl", 0]},
+                    "then": "loser",
+                },
+            ],
+            "default": "breakeven",
+        }
+    }
+
+
+def _trade_outcome(
+    trade: dict, risk_breakeven_enabled: bool
+) -> str:
+    """Classify a stored trade without changing its recorded P&L."""
+    gross_pnl = float(trade.get("gross_pnl", 0.0))
+    net_pnl = float(trade.get("net_pnl", 0.0))
+    initial_risk = float(trade.get("initial_risk", 0.0))
+
+    if gross_pnl == 0:
+        return "breakeven"
+    if (
+        risk_breakeven_enabled
+        and initial_risk > 0
+        and abs(net_pnl) <= initial_risk
+    ):
+        return "breakeven"
+    if net_pnl > 0:
+        return "winner"
+    if net_pnl < 0:
+        return "loser"
+    return "breakeven"
+
+
 class AnalyticsService:
     """
     Service for computing trade analytics and metrics.
@@ -133,6 +198,14 @@ class AnalyticsService:
     server-side computation of summary statistics,
     equity curves, drawdowns, and other analytics.
     """
+
+    def __init__(self):
+        self.user_repo = UserRepository()
+
+    def _risk_breakeven_enabled(self, user_id: str) -> bool:
+        """Return the user's opt-in outcome classification setting."""
+        user = self.user_repo.find_by_id(user_id)
+        return bool(user and user.get("risk_breakeven_enabled", False))
 
     def get_summary(
         self,
@@ -156,6 +229,9 @@ class AnalyticsService:
             filters = {}
 
         match = _build_base_match(user_id, filters)
+        risk_breakeven_enabled = self._risk_breakeven_enabled(
+            user_id
+        )
 
         pipeline = [
             {"$match": match},
@@ -199,6 +275,13 @@ class AnalyticsService:
                 }
             },
             {
+                "$addFields": {
+                    "outcome": _mongo_outcome_expr(
+                        risk_breakeven_enabled
+                    )
+                }
+            },
+            {
                 "$group": {
                     "_id": None,
                     "total_trades": {"$sum": 1},
@@ -212,7 +295,7 @@ class AnalyticsService:
                     "winners": {
                         "$sum": {
                             "$cond": [
-                                {"$gt": ["$net_pnl", 0]},
+                                {"$eq": ["$outcome", "winner"]},
                                 1,
                                 0,
                             ]
@@ -221,12 +304,7 @@ class AnalyticsService:
                     "losers": {
                         "$sum": {
                             "$cond": [
-                                {
-                                    "$and": [
-                                        {"$lt": ["$net_pnl", 0]},
-                                        {"$ne": ["$gross_pnl", 0]},
-                                    ]
-                                },
+                                {"$eq": ["$outcome", "loser"]},
                                 1,
                                 0,
                             ]
@@ -235,12 +313,7 @@ class AnalyticsService:
                     "breakeven": {
                         "$sum": {
                             "$cond": [
-                                {
-                                    "$eq": [
-                                        "$gross_pnl",
-                                        0,
-                                    ]
-                                },
+                                {"$eq": ["$outcome", "breakeven"]},
                                 1,
                                 0,
                             ]
@@ -249,7 +322,7 @@ class AnalyticsService:
                     "sum_winners": {
                         "$sum": {
                             "$cond": [
-                                {"$gt": ["$net_pnl", 0]},
+                                {"$eq": ["$outcome", "winner"]},
                                 "$net_pnl",
                                 0,
                             ]
@@ -258,19 +331,30 @@ class AnalyticsService:
                     "sum_losers": {
                         "$sum": {
                             "$cond": [
-                                {
-                                    "$and": [
-                                        {"$lt": ["$net_pnl", 0]},
-                                        {"$ne": ["$gross_pnl", 0]},
-                                    ]
-                                },
+                                {"$eq": ["$outcome", "loser"]},
                                 "$net_pnl",
                                 0,
                             ]
                         }
                     },
-                    "largest_win": {"$max": "$net_pnl"},
-                    "largest_loss": {"$min": "$net_pnl"},
+                    "largest_win": {
+                        "$max": {
+                            "$cond": [
+                                {"$eq": ["$outcome", "winner"]},
+                                "$net_pnl",
+                                -999999999,
+                            ]
+                        }
+                    },
+                    "largest_loss": {
+                        "$min": {
+                            "$cond": [
+                                {"$eq": ["$outcome", "loser"]},
+                                "$net_pnl",
+                                999999999,
+                            ]
+                        }
+                    },
                     "avg_holding_time": {
                         "$avg": "$holding_time_seconds"
                     },
@@ -282,12 +366,7 @@ class AnalyticsService:
                     "win_ppc_sum": {
                         "$sum": {
                             "$cond": [
-                                {
-                                    "$gt": [
-                                        "$net_pnl",
-                                        0,
-                                    ]
-                                },
+                                {"$eq": ["$outcome", "winner"]},
                                 "$pnl_per_contract",
                                 0,
                             ]
@@ -296,12 +375,7 @@ class AnalyticsService:
                     "win_ppc_max": {
                         "$max": {
                             "$cond": [
-                                {
-                                    "$gt": [
-                                        "$net_pnl",
-                                        0,
-                                    ]
-                                },
+                                {"$eq": ["$outcome", "winner"]},
                                 "$pnl_per_contract",
                                 -999999999,
                             ]
@@ -312,12 +386,7 @@ class AnalyticsService:
                     "loss_ppc_sum": {
                         "$sum": {
                             "$cond": [
-                                {
-                                    "$and": [
-                                        {"$lt": ["$net_pnl", 0]},
-                                        {"$ne": ["$gross_pnl", 0]},
-                                    ]
-                                },
+                                {"$eq": ["$outcome", "loser"]},
                                 "$pnl_per_contract",
                                 0,
                             ]
@@ -326,12 +395,7 @@ class AnalyticsService:
                     "loss_ppc_min": {
                         "$min": {
                             "$cond": [
-                                {
-                                    "$and": [
-                                        {"$lt": ["$net_pnl", 0]},
-                                        {"$ne": ["$gross_pnl", 0]},
-                                    ]
-                                },
+                                {"$eq": ["$outcome", "loser"]},
                                 "$pnl_per_contract",
                                 999999999,
                             ]
@@ -444,8 +508,10 @@ class AnalyticsService:
         # Expectancy: (win_rate% × avg_winner) +
         #             ((1 - win_rate%) × avg_loser)
         win_pct = win_rate / 100.0
+        loss_pct = data["losers"] / total if total else 0.0
         expectancy = (win_pct * avg_winner) + (
-            (1 - win_pct) * avg_loser
+            (loss_pct if risk_breakeven_enabled else 1 - win_pct)
+            * avg_loser
         )
 
         # APPT: Average Profitability Per Trade
@@ -470,6 +536,13 @@ class AnalyticsService:
         # Sentinel check: -999999999 means no winners
         if win_per_share_high == -999999999:
             win_per_share_high = 0.0
+
+        largest_win = data["largest_win"]
+        if largest_win == -999999999:
+            largest_win = 0.0
+        largest_loss = data["largest_loss"]
+        if largest_loss == 999999999:
+            largest_loss = 0.0
 
         loss_per_share_avg = (
             (data["loss_ppc_sum"] / losers_count)
@@ -505,6 +578,7 @@ class AnalyticsService:
                 match,
                 {
                     "net_pnl": 1,
+                    "gross_pnl": 1,
                     "initial_risk": 1,
                     "fee": 1,
                     "total_quantity": 1,
@@ -515,7 +589,13 @@ class AnalyticsService:
         pf_loss_sum = sum(
             float(trade.get("net_pnl", 0.0))
             for trade in trade_details
-            if float(trade.get("net_pnl", 0.0)) < 0
+            if (
+                _trade_outcome(
+                    trade, risk_breakeven_enabled
+                ) == "loser"
+                if risk_breakeven_enabled
+                else float(trade.get("net_pnl", 0.0)) < 0
+            )
         )
 
         # Net profit factor includes fee-only breakeven trades
@@ -534,11 +614,14 @@ class AnalyticsService:
         for trade in trade_details:
             qty = trade.get("total_quantity", 0)
             pnl = float(trade.get("net_pnl", 0.0))
+            outcome = _trade_outcome(
+                trade, risk_breakeven_enabled
+            )
             if qty and qty > 0:
                 per_share = pnl / qty
-                if pnl > 0:
+                if outcome == "winner":
                     per_share_wins.append(per_share)
-                elif pnl < 0:
+                elif outcome == "loser":
                     per_share_losses.append(per_share)
 
             risk = trade.get("initial_risk")
@@ -558,18 +641,22 @@ class AnalyticsService:
             ) / len(r_trades)
 
         if r_trades:
-            r_values = [
-                calculate_r_multiple(
-                    float(t["net_pnl"]),
-                    float(t["initial_risk"]),
-                    float(t.get("fee", 0.0)),
+            r_values = []
+            for trade in r_trades:
+                r_value = calculate_r_multiple(
+                    float(trade["net_pnl"]),
+                    float(trade["initial_risk"]),
+                    float(trade.get("fee", 0.0)),
                 )
-                for t in r_trades
-            ]
-            r_values = [
-                value for value in r_values
-                if value is not None
-            ]
+                if (
+                    risk_breakeven_enabled
+                    and _trade_outcome(
+                        trade, risk_breakeven_enabled
+                    ) == "breakeven"
+                ):
+                    r_value = 0.0
+                if r_value is not None:
+                    r_values.append(r_value)
             win_r_values = [r for r in r_values if r > 0]
             loss_r_values = [r for r in r_values if r < 0]
             r_win_rate = len(win_r_values) / len(
@@ -620,10 +707,8 @@ class AnalyticsService:
             "total_fees": round(data["total_fees"], 2),
             "avg_winner": round(avg_winner, 2),
             "avg_loser": round(avg_loser, 2),
-            "largest_win": round(data["largest_win"], 2),
-            "largest_loss": round(
-                data["largest_loss"], 2
-            ),
+            "largest_win": round(largest_win, 2),
+            "largest_loss": round(largest_loss, 2),
             "profit_factor": (
                 round(profit_factor, 2)
                 if profit_factor != float("inf")
@@ -801,9 +886,19 @@ class AnalyticsService:
             filters = {}
 
         match = _build_base_match(user_id, filters)
+        risk_breakeven_enabled = self._risk_breakeven_enabled(
+            user_id
+        )
 
         pipeline = [
             {"$match": match},
+            {
+                "$addFields": {
+                    "outcome": _mongo_outcome_expr(
+                        risk_breakeven_enabled
+                    )
+                }
+            },
             {
                 "$group": {
                     "_id": {
@@ -820,10 +915,7 @@ class AnalyticsService:
                         "$sum": {
                             "$cond": [
                                 {
-                                    "$gt": [
-                                        "$net_pnl",
-                                        0,
-                                    ]
+                                    "$eq": ["$outcome", "winner"]
                                 },
                                 1,
                                 0,
@@ -1058,9 +1150,19 @@ class AnalyticsService:
             filters = {}
 
         match = _build_base_match(user_id, filters)
+        risk_breakeven_enabled = self._risk_breakeven_enabled(
+            user_id
+        )
 
         pipeline = [
             {"$match": match},
+            {
+                "$addFields": {
+                    "outcome": _mongo_outcome_expr(
+                        risk_breakeven_enabled
+                    )
+                }
+            },
             {
                 "$group": {
                     "_id": {
@@ -1073,10 +1175,7 @@ class AnalyticsService:
                         "$sum": {
                             "$cond": [
                                 {
-                                    "$gt": [
-                                        "$net_pnl",
-                                        0,
-                                    ]
+                                    "$eq": ["$outcome", "winner"]
                                 },
                                 1,
                                 0,
@@ -1132,9 +1231,19 @@ class AnalyticsService:
             filters = {}
 
         match = _build_base_match(user_id, filters)
+        risk_breakeven_enabled = self._risk_breakeven_enabled(
+            user_id
+        )
 
         pipeline = [
             {"$match": match},
+            {
+                "$addFields": {
+                    "outcome": _mongo_outcome_expr(
+                        risk_breakeven_enabled
+                    )
+                }
+            },
             {"$unwind": "$tag_ids"},
             {
                 "$group": {
@@ -1146,10 +1255,7 @@ class AnalyticsService:
                         "$sum": {
                             "$cond": [
                                 {
-                                    "$gt": [
-                                        "$net_pnl",
-                                        0,
-                                    ]
+                                    "$eq": ["$outcome", "winner"]
                                 },
                                 1,
                                 0,
@@ -1160,10 +1266,7 @@ class AnalyticsService:
                         "$sum": {
                             "$cond": [
                                 {
-                                    "$gt": [
-                                        "$net_pnl",
-                                        0,
-                                    ]
+                                    "$eq": ["$outcome", "winner"]
                                 },
                                 "$net_pnl",
                                 0,
@@ -1174,10 +1277,7 @@ class AnalyticsService:
                         "$sum": {
                             "$cond": [
                                 {
-                                    "$lt": [
-                                        "$net_pnl",
-                                        0,
-                                    ]
+                                    "$eq": ["$outcome", "loser"]
                                 },
                                 "$net_pnl",
                                 0,
@@ -1465,11 +1565,15 @@ class AnalyticsService:
         safe_min_side = max(1, min_side_count)
 
         match = _build_base_match(user_id, filters)
+        risk_breakeven_enabled = self._risk_breakeven_enabled(
+            user_id
+        )
         trades = list(
             mongo.db.trades.find(
                 match,
                 {
                     "net_pnl": 1,
+                    "gross_pnl": 1,
                     "initial_risk": 1,
                     "fee": 1,
                     "entry_time": 1,
@@ -1510,7 +1614,7 @@ class AnalyticsService:
         rolling_r_sum_sq = 0.0
 
         # Rolling trade P/L ratio stats
-        rolling_net_values: deque[float] = deque()
+        rolling_net_values: deque[tuple[float, str]] = deque()
         rolling_win_count = 0
         rolling_loss_count = 0
         rolling_sum_win = 0.0
@@ -1528,6 +1632,11 @@ class AnalyticsService:
                 initial_risk,
                 float(trade.get("fee", 0.0)),
             )
+            outcome = _trade_outcome(
+                trade, risk_breakeven_enabled
+            )
+            if risk_breakeven_enabled and outcome == "breakeven":
+                r_multiple = 0.0
 
             cumulative_net_pnl += net_pnl
             appt_running = cumulative_net_pnl / trade_count
@@ -1564,20 +1673,22 @@ class AnalyticsService:
                     )
 
             # Rolling trade P/L ratio accumulators
-            rolling_net_values.append(net_pnl)
-            if net_pnl > 0:
+            rolling_net_values.append((net_pnl, outcome))
+            if outcome == "winner":
                 rolling_win_count += 1
                 rolling_sum_win += net_pnl
-            elif net_pnl < 0:
+            elif outcome == "loser":
                 rolling_loss_count += 1
                 rolling_sum_loss += net_pnl
 
             if len(rolling_net_values) > safe_window:
-                removed_net = rolling_net_values.popleft()
-                if removed_net > 0:
+                removed_net, removed_outcome = (
+                    rolling_net_values.popleft()
+                )
+                if removed_outcome == "winner":
                     rolling_win_count -= 1
                     rolling_sum_win -= removed_net
-                elif removed_net < 0:
+                elif removed_outcome == "loser":
                     rolling_loss_count -= 1
                     rolling_sum_loss -= removed_net
 

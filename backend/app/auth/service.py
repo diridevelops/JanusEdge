@@ -396,6 +396,26 @@ class AuthService:
         updated_user["symbol_mappings"] = normalized_mappings
         return self._serialize_user_profile(updated_user)
 
+    def update_risk_breakeven_enabled(
+        self,
+        user_id: str,
+        risk_breakeven_enabled: bool,
+    ) -> dict:
+        """Update the user's risk-based breakeven preference."""
+        user = self.user_repo.find_by_id(user_id)
+        if not user:
+            raise AuthenticationError("User not found.")
+
+        self.user_repo.update_risk_breakeven_enabled(
+            user_id,
+            risk_breakeven_enabled,
+        )
+        updated_user = dict(user)
+        updated_user["risk_breakeven_enabled"] = (
+            risk_breakeven_enabled
+        )
+        return self._serialize_user_profile(updated_user)
+
     def update_market_data_mappings(
         self,
         user_id: str,
@@ -467,6 +487,9 @@ class AuthService:
             ),
             "starting_equity": user.get(
                 "starting_equity", DEFAULT_STARTING_EQUITY
+            ),
+            "risk_breakeven_enabled": user.get(
+                "risk_breakeven_enabled", False
             ),
             "symbol_mappings": get_effective_symbol_mappings(
                 user.get("symbol_mappings")

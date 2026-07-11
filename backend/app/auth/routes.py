@@ -24,6 +24,7 @@ from app.auth.schemas import (
     UpdateTimezoneSchema,
     UpdateDisplayTimezoneSchema,
     UpdateStartingEquitySchema,
+    UpdateRiskBreakevenSchema,
 )
 from app.auth.service import AuthService
 from app.utils.errors import AuthenticationError
@@ -36,6 +37,7 @@ change_password_schema = ChangePasswordSchema()
 update_timezone_schema = UpdateTimezoneSchema()
 update_display_timezone_schema = UpdateDisplayTimezoneSchema()
 update_starting_equity_schema = UpdateStartingEquitySchema()
+update_risk_breakeven_schema = UpdateRiskBreakevenSchema()
 update_symbol_mappings_schema = UpdateSymbolMappingsSchema()
 update_market_data_mappings_schema = (
     UpdateMarketDataMappingsSchema()
@@ -334,6 +336,30 @@ def update_starting_equity():
     profile = auth_service.update_starting_equity(
         user_id=user_id,
         starting_equity=validated["starting_equity"],
+    )
+    return jsonify(profile), 200
+
+
+@auth_bp.route("/risk-breakeven", methods=["PUT"])
+@jwt_required()
+def update_risk_breakeven():
+    """Update risk-based breakeven classification preference."""
+    data = request.get_json()
+    if not data:
+        raise ValidationError("Request body is required.")
+
+    try:
+        validated = update_risk_breakeven_schema.load(data)
+    except MarshmallowError as e:
+        raise ValidationError(
+            "Validation failed.", details=e.messages
+        )
+
+    profile = auth_service.update_risk_breakeven_enabled(
+        user_id=get_jwt_identity(),
+        risk_breakeven_enabled=validated[
+            "risk_breakeven_enabled"
+        ],
     )
     return jsonify(profile), 200
 

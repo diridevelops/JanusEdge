@@ -15,6 +15,7 @@ def create_user_doc(
     timezone: str = "America/New_York",
     display_timezone: str | None = None,
     starting_equity: float = DEFAULT_STARTING_EQUITY,
+    risk_breakeven_enabled: bool = False,
     symbol_mappings: dict | None = None,
     market_data_mappings: dict | None = None,
 ) -> dict:
@@ -44,6 +45,7 @@ def create_user_doc(
         "timezone": timezone,
         "display_timezone": display_timezone or timezone,
         "starting_equity": starting_equity,
+        "risk_breakeven_enabled": risk_breakeven_enabled,
         "symbol_mappings": (
             symbol_mappings
             or get_default_symbol_mappings()

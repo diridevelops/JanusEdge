@@ -241,6 +241,7 @@ def _seed_portable_backup_graph(app, user_id: str) -> dict:
             timezone="America/Chicago",
             display_timezone="UTC",
             starting_equity=25000.0,
+            risk_breakeven_enabled=True,
             symbol_mappings=symbol_mappings,
             market_data_mappings=market_data_mappings,
         )
@@ -749,6 +750,7 @@ def test_export_backup_is_complete_and_self_contained(
         "timezone": "America/Chicago",
         "display_timezone": "UTC",
         "starting_equity": 25000.0,
+        "risk_breakeven_enabled": True,
         "symbol_mappings": seeded["symbol_mappings"],
         "market_data_mappings": seeded["market_data_mappings"],
     }
@@ -981,6 +983,7 @@ def test_restore_into_different_user_remaps_graph_and_media(
         assert restored_user["timezone"] == "America/Chicago"
         assert restored_user["display_timezone"] == "UTC"
         assert restored_user["starting_equity"] == 25000.0
+        assert restored_user["risk_breakeven_enabled"] is True
         assert (
             restored_user["symbol_mappings"]
             == seeded["symbol_mappings"]
@@ -1163,6 +1166,7 @@ def test_restore_merge_into_empty_user_creates_all_records(
                 "starting_equity",
                 "symbol_mappings",
                 "market_data_mappings",
+                "risk_breakeven_enabled",
             ]
         },
     }

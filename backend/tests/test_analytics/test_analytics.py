@@ -220,6 +220,58 @@ class TestAnalyticsSummary:
         # loss_per_share_high = -80.0
         assert data["loss_per_share_high"] == -80.0
 
+    def test_risk_breakeven_reclassifies_outcomes(
+        self, app, client, auth_headers
+    ):
+        """Risk threshold changes outcomes without changing trade P&L."""
+        user_id = _get_user_id(app)
+        base = datetime(2025, 1, 16, 10, 0, 0)
+        for index, pnl in enumerate((1.0, 2.0, 3.0, -1.0, -3.0)):
+            _insert_trade(
+                app,
+                user_id,
+                net_pnl=pnl,
+                initial_risk=2.0,
+                entry_time=base + timedelta(minutes=index),
+                exit_time=base + timedelta(minutes=index + 1),
+            )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=1.0,
+            initial_risk=0.0,
+            entry_time=base + timedelta(minutes=6),
+            exit_time=base + timedelta(minutes=7),
+        )
+
+        enabled = client.put(
+            "/api/auth/risk-breakeven",
+            json={"risk_breakeven_enabled": True},
+            headers=auth_headers,
+        )
+        assert enabled.status_code == 200
+
+        summary = client.get(
+            "/api/analytics/summary", headers=auth_headers
+        ).get_json()
+        assert summary["winners"] == 2
+        assert summary["losers"] == 1
+        assert summary["breakeven"] == 3
+        assert summary["win_rate"] == 33.33
+        assert summary["total_net_pnl"] == 3.0
+
+        curve = client.get(
+            "/api/analytics/equity-curve", headers=auth_headers
+        ).get_json()
+        assert curve[0]["winners"] == 2
+        assert curve[0]["win_rate"] == 33.33
+        assert curve[0]["daily_pnl"] == 3.0
+
+        evolution = client.get(
+            "/api/analytics/evolution", headers=auth_headers
+        ).get_json()
+        assert evolution[0]["r_multiple"] == 0.0
+
     def test_summary_excludes_deleted(
         self, app, client, auth_headers
     ):

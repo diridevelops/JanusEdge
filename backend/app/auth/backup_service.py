@@ -163,6 +163,12 @@ class PortableBackupService:
                     DEFAULT_STARTING_EQUITY,
                 ),
             ),
+            risk_breakeven_enabled=payload["settings"].get(
+                "risk_breakeven_enabled",
+                destination_user.get(
+                    "risk_breakeven_enabled", False
+                ),
+            ),
             symbol_mappings=restored_symbol_mappings,
             market_data_mappings=restored_market_data_mappings,
         )
@@ -176,6 +182,8 @@ class PortableBackupService:
             settings_updated.append("symbol_mappings")
         if "market_data_mappings" in payload["settings"]:
             settings_updated.append("market_data_mappings")
+        if "risk_breakeven_enabled" in payload["settings"]:
+            settings_updated.append("risk_breakeven_enabled")
 
         summary = {
             "accounts": {"created": 0, "reused": 0},
@@ -293,6 +301,9 @@ class PortableBackupService:
                 ),
                 "starting_equity": user.get(
                     "starting_equity", DEFAULT_STARTING_EQUITY
+                ),
+                "risk_breakeven_enabled": user.get(
+                    "risk_breakeven_enabled", False
                 ),
                 "symbol_mappings": (
                     get_effective_symbol_mappings(
@@ -525,6 +536,17 @@ class PortableBackupService:
         if starting_equity is None or float(starting_equity) < 0:
             raise ValidationError(
                 "Backup archive contains an invalid starting equity."
+            )
+
+        risk_breakeven_enabled = settings.get(
+            "risk_breakeven_enabled"
+        )
+        if (
+            risk_breakeven_enabled is not None
+            and not isinstance(risk_breakeven_enabled, bool)
+        ):
+            raise ValidationError(
+                "Backup archive contains an invalid risk breakeven setting."
             )
 
         symbol_mappings = settings.get("symbol_mappings")

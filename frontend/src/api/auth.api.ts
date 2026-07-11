@@ -108,6 +108,16 @@ export async function updateStartingEquity(
   return res.data;
 }
 
+/** Update risk-based breakeven classification preference. */
+export async function updateRiskBreakevenEnabled(
+  riskBreakevenEnabled: boolean
+): Promise<User> {
+  const res = await apiClient.put<User>('/auth/risk-breakeven', {
+    risk_breakeven_enabled: riskBreakevenEnabled,
+  });
+  return res.data;
+}
+
 /** Update the current user's symbol mappings. */
 export async function updateSymbolMappings(
   symbolMappings: SymbolMappings
