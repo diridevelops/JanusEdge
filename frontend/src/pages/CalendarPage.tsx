@@ -6,24 +6,19 @@ import { getCalendar, getSummary } from '../api/analytics.api';
 import { CalendarHeatmap } from '../components/charts/CalendarHeatmap';
 import { FilterBar } from '../components/filters/FilterBar';
 import { PageHeader } from '../components/ui/PageHeader';
+import { useFilters } from '../hooks/useFilters';
 import type { AnalyticsSummary, CalendarDay } from '../types/analytics.types';
 import { formatCurrency, formatPercent } from '../utils/formatters';
 
 /** Calendar heatmap page — daily P&L heatmap with summary stats. */
 export function CalendarPage() {
-  const [filters, setFilters] = useState({
-    symbol: '',
-    side: '',
-    account: '',
-    tag: '',
-  });
+  const { filters, isReady, setFilters, clearFilters } = useFilters();
   const [visibleMonth, setVisibleMonth] = useState<Date>(() => startOfMonth(new Date()));
   const [loading, setLoading] = useState(true);
   const [calendar, setCalendar] = useState<CalendarDay[]>([]);
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
 
-  type Filters = typeof filters;
-  const fetchData = useCallback(async (f: Filters, month: Date) => {
+  const fetchData = useCallback(async (f: typeof filters, month: Date) => {
     setLoading(true);
     const apiFilters = Object.fromEntries(
       Object.entries(f).filter(([, v]) => v !== '')
@@ -48,15 +43,16 @@ export function CalendarPage() {
   }, []);
 
   useEffect(() => {
+    if (!isReady) return;
     void fetchData(filters, visibleMonth);
-  }, [filters, fetchData, visibleMonth]);
+  }, [filters, fetchData, isReady, visibleMonth]);
 
   function handleFilterChange(key: string, value: string) {
-    setFilters((prev) => ({ ...prev, [key]: value }));
+    setFilters({ [key]: value });
   }
 
   function handleClearFilters() {
-    setFilters({ symbol: '', side: '', account: '', tag: '' });
+    clearFilters();
   }
 
   return (

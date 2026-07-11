@@ -9,6 +9,7 @@ import { FilterBar } from '../components/filters/FilterBar';
 import { InfoTooltip } from '../components/ui/InfoTooltip';
 import { PageHeader } from '../components/ui/PageHeader';
 import { useToast } from '../hooks/useToast';
+import { useFilters } from '../hooks/useFilters';
 import type { AnalyticsSummary } from '../types/analytics.types';
 import type {
   ConfidenceInterval,
@@ -415,20 +416,13 @@ export function WhatIfPage() {
   const [activeTab, setActiveTab] = useState<WhatIfTab>('simulator');
 
   // Filters
-  const [filters, setFilters] = useState({
-    symbol: '',
-    side: '',
-    account: '',
-    tag: '',
-    date_from: '',
-    date_to: '',
-  });
+  const { filters, isReady, setFilters, clearFilters } = useFilters();
 
   function handleFilterChange(key: string, value: string) {
-    setFilters((prev) => ({ ...prev, [key]: value }));
+    setFilters({ [key]: value });
   }
   function handleClearFilters() {
-    setFilters({ symbol: '', side: '', account: '', tag: '', date_from: '', date_to: '' });
+    clearFilters();
   }
 
   const apiFilters = Object.fromEntries(
@@ -511,16 +505,18 @@ export function WhatIfPage() {
   }, []);
 
   useEffect(() => {
+    if (!isReady) return;
     void fetchData(apiFilters);
     // Reset simulation results on filter change
     setSimResult(null);
     simCache.current.clear();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters.symbol, filters.side, filters.account, filters.tag, filters.date_from, filters.date_to]);
+  }, [filters.symbol, filters.side, filters.account, filters.tag, filters.date_from, filters.date_to, isReady]);
 
   useEffect(() => {
+    if (!isReady) return;
     void fetchSummary(apiFilters);
-  }, [fetchSummary, filters.symbol, filters.side, filters.account, filters.tag, filters.date_from, filters.date_to]);
+  }, [fetchSummary, filters.symbol, filters.side, filters.account, filters.tag, filters.date_from, filters.date_to, isReady]);
 
   useEffect(() => {
     setSimResult(null);

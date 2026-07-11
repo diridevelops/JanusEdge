@@ -1,5 +1,5 @@
 import { List, Plus, Upload } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { listTrades } from '../api/trades.api';
 import { FilterBar } from '../components/filters/FilterBar';
@@ -8,6 +8,7 @@ import { PageHeader } from '../components/ui/PageHeader';
 import { Pagination } from '../components/ui/Pagination';
 import { Spinner } from '../components/ui/Spinner';
 import { useToast } from '../hooks/useToast';
+import { useFilters } from '../hooks/useFilters';
 import type { Trade } from '../types/trade.types';
 import { DEFAULT_PAGE_SIZE } from '../utils/constants';
 
@@ -15,6 +16,14 @@ import { DEFAULT_PAGE_SIZE } from '../utils/constants';
 export function TradeListPage() {
   const location = useLocation();
   const navigate = useNavigate();
+  const {
+    filters,
+    isReady,
+    setFilters,
+    replaceFilters,
+    clearFilters,
+  } = useFilters();
+  const hasAppliedInitialUrl = useRef(false);
 
   type TradeFilters = {
     symbol: string;
@@ -24,17 +33,6 @@ export function TradeListPage() {
     date_from: string;
     date_to: string;
   };
-
-  const areFiltersEqual = useCallback(
-    (left: TradeFilters, right: TradeFilters) =>
-      left.symbol === right.symbol
-      && left.side === right.side
-      && left.account === right.account
-      && left.tag === right.tag
-      && left.date_from === right.date_from
-      && left.date_to === right.date_to,
-    []
-  );
 
   const getFiltersFromSearch = useCallback((search: string) => {
     const params = new URLSearchParams(search);
@@ -65,21 +63,28 @@ export function TradeListPage() {
   const [totalItems, setTotalItems] = useState(0);
   const [sortBy, setSortBy] = useState('entry_time');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
-  const [filters, setFilters] = useState(() => getFiltersFromSearch(location.search));
   const { addToast } = useToast();
 
   useEffect(() => {
-    const nextFilters = getFiltersFromSearch(location.search);
-    setFilters((prev) => {
-      if (areFiltersEqual(prev, nextFilters)) {
-        return prev;
-      }
+    if (!isReady) return;
+    if (hasAppliedInitialUrl.current) {
+      return;
+    }
+
+    hasAppliedInitialUrl.current = true;
+    if (location.search.length > 1) {
+      replaceFilters(getFiltersFromSearch(location.search));
       setPage(1);
-      return nextFilters;
-    });
-  }, [location.search, getFiltersFromSearch, areFiltersEqual]);
+    }
+  }, [
+    location.search,
+    isReady,
+    getFiltersFromSearch,
+    replaceFilters,
+  ]);
 
   useEffect(() => {
+    if (!isReady) return;
     const currentSearch = location.search.startsWith('?')
       ? location.search.slice(1)
       : location.search;
@@ -96,7 +101,14 @@ export function TradeListPage() {
       },
       { replace: true }
     );
-  }, [filters, buildSearchFromFilters, navigate, location.pathname, location.search]);
+  }, [
+    filters,
+    isReady,
+    buildSearchFromFilters,
+    navigate,
+    location.pathname,
+    location.search,
+  ]);
 
   const fetchTrades = useCallback(async () => {
     setIsLoading(true);
@@ -121,8 +133,9 @@ export function TradeListPage() {
   }, [page, sortBy, sortDir, filters, addToast]);
 
   useEffect(() => {
+    if (!isReady) return;
     fetchTrades();
-  }, [fetchTrades]);
+  }, [fetchTrades, isReady]);
 
   function handleSortChange(column: string) {
     if (sortBy === column) {
@@ -135,12 +148,12 @@ export function TradeListPage() {
   }
 
   function handleFilterChange(key: string, value: string) {
-    setFilters((prev) => ({ ...prev, [key]: value }));
+    setFilters({ [key]: value });
     setPage(1);
   }
 
   function handleClearFilters() {
-    setFilters(getFiltersFromSearch(''));
+    clearFilters();
     setPage(1);
   }
 

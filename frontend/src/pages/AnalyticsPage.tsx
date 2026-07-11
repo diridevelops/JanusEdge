@@ -9,6 +9,7 @@ import { StatsGrid } from '../components/analytics/StatsGrid';
 import { FilterBar } from '../components/filters/FilterBar';
 import { PageHeader } from '../components/ui/PageHeader';
 import { useAuth } from '../hooks/useAuth';
+import { useFilters } from '../hooks/useFilters';
 import type {
     AnalyticsSummary,
     DrawdownPoint,
@@ -17,21 +18,13 @@ import type {
 /** Analytics page with detailed summary metrics. */
 export function AnalyticsPage() {
   const { user } = useAuth();
-  const [filters, setFilters] = useState({
-    symbol: '',
-    side: '',
-    account: '',
-    tag: '',
-    date_from: '',
-    date_to: '',
-  });
+  const { filters, isReady, setFilters, clearFilters } = useFilters();
   const [loading, setLoading] = useState(true);
 
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
   const [drawdown, setDrawdown] = useState<DrawdownPoint[]>([]);
 
-  type Filters = typeof filters;
-  const fetchData = useCallback(async (f: Filters) => {
+  const fetchData = useCallback(async (f: typeof filters) => {
     setLoading(true);
     const apiFilters = Object.fromEntries(
       Object.entries(f).filter(([, v]) => v !== '')
@@ -52,15 +45,16 @@ export function AnalyticsPage() {
   }, [user?.display_timezone, user?.timezone]);
 
   useEffect(() => {
+    if (!isReady) return;
     void fetchData(filters);
-  }, [filters, fetchData]);
+  }, [filters, fetchData, isReady]);
 
   function handleFilterChange(key: string, value: string) {
-    setFilters((prev) => ({ ...prev, [key]: value }));
+    setFilters({ [key]: value });
   }
 
   function handleClearFilters() {
-    setFilters({ symbol: '', side: '', account: '', tag: '', date_from: '', date_to: '' });
+    clearFilters();
   }
 
   return (
