@@ -12,14 +12,17 @@ import {
   updateSymbolMappings,
   updateTimezone,
 } from '../api/auth.api';
+import { deleteTag, listTags } from '../api/tags.api';
 import { PageHeader } from '../components/ui/PageHeader';
 import { useAuth } from '../hooks/useAuth';
+import { useFilters } from '../hooks/useFilters';
 import { useToast } from '../hooks/useToast';
 import type {
   MarketDataMappings,
   RestoreSummary,
   SymbolMappings,
 } from '../types/auth.types';
+import type { Tag } from '../types/marketData.types';
 import { APP_NAME } from '../utils/constants';
 
 const TIMEZONES = [
@@ -220,6 +223,7 @@ function buildMarketDataMappings(
 /** Settings page — password change and timezone update. */
 export function SettingsPage() {
   const { user, refreshProfile } = useAuth();
+  const { filters, setFilters } = useFilters();
   const { addToast } = useToast();
   const restoreInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -259,6 +263,11 @@ export function SettingsPage() {
   const [marketDataMappingRows, setMarketDataMappingRows] = useState<MarketDataMappingRow[]>([]);
   const [marketDataMappingsLoading, setMarketDataMappingsLoading] = useState(false);
 
+  // Tags
+  const [tags, setTags] = useState<Tag[]>([]);
+  const [tagsLoading, setTagsLoading] = useState(false);
+  const [deletingTagId, setDeletingTagId] = useState<string | null>(null);
+
   // Backup / restore
   const [exportLoading, setExportLoading] = useState(false);
   const [restoreLoading, setRestoreLoading] = useState(false);
@@ -291,6 +300,18 @@ export function SettingsPage() {
     const marketDataMappings = user?.market_data_mappings ?? EMPTY_MARKET_DATA_MAPPINGS;
     setMarketDataMappingRows(recordToMarketDataMappingRows(marketDataMappings));
   }, [user?.market_data_mappings]);
+
+  useEffect(() => {
+    if (!user?.id) {
+      setTags([]);
+      return;
+    }
+    setTagsLoading(true);
+    listTags()
+      .then(setTags)
+      .catch(() => addToast('error', 'Failed to load tags.'))
+      .finally(() => setTagsLoading(false));
+  }, [user?.id]);
 
   async function handleChangePassword(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -442,6 +463,30 @@ export function SettingsPage() {
       addToast('error', getErrorMessage(err, 'Failed to update market-data mappings.'));
     } finally {
       setMarketDataMappingsLoading(false);
+    }
+  }
+
+  async function handleDeleteTag(tag: Tag) {
+    const confirmed = window.confirm(
+      `Delete tag "${tag.name}"? It will be removed from every tagged trade and cannot be restored.`
+    );
+    if (!confirmed) return;
+
+    setDeletingTagId(tag.id);
+    try {
+      const result = await deleteTag(tag.id);
+      setTags((current) => current.filter((item) => item.id !== tag.id));
+      if (filters.tag === tag.id) {
+        setFilters({ tag: '' });
+      }
+      addToast(
+        'success',
+        `Tag deleted and removed from ${result.trades_updated} trade${result.trades_updated === 1 ? '' : 's'}.`
+      );
+    } catch (err: unknown) {
+      addToast('error', getErrorMessage(err, 'Failed to delete tag.'));
+    } finally {
+      setDeletingTagId(null);
     }
   }
 
@@ -896,6 +941,46 @@ export function SettingsPage() {
             {marketDataMappingsLoading ? 'Saving…' : 'Save Market Data Mappings'}
           </button>
         </form>
+      </div>
+
+      {/* Tags */}
+      <div className="card p-4">
+        <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+          Tags
+        </h2>
+        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+          Deleting a tag removes it from every trade that uses it.
+        </p>
+        <div className="mt-4 space-y-2">
+          {tagsLoading ? (
+            <p className="text-sm text-gray-500 dark:text-gray-400">Loading tags…</p>
+          ) : tags.length === 0 ? (
+            <p className="text-sm text-gray-500 dark:text-gray-400">No tags created yet.</p>
+          ) : tags.map((tag) => (
+            <div
+              key={tag.id}
+              className="flex items-center justify-between gap-3 rounded-md border border-gray-200 px-3 py-2 dark:border-gray-700"
+            >
+              <div className="flex items-center gap-2 text-sm text-gray-900 dark:text-gray-100">
+                <span
+                  className="h-3 w-3 rounded-full"
+                  style={{ backgroundColor: tag.color }}
+                  aria-hidden="true"
+                />
+                {tag.name}
+              </div>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 text-sm font-medium text-red-600 hover:text-red-700 disabled:cursor-not-allowed disabled:opacity-60 dark:text-red-400 dark:hover:text-red-300"
+                onClick={() => void handleDeleteTag(tag)}
+                disabled={deletingTagId !== null}
+              >
+                <Trash2 className="h-4 w-4" aria-hidden="true" />
+                {deletingTagId === tag.id ? 'Deleting…' : 'Delete'}
+              </button>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Backup */}
