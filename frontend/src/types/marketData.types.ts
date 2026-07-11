@@ -94,5 +94,16 @@ export interface Tag {
   user_id: string;
   name: string;
   color: string;
+  category_id: string;
+  category_name: string;
+  category_color: string;
   created_at: string;
+}
+
+export interface TagCategory {
+  id: string;
+  user_id: string;
+  name: string;
+  color: string;
+  system_key: string | null;
 }

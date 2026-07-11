@@ -6,6 +6,7 @@ from app.utils.datetime_utils import utc_now
 def create_tag_doc(
     user_id,
     name: str,
+    category_id=None,
     category: str = "custom",
     color: str = "#6B7280",
 ) -> dict:
@@ -25,6 +26,7 @@ def create_tag_doc(
         "user_id": user_id,
         "name": name,
         "category": category,
+        "category_id": category_id,
         "color": color,
         "created_at": utc_now(),
     }
