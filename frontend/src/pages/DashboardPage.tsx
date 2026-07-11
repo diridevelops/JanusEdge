@@ -21,6 +21,7 @@ import { FilterBar } from '../components/filters/FilterBar';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Spinner } from '../components/ui/Spinner';
 import { useAuth } from '../hooks/useAuth';
+import { useFilters } from '../hooks/useFilters';
 import type {
     AnalyticsSummary,
     ApptByDayOfWeekEntry,
@@ -37,14 +38,7 @@ type DashboardTab = 'overview' | 'time-date' | 'evolution';
 /** Dashboard page — key stats, filters, and tabbed visualizations. */
 export function DashboardPage() {
   const { user } = useAuth();
-  const [filters, setFilters] = useState({
-    symbol: '',
-    side: '',
-    account: '',
-    tag: '',
-    date_from: '',
-    date_to: '',
-  });
+  const { filters, isReady, setFilters, clearFilters } = useFilters();
   const [loading, setLoading] = useState(true);
 
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
@@ -55,8 +49,7 @@ export function DashboardPage() {
   const [tagAnalytics, setTagAnalytics] = useState<TagAnalytics[]>([]);
   const [activeTab, setActiveTab] = useState<DashboardTab>('overview');
 
-  type Filters = typeof filters;
-  const fetchData = useCallback(async (f: Filters) => {
+  const fetchData = useCallback(async (f: typeof filters) => {
     setLoading(true);
     const apiFilters = Object.fromEntries(
       Object.entries(f).filter(([, v]) => v !== '')
@@ -93,15 +86,16 @@ export function DashboardPage() {
   }, [user?.display_timezone, user?.timezone]);
 
   useEffect(() => {
+    if (!isReady) return;
     void fetchData(filters);
-  }, [filters, fetchData]);
+  }, [filters, fetchData, isReady]);
 
   function handleFilterChange(key: string, value: string) {
-    setFilters((prev) => ({ ...prev, [key]: value }));
+    setFilters({ [key]: value });
   }
 
   function handleClearFilters() {
-    setFilters({ symbol: '', side: '', account: '', tag: '', date_from: '', date_to: '' });
+    clearFilters();
   }
 
   if (loading && !summary) {
