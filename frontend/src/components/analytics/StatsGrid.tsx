@@ -38,16 +38,18 @@ function StatsCard({
 function MetricSection({
   title,
   children,
+  gridClassName = 'grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3',
 }: {
   title: string;
   children: React.ReactNode;
+  gridClassName?: string;
 }) {
   return (
     <section className="space-y-2">
       <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-600 dark:text-gray-400">
         {title}
       </h3>
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+      <div className={gridClassName}>
         {children}
       </div>
     </section>
@@ -123,8 +125,8 @@ export function StatsGrid({
 
   return (
     <div className="space-y-5">
-      <MetricSection title="Results">
-        <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 sm:col-span-2 xl:col-span-2">
+      <MetricSection title="Results" gridClassName="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+        <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 sm:col-span-2 xl:col-span-1">
           <div className="flex items-start justify-between gap-4">
             <div>
               <p className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider">
@@ -142,7 +144,7 @@ export function StatsGrid({
           </div>
         </div>
 
-        <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 sm:col-span-2 xl:col-span-2">
+        <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 sm:col-span-2 xl:col-span-1">
           <div className="flex items-start justify-between gap-4">
             <div>
               <div className="flex items-center gap-1.5">
