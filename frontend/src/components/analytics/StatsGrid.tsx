@@ -124,10 +124,23 @@ export function StatsGrid({
   return (
     <div className="space-y-5">
       <MetricSection title="Results">
-        <StatsCard
-          label="Total Trades"
-          value={String(summary.total_trades)}
-        />
+        <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 sm:col-span-2 xl:col-span-2">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-xs text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                Total Trades
+              </p>
+              <p className="mt-1 text-lg font-bold text-gray-900 dark:text-gray-100">
+                {summary.total_trades}
+              </p>
+            </div>
+            <div className="text-right text-xs text-gray-500 dark:text-gray-400">
+              <p>Winners: <span className="font-semibold text-gray-700 dark:text-gray-300">{summary.winners}</span></p>
+              <p>Breakeven: <span className="font-semibold text-gray-700 dark:text-gray-300">{summary.breakeven}</span></p>
+              <p>Losers: <span className="font-semibold text-gray-700 dark:text-gray-300">{summary.losers}</span></p>
+            </div>
+          </div>
+        </div>
 
         <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg p-4 sm:col-span-2 xl:col-span-2">
           <div className="flex items-start justify-between gap-4">
@@ -139,8 +152,7 @@ export function StatsGrid({
                 <InfoTooltip
                   text={
                     'Sum of net P&L across all closed trades after fees.\n'
-                    + 'Also shows total fees and fees as a % of |gross P&L|.\n'
-                    + 'Breakeven includes gross-flat trades and, when enabled in Settings, trades at or below their initial risk.'
+                    + 'Also shows total fees and fees as a % of |gross P&L|.'
                   }
                   ariaLabel="Info about Cumulated Net P&L"
                 />
@@ -153,19 +165,13 @@ export function StatsGrid({
                 {' '}({formatPercent(feePctOfAbsGross, 1)} of |Gross|)
               </p>
             </div>
-
-            <div className="text-right text-xs text-gray-500 dark:text-gray-400">
-              <p>Winners: <span className="font-semibold text-gray-700 dark:text-gray-300">{summary.winners}</span></p>
-              <p>Breakeven: <span className="font-semibold text-gray-700 dark:text-gray-300">{summary.breakeven}</span></p>
-              <p>Losers: <span className="font-semibold text-gray-700 dark:text-gray-300">{summary.losers}</span></p>
-            </div>
           </div>
         </div>
 
         <StatsCard
           label="Win Rate"
           value={formatPercent(summary.win_rate)}
-          tooltip="Percentage of trades that were winners (net P&L > 0).\nFormula: Winners ÷ Total Trades × 100"
+          tooltip="Percentage of trades classified as winners.\nFormula: Winners ÷ Total Trades × 100"
         />
         <StatsCard
           label="APPT"

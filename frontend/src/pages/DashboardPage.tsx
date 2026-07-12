@@ -124,7 +124,15 @@ export function DashboardPage() {
   }
 
   const statCards = [
-    { label: 'Total Trades', value: summary!.total_trades.toString() },
+    {
+      label: 'Total Trades',
+      value: summary!.total_trades.toString(),
+      outcomeCounts: {
+        winners: summary!.winners,
+        breakeven: summary!.breakeven,
+        losers: summary!.losers,
+      },
+    },
     {
       label: 'Net P&L',
       value: formatCurrency(summary!.total_net_pnl),
@@ -170,7 +178,25 @@ export function DashboardPage() {
 
       {/* Quick stats */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-        {statCards.map((card) => (
+        {statCards.map((card) => card.outcomeCounts ? (
+          <div key={card.label} className="card col-span-2 p-4 md:col-span-1">
+            <div className="flex items-start justify-between gap-3">
+              <div className="text-left">
+                <p className="text-xs font-medium text-gray-500 uppercase tracking-wider dark:text-gray-400">
+                  {card.label}
+                </p>
+                <p className="mt-1 text-xl font-bold text-gray-900 dark:text-gray-100">
+                  {card.value}
+                </p>
+              </div>
+              <div className="text-right text-xs text-gray-500 dark:text-gray-400">
+                <p>Winners: <span className="font-semibold text-gray-700 dark:text-gray-300">{card.outcomeCounts.winners}</span></p>
+                <p>Breakeven: <span className="font-semibold text-gray-700 dark:text-gray-300">{card.outcomeCounts.breakeven}</span></p>
+                <p>Losers: <span className="font-semibold text-gray-700 dark:text-gray-300">{card.outcomeCounts.losers}</span></p>
+              </div>
+            </div>
+          </div>
+        ) : (
           <div key={card.label} className="card p-4 text-center">
             <p className="text-xs font-medium text-gray-500 uppercase tracking-wider dark:text-gray-400">
               {card.label}
