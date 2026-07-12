@@ -259,6 +259,11 @@ class TestAnalyticsSummary:
         assert summary["breakeven"] == 3
         assert summary["win_rate"] == 33.33
         assert summary["total_net_pnl"] == 3.0
+        # Real defined R values are +0.5, +1.0, +1.5, -0.5, -1.5.
+        # Risk-classified breakevens stay in Expectancy (R), but not W:L.
+        assert summary["expectancy_r"] == 0.2
+        assert summary["wl_ratio_r"] == 1.0
+        assert summary["profit_factor_r"] == 1.5
 
         curve = client.get(
             "/api/analytics/equity-curve", headers=auth_headers
@@ -270,7 +275,58 @@ class TestAnalyticsSummary:
         evolution = client.get(
             "/api/analytics/evolution", headers=auth_headers
         ).get_json()
-        assert evolution[0]["r_multiple"] == 0.0
+        assert evolution[0]["r_multiple"] == 0.5
+        assert evolution[0]["running_mean_r"] == 0.5
+        assert evolution[-1]["cum_r"] == 1.0
+        assert evolution[-1]["running_mean_r"] == 0.2
+        assert evolution[-1]["running_r_avg_win"] == 1.5
+        assert evolution[-1]["running_r_avg_loss_abs"] == 1.5
+
+    def test_summary_wl_ratio_r_excludes_gross_flat_breakeven(
+        self, app, client, auth_headers
+    ):
+        """Gross-flat trades never enter winner or loser R averages."""
+        user_id = _get_user_id(app)
+        base = datetime(2025, 1, 17, 10, 0, 0)
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=200.0,
+            initial_risk=100.0,
+            exit_time=base,
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=-100.0,
+            initial_risk=100.0,
+            exit_time=base + timedelta(hours=1),
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=-10.0,
+            gross_pnl=0.0,
+            fee=10.0,
+            initial_risk=90.0,
+            exit_time=base + timedelta(hours=2),
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=120.0,
+            initial_risk=0.0,
+            exit_time=base + timedelta(hours=3),
+        )
+
+        summary = client.get(
+            "/api/analytics/summary", headers=auth_headers
+        ).get_json()
+
+        # Defined R values: +2.0, -1.0, -0.1. The gross-flat trade is
+        # excluded from W:L but retained in the all-defined-R expectancy.
+        assert summary["expectancy_r"] == 0.3
+        assert summary["wl_ratio_r"] == 2.0
 
     def test_summary_excludes_deleted(
         self, app, client, auth_headers

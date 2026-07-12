@@ -641,48 +641,51 @@ class AnalyticsService:
             ) / len(r_trades)
 
         if r_trades:
-            r_values = []
+            r_values: List[float] = []
+            winner_r_values: List[float] = []
+            loser_r_values: List[float] = []
             for trade in r_trades:
                 r_value = calculate_r_multiple(
                     float(trade["net_pnl"]),
                     float(trade["initial_risk"]),
                     float(trade.get("fee", 0.0)),
                 )
-                if (
-                    risk_breakeven_enabled
-                    and _trade_outcome(
-                        trade, risk_breakeven_enabled
-                    ) == "breakeven"
-                ):
-                    r_value = 0.0
                 if r_value is not None:
                     r_values.append(r_value)
-            win_r_values = [r for r in r_values if r > 0]
-            loss_r_values = [r for r in r_values if r < 0]
-            r_win_rate = len(win_r_values) / len(
-                r_values
-            )
+                    outcome = _trade_outcome(
+                        trade, risk_breakeven_enabled
+                    )
+                    if outcome == "winner":
+                        winner_r_values.append(r_value)
+                    elif outcome == "loser":
+                        loser_r_values.append(r_value)
+
+            # Expectancy (R) is the mean of every defined, recorded
+            # R multiple. Outcome classification never changes the R value.
+            expectancy_r = sum(r_values) / len(r_values)
+
+            # Outcome-based averages exclude breakevens, including gross-flat
+            # trades regardless of the risk-breakeven setting.
             avg_win_r = (
-                sum(win_r_values) / len(win_r_values)
-                if win_r_values
+                sum(winner_r_values) / len(winner_r_values)
+                if winner_r_values
                 else 0.0
             )
             avg_loss_r = (
-                abs(sum(loss_r_values) / len(loss_r_values))
-                if loss_r_values
+                abs(sum(loser_r_values) / len(loser_r_values))
+                if loser_r_values
                 else 0.0
             )
-            expectancy_r = (
-                r_win_rate * avg_win_r
-            ) - ((1 - r_win_rate) * avg_loss_r)
             wl_ratio_r = (
                 avg_win_r / avg_loss_r
                 if avg_loss_r > 0
                 else None
             )
             median_r = _percentile(r_values, 50)
-            sum_win_r = sum(win_r_values)
-            sum_loss_r_abs = abs(sum(loss_r_values))
+            # R profit factor intentionally remains a pure-sum metric using
+            # the real signed R values, including breakeven classifications.
+            sum_win_r = sum(r for r in r_values if r > 0)
+            sum_loss_r_abs = abs(sum(r for r in r_values if r < 0))
             if sum_loss_r_abs > 0:
                 profit_factor_r = (
                     sum_win_r / sum_loss_r_abs
@@ -1635,8 +1638,6 @@ class AnalyticsService:
             outcome = _trade_outcome(
                 trade, risk_breakeven_enabled
             )
-            if risk_breakeven_enabled and outcome == "breakeven":
-                r_multiple = 0.0
 
             cumulative_net_pnl += net_pnl
             appt_running = cumulative_net_pnl / trade_count
@@ -1651,10 +1652,10 @@ class AnalyticsService:
                 delta2 = r_multiple - running_r_mean
                 running_r_m2 += delta * delta2
 
-                if r_multiple > 0:
+                if outcome == "winner":
                     running_r_wins += 1
                     running_sum_win_r += r_multiple
-                elif r_multiple < 0:
+                elif outcome == "loser":
                     running_r_losses += 1
                     running_sum_abs_loss_r += abs(
                         r_multiple
