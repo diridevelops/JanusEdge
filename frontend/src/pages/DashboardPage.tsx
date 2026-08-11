@@ -145,10 +145,10 @@ export function DashboardPage() {
       color: summary!.appt >= 0 ? 'pnl-positive' : 'pnl-negative',
     },
     {
-      label: 'Expectancy (R)',
-      value: summary!.expectancy_r != null ? `${summary!.expectancy_r.toFixed(2)}R` : '—',
-      color: summary!.expectancy_r != null
-        ? (summary!.expectancy_r >= 0 ? 'pnl-positive' : 'pnl-negative')
+      label: 'W:L Ratio (R)',
+      value: summary!.wl_ratio_r != null ? summary!.wl_ratio_r.toFixed(2) : '—',
+      color: summary!.wl_ratio_r != null
+        ? (summary!.wl_ratio_r >= 1 ? 'pnl-positive' : 'pnl-negative')
         : undefined,
     },
   ];
