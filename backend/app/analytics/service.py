@@ -631,8 +631,42 @@ class AnalyticsService:
                     "fee": 1,
                     "total_quantity": 1,
                 },
+            ).sort(
+                [
+                    ("exit_time", 1),
+                    ("entry_time", 1),
+                    ("_id", 1),
+                ]
             )
         )
+
+        max_winning_streak = 0
+        max_losing_streak = 0
+        current_winning_streak = 0
+        current_losing_streak = 0
+        for trade in trade_details:
+            outcome = _trade_outcome(
+                trade,
+                risk_breakeven_enabled,
+                risk_breakeven_r_threshold,
+            )
+            if outcome == "winner":
+                current_winning_streak += 1
+                current_losing_streak = 0
+                max_winning_streak = max(
+                    max_winning_streak,
+                    current_winning_streak,
+                )
+            elif outcome == "loser":
+                current_losing_streak += 1
+                current_winning_streak = 0
+                max_losing_streak = max(
+                    max_losing_streak,
+                    current_losing_streak,
+                )
+            else:
+                current_winning_streak = 0
+                current_losing_streak = 0
 
         pf_loss_sum = sum(
             float(trade.get("net_pnl", 0.0))
@@ -754,6 +788,8 @@ class AnalyticsService:
             "winners": winners_count,
             "losers": losers_count,
             "breakeven": data["breakeven"],
+            "max_winning_streak": max_winning_streak,
+            "max_losing_streak": max_losing_streak,
             "win_rate": round(win_rate, 2),
             "total_gross_pnl": round(
                 data["total_gross_pnl"], 2
@@ -1952,6 +1988,8 @@ def _empty_summary() -> Dict[str, Any]:
         "winners": 0,
         "losers": 0,
         "breakeven": 0,
+        "max_winning_streak": 0,
+        "max_losing_streak": 0,
         "win_rate": 0.0,
         "total_gross_pnl": 0.0,
         "total_net_pnl": 0.0,

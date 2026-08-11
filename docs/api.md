@@ -308,6 +308,8 @@ The frontend currently depends on summary fields including:
 - `winners`
 - `losers`
 - `breakeven`
+- `max_winning_streak`
+- `max_losing_streak`
 - `win_rate`
 - `total_gross_pnl`
 - `total_net_pnl`

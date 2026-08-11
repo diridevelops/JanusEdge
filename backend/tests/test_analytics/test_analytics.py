@@ -130,6 +130,8 @@ class TestAnalyticsSummary:
         assert data["expectancy_r"] is None
         assert data["win_per_share_avg"] == 0.0
         assert data["loss_per_share_avg"] == 0.0
+        assert data["max_winning_streak"] == 0
+        assert data["max_losing_streak"] == 0
 
     def test_summary_basic(
         self, app, client, auth_headers
@@ -219,6 +221,129 @@ class TestAnalyticsSummary:
         assert data["loss_per_share_avg"] == -80.0
         # loss_per_share_high = -80.0
         assert data["loss_per_share_high"] == -80.0
+        assert data["max_winning_streak"] == 3
+        assert data["max_losing_streak"] == 1
+
+    def test_summary_streaks_follow_chronological_classification(
+        self, app, client, auth_headers
+    ):
+        """Streaks use sorted outcomes and threshold breakevens reset them."""
+        user_id = _get_user_id(app)
+        base = datetime(2025, 1, 18, 10, 0, 0)
+
+        # Same exit time: entry_time determines the order.
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=100.0,
+            initial_risk=100.0,
+            entry_time=base - timedelta(minutes=5),
+            exit_time=base,
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=100.0,
+            initial_risk=100.0,
+            entry_time=base - timedelta(minutes=4),
+            exit_time=base,
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=-100.0,
+            initial_risk=100.0,
+            entry_time=base - timedelta(minutes=3),
+            exit_time=base,
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=100.0,
+            initial_risk=100.0,
+            exit_time=base + timedelta(hours=1),
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=5.0,
+            initial_risk=100.0,
+            exit_time=base + timedelta(hours=2),
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=100.0,
+            initial_risk=100.0,
+            exit_time=base + timedelta(hours=3),
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=-100.0,
+            initial_risk=100.0,
+            exit_time=base + timedelta(hours=4),
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=-100.0,
+            initial_risk=100.0,
+            exit_time=base + timedelta(hours=5),
+        )
+
+        enabled = client.put(
+            "/api/auth/risk-breakeven",
+            json={
+                "risk_breakeven_enabled": True,
+                "risk_breakeven_r_threshold": 0.05,
+            },
+            headers=auth_headers,
+        )
+        assert enabled.status_code == 200
+
+        summary = client.get(
+            "/api/analytics/summary", headers=auth_headers
+        ).get_json()
+        assert summary["breakeven"] == 1
+        assert summary["max_winning_streak"] == 2
+        assert summary["max_losing_streak"] == 2
+
+    def test_summary_streaks_zero_for_missing_outcome(
+        self, app, client, auth_headers
+    ):
+        """A missing winner or loser side has a zero maximum streak."""
+        user_id = _get_user_id(app)
+        base = datetime(2025, 1, 19, 10, 0, 0)
+        for index in range(2):
+            _insert_trade(
+                app,
+                user_id,
+                net_pnl=100.0,
+                exit_time=base + timedelta(hours=index),
+            )
+
+        summary = client.get(
+            "/api/analytics/summary", headers=auth_headers
+        ).get_json()
+        assert summary["max_winning_streak"] == 2
+        assert summary["max_losing_streak"] == 0
+
+        with app.app_context():
+            mongo.db.trades.delete_many({"user_id": user_id})
+        for index in range(2):
+            _insert_trade(
+                app,
+                user_id,
+                net_pnl=-100.0,
+                exit_time=base + timedelta(hours=index),
+            )
+
+        summary = client.get(
+            "/api/analytics/summary", headers=auth_headers
+        ).get_json()
+        assert summary["max_winning_streak"] == 0
+        assert summary["max_losing_streak"] == 2
 
     def test_risk_breakeven_reclassifies_outcomes(
         self, app, client, auth_headers

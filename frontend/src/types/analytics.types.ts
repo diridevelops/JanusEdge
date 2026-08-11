@@ -4,6 +4,8 @@ export interface AnalyticsSummary {
   winners: number;
   losers: number;
   breakeven: number;
+  max_winning_streak: number;
+  max_losing_streak: number;
   win_rate: number;
   total_gross_pnl: number;
   total_net_pnl: number;
