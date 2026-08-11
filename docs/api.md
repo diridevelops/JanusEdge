@@ -23,6 +23,7 @@ Unless otherwise noted, IDs are MongoDB ObjectId strings serialized as plain str
 | PUT | `/api/auth/timezone` | Yes | Update trading timezone | JSON with `timezone` | Direct serialized user object |
 | PUT | `/api/auth/display-timezone` | Yes | Update display timezone | JSON with `display_timezone` | Direct serialized user object |
 | PUT | `/api/auth/starting-equity` | Yes | Update starting equity used by simulations | JSON with `starting_equity` | Direct serialized user object |
+| PUT | `/api/auth/risk-breakeven` | Yes | Update breakeven classification settings | JSON with `risk_breakeven_enabled` and optional non-negative `risk_breakeven_r_threshold` | Direct serialized user object |
 | PUT | `/api/auth/symbol-mappings` | Yes | Replace user symbol mappings | JSON with `symbol_mappings` | Direct serialized user object |
 | PUT | `/api/auth/market-data-mappings` | Yes | Replace user market-data mappings | JSON with `market_data_mappings` | Direct serialized user object |
 | GET | `/api/auth/export` | Yes | Export a portable backup ZIP | None | ZIP download |
@@ -39,6 +40,8 @@ Where the backend returns a serialized user object, the frontend currently expec
   "timezone": "America/New_York",
   "display_timezone": "America/New_York",
   "starting_equity": 10000,
+  "risk_breakeven_enabled": false,
+  "risk_breakeven_r_threshold": 0.05,
   "symbol_mappings": {},
   "market_data_mappings": {}
 }
@@ -47,6 +50,7 @@ Where the backend returns a serialized user object, the frontend currently expec
 - `symbol_mappings` controls point-value resolution only.
 - `market_data_mappings` controls explicit cross-symbol market-data lookup.
 - The default `market_data_mappings` value is `{}`, which means market data lookup uses the symbol as-is.
+- When `risk_breakeven_enabled` is true, trades with an absolute fee-inclusive R multiple at or below `risk_breakeven_r_threshold` are classified as breakeven. Gross-flat trades are always breakeven. The default threshold is `0.05R`.
 
 ### Auth session notes
 
@@ -304,6 +308,8 @@ The frontend currently depends on summary fields including:
 - `winners`
 - `losers`
 - `breakeven`
+- `max_winning_streak`
+- `max_losing_streak`
 - `win_rate`
 - `total_gross_pnl`
 - `total_net_pnl`

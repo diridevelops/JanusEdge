@@ -7,6 +7,7 @@ from app.market_data.symbol_mapper import (
     validate_market_data_mappings,
     validate_symbol_mappings,
 )
+from app.models.user import DEFAULT_RISK_BREAKEVEN_R_THRESHOLD
 
 
 class RegisterSchema(Schema):
@@ -74,6 +75,10 @@ class UpdateRiskBreakevenSchema(Schema):
     """Schema for risk-based breakeven preference updates."""
 
     risk_breakeven_enabled = fields.Bool(required=True)
+    risk_breakeven_r_threshold = fields.Float(
+        load_default=DEFAULT_RISK_BREAKEVEN_R_THRESHOLD,
+        validate=validate.Range(min=0),
+    )
 
 
 class BaseSymbolMappingSchema(Schema):

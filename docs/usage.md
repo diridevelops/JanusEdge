@@ -612,6 +612,14 @@ This controls how times appear inside the app, including:
 
 This sets the default starting balance used to prefill Monte Carlo simulations.
 
+### Outcome Classification
+
+Gross-flat trades are always classified as breakeven. You can optionally enable
+R-based classification and set a breakeven threshold, which defaults to
+`0.05R`. When enabled, a trade whose absolute fee-inclusive R multiple is at
+or below that threshold is classified as breakeven. Disabling the option leaves
+only gross-flat trades classified as breakeven.
+
 ### Symbol Mappings
 
 Use Symbol Mappings to control point-value resolution only.

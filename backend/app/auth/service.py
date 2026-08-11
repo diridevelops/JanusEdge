@@ -17,6 +17,7 @@ from app.models.auth_refresh_session import (
     create_auth_refresh_session_doc,
 )
 from app.models.user import (
+    DEFAULT_RISK_BREAKEVEN_R_THRESHOLD,
     DEFAULT_STARTING_EQUITY,
     create_user_doc,
 )
@@ -400,8 +401,9 @@ class AuthService:
         self,
         user_id: str,
         risk_breakeven_enabled: bool,
+        risk_breakeven_r_threshold: float = DEFAULT_RISK_BREAKEVEN_R_THRESHOLD,
     ) -> dict:
-        """Update the user's risk-based breakeven preference."""
+        """Update the user's risk-based breakeven settings."""
         user = self.user_repo.find_by_id(user_id)
         if not user:
             raise AuthenticationError("User not found.")
@@ -409,10 +411,14 @@ class AuthService:
         self.user_repo.update_risk_breakeven_enabled(
             user_id,
             risk_breakeven_enabled,
+            risk_breakeven_r_threshold,
         )
         updated_user = dict(user)
         updated_user["risk_breakeven_enabled"] = (
             risk_breakeven_enabled
+        )
+        updated_user["risk_breakeven_r_threshold"] = (
+            risk_breakeven_r_threshold
         )
         return self._serialize_user_profile(updated_user)
 
@@ -488,8 +494,17 @@ class AuthService:
             "starting_equity": user.get(
                 "starting_equity", DEFAULT_STARTING_EQUITY
             ),
-            "risk_breakeven_enabled": user.get(
-                "risk_breakeven_enabled", False
+            # Legacy profiles did not have a threshold. Keep the new
+            # risk-based classifier disabled for those profiles until the
+            # user explicitly saves the new setting.
+            "risk_breakeven_enabled": (
+                bool(user.get("risk_breakeven_enabled", False))
+                if "risk_breakeven_r_threshold" in user
+                else False
+            ),
+            "risk_breakeven_r_threshold": user.get(
+                "risk_breakeven_r_threshold",
+                DEFAULT_RISK_BREAKEVEN_R_THRESHOLD,
             ),
             "symbol_mappings": get_effective_symbol_mappings(
                 user.get("symbol_mappings")

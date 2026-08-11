@@ -176,6 +176,18 @@ export function StatsGrid({
           tooltip="Percentage of trades classified as winners.\nFormula: Winners ÷ Total Trades × 100"
         />
         <StatsCard
+          label="Max Winning Streak"
+          value={String(summary.max_winning_streak)}
+          valueColor="text-profit"
+          tooltip="Longest consecutive streak of classified winning trades. Breakeven and losing trades reset the streak."
+        />
+        <StatsCard
+          label="Max Losing Streak"
+          value={String(summary.max_losing_streak)}
+          valueColor="text-loss"
+          tooltip="Longest consecutive streak of classified losing trades. Breakeven and winning trades reset the streak."
+        />
+        <StatsCard
           label="APPT"
           value={formatCurrency(summary.appt)}
           valueColor={summary.appt >= 0 ? 'text-profit' : 'text-loss'}

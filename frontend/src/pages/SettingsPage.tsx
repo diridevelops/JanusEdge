@@ -7,7 +7,7 @@ import {
   restoreBackup,
   updateMarketDataMappings,
   updateDisplayTimezone,
-  updateRiskBreakevenEnabled,
+  updateRiskBreakevenSettings,
   updateStartingEquity,
   updateSymbolMappings,
   updateTimezone,
@@ -254,6 +254,9 @@ export function SettingsPage() {
   const [riskBreakevenEnabled, setRiskBreakevenEnabled] = useState(
     user?.risk_breakeven_enabled ?? false
   );
+  const [riskBreakevenRThreshold, setRiskBreakevenRThreshold] = useState(
+    String(user?.risk_breakeven_r_threshold ?? 0.05)
+  );
   const [riskBreakevenLoading, setRiskBreakevenLoading] = useState(false);
 
   // Symbol mappings
@@ -289,9 +292,11 @@ export function SettingsPage() {
     );
     setStartingEquity(String(user?.starting_equity ?? 10000));
     setRiskBreakevenEnabled(user?.risk_breakeven_enabled ?? false);
+    setRiskBreakevenRThreshold(String(user?.risk_breakeven_r_threshold ?? 0.05));
   }, [
     user?.display_timezone,
     user?.risk_breakeven_enabled,
+    user?.risk_breakeven_r_threshold,
     user?.starting_equity,
     user?.timezone,
   ]);
@@ -400,9 +405,14 @@ export function SettingsPage() {
     e: FormEvent<HTMLFormElement>
   ) {
     e.preventDefault();
+    const threshold = Number(riskBreakevenRThreshold);
+    if (!Number.isFinite(threshold) || threshold < 0) {
+      addToast('error', 'Breakeven threshold must be a non-negative R value.');
+      return;
+    }
     setRiskBreakevenLoading(true);
     try {
-      await updateRiskBreakevenEnabled(riskBreakevenEnabled);
+      await updateRiskBreakevenSettings(riskBreakevenEnabled, threshold);
       addToast('success', 'Outcome classification updated successfully.');
       await refreshProfile();
     } catch (err: unknown) {
@@ -716,11 +726,25 @@ export function SettingsPage() {
           Outcome Classification
         </h2>
         <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
-          When enabled, closed trades with an absolute net P&amp;L at or below
-          their initial risk are counted as breakeven in analytics. Recorded
-          trade P&amp;L is not changed.
+          When enabled, closed trades with an absolute R multiple at or below
+          the threshold are counted as breakeven. Gross-flat trades are always
+          breakeven. Recorded trade P&amp;L is not changed.
         </p>
         <form onSubmit={handleUpdateRiskBreakeven} className="space-y-4">
+          <div>
+            <label htmlFor="riskBreakevenRThreshold" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+              Breakeven Threshold (R)
+            </label>
+            <input
+              id="riskBreakevenRThreshold"
+              type="number"
+              min="0"
+              step="0.01"
+              className="input-field mt-1"
+              value={riskBreakevenRThreshold}
+              onChange={(event) => setRiskBreakevenRThreshold(event.target.value)}
+            />
+          </div>
           <label
             htmlFor="riskBreakevenEnabled"
             className="flex cursor-pointer items-start gap-3 text-sm text-gray-700 dark:text-gray-300"
@@ -732,7 +756,7 @@ export function SettingsPage() {
               checked={riskBreakevenEnabled}
               onChange={(event) => setRiskBreakevenEnabled(event.target.checked)}
             />
-            <span>Treat trades at or below initial risk as breakeven</span>
+            <span>Treat trades within the R threshold as breakeven</span>
           </label>
           <button
             type="submit"

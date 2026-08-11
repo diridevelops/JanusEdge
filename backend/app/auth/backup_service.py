@@ -21,6 +21,7 @@ from app.market_data.symbol_mapper import (
 )
 from app.media.service import MediaService
 from app.models.user import (
+    DEFAULT_RISK_BREAKEVEN_R_THRESHOLD,
     DEFAULT_STARTING_EQUITY,
 )
 from app.repositories.account_repo import AccountRepository
@@ -165,9 +166,11 @@ class PortableBackupService:
             ),
             risk_breakeven_enabled=payload["settings"].get(
                 "risk_breakeven_enabled",
-                destination_user.get(
-                    "risk_breakeven_enabled", False
-                ),
+                False,
+            ),
+            risk_breakeven_r_threshold=payload["settings"].get(
+                "risk_breakeven_r_threshold",
+                DEFAULT_RISK_BREAKEVEN_R_THRESHOLD,
             ),
             symbol_mappings=restored_symbol_mappings,
             market_data_mappings=restored_market_data_mappings,
@@ -184,6 +187,8 @@ class PortableBackupService:
             settings_updated.append("market_data_mappings")
         if "risk_breakeven_enabled" in payload["settings"]:
             settings_updated.append("risk_breakeven_enabled")
+        if "risk_breakeven_r_threshold" in payload["settings"]:
+            settings_updated.append("risk_breakeven_r_threshold")
 
         summary = {
             "accounts": {"created": 0, "reused": 0},
@@ -302,8 +307,14 @@ class PortableBackupService:
                 "starting_equity": user.get(
                     "starting_equity", DEFAULT_STARTING_EQUITY
                 ),
-                "risk_breakeven_enabled": user.get(
-                    "risk_breakeven_enabled", False
+                "risk_breakeven_enabled": (
+                    bool(user.get("risk_breakeven_enabled", False))
+                    if "risk_breakeven_r_threshold" in user
+                    else False
+                ),
+                "risk_breakeven_r_threshold": user.get(
+                    "risk_breakeven_r_threshold",
+                    DEFAULT_RISK_BREAKEVEN_R_THRESHOLD,
                 ),
                 "symbol_mappings": (
                     get_effective_symbol_mappings(
@@ -548,6 +559,21 @@ class PortableBackupService:
             raise ValidationError(
                 "Backup archive contains an invalid risk breakeven setting."
             )
+
+        risk_breakeven_r_threshold = settings.get(
+            "risk_breakeven_r_threshold"
+        )
+        if risk_breakeven_r_threshold is not None:
+            try:
+                threshold = float(risk_breakeven_r_threshold)
+            except (TypeError, ValueError) as exc:
+                raise ValidationError(
+                    "Backup archive contains an invalid risk breakeven threshold."
+                ) from exc
+            if threshold < 0:
+                raise ValidationError(
+                    "Backup archive contains an invalid risk breakeven threshold."
+                )
 
         symbol_mappings = settings.get("symbol_mappings")
         if symbol_mappings is not None:

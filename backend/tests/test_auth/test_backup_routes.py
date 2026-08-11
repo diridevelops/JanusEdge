@@ -242,6 +242,7 @@ def _seed_portable_backup_graph(app, user_id: str) -> dict:
             display_timezone="UTC",
             starting_equity=25000.0,
             risk_breakeven_enabled=True,
+            risk_breakeven_r_threshold=0.125,
             symbol_mappings=symbol_mappings,
             market_data_mappings=market_data_mappings,
         )
@@ -751,6 +752,7 @@ def test_export_backup_is_complete_and_self_contained(
         "display_timezone": "UTC",
         "starting_equity": 25000.0,
         "risk_breakeven_enabled": True,
+        "risk_breakeven_r_threshold": 0.125,
         "symbol_mappings": seeded["symbol_mappings"],
         "market_data_mappings": seeded["market_data_mappings"],
     }
@@ -878,6 +880,28 @@ def test_export_backup_market_data_archive_paths_include_year_month_day(
     }
 
 
+def test_legacy_user_backup_uses_safe_breakeven_defaults(client, app):
+    """Legacy profiles export disabled risk classification with 0.05R."""
+    token, user_id = _register_and_login(client, "legacy-backup-settings")
+
+    with app.app_context():
+        from app.extensions import mongo
+
+        mongo.db.users.update_one(
+            {"_id": ObjectId(user_id)},
+            {
+                "$set": {"risk_breakeven_enabled": True},
+                "$unset": {"risk_breakeven_r_threshold": ""},
+            },
+        )
+
+    _, payload, _ = _parse_archive(
+        _export_archive_bytes(client, token)
+    )
+    assert payload["settings"]["risk_breakeven_enabled"] is False
+    assert payload["settings"]["risk_breakeven_r_threshold"] == 0.05
+
+
 def test_export_backup_dedupes_legacy_market_data_symbol_aliases(
     client, app
 ):
@@ -984,6 +1008,7 @@ def test_restore_into_different_user_remaps_graph_and_media(
         assert restored_user["display_timezone"] == "UTC"
         assert restored_user["starting_equity"] == 25000.0
         assert restored_user["risk_breakeven_enabled"] is True
+        assert restored_user["risk_breakeven_r_threshold"] == 0.125
         assert (
             restored_user["symbol_mappings"]
             == seeded["symbol_mappings"]
@@ -1167,6 +1192,7 @@ def test_restore_merge_into_empty_user_creates_all_records(
                 "symbol_mappings",
                 "market_data_mappings",
                 "risk_breakeven_enabled",
+                "risk_breakeven_r_threshold",
             ]
         },
     }
