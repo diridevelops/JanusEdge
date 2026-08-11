@@ -17,6 +17,7 @@ export interface User {
   display_timezone: string;
   starting_equity: number;
   risk_breakeven_enabled: boolean;
+  risk_breakeven_r_threshold: number;
   symbol_mappings: SymbolMappings;
   market_data_mappings: MarketDataMappings;
   created_at: string;

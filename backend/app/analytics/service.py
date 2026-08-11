@@ -12,6 +12,7 @@ from app.analytics.monte_carlo import (
     run_monte_carlo_simulation,
 )
 from app.extensions import mongo
+from app.models.user import DEFAULT_RISK_BREAKEVEN_R_THRESHOLD
 from app.repositories.user_repo import UserRepository
 from app.utils.trade_metrics import calculate_r_multiple
 
@@ -120,29 +121,54 @@ def _mongo_effective_risk_expr() -> Dict[str, Any]:
     """Build MongoDB expression for fee-inclusive risk."""
     return {
         "$add": [
-            "$initial_risk",
+            {"$ifNull": ["$initial_risk", 0]},
             {"$ifNull": ["$fee", 0]},
         ]
     }
 
 
-def _mongo_outcome_expr(risk_breakeven_enabled: bool) -> Dict[str, Any]:
+def _mongo_r_multiple_expr() -> Dict[str, Any]:
+    """Build a safe MongoDB expression for the fee-inclusive R multiple."""
+    return {
+        "$cond": {
+            "if": {"$gt": [{"$ifNull": ["$initial_risk", 0]}, 0]},
+            "then": {
+                "$divide": [
+                    {"$ifNull": ["$net_pnl", 0]},
+                    _mongo_effective_risk_expr(),
+                ]
+            },
+            "else": None,
+        }
+    }
+
+
+def _mongo_outcome_expr(
+    risk_breakeven_enabled: bool,
+    risk_breakeven_r_threshold: float,
+) -> Dict[str, Any]:
     """Build the three-state analytics outcome expression."""
     breakeven_conditions: List[Dict[str, Any]] = [
         {"$eq": ["$gross_pnl", 0]},
     ]
     if risk_breakeven_enabled:
+        r_multiple = _mongo_r_multiple_expr()
         breakeven_conditions.append(
             {
-                "$and": [
-                    {"$gt": ["$initial_risk", 0]},
-                    {
-                        "$lte": [
-                            {"$abs": "$net_pnl"},
-                            "$initial_risk",
+                "$let": {
+                    "vars": {"r_multiple": r_multiple},
+                    "in": {
+                        "$and": [
+                            {"$ne": ["$$r_multiple", None]},
+                            {
+                                "$lte": [
+                                    {"$abs": "$$r_multiple"},
+                                    risk_breakeven_r_threshold,
+                                ]
+                            },
                         ]
                     },
-                ]
+                }
             }
         )
 
@@ -162,32 +188,36 @@ def _mongo_outcome_expr(risk_breakeven_enabled: bool) -> Dict[str, Any]:
                     "then": "loser",
                 },
             ],
-            "default": "breakeven",
+            "default": "loser",
         }
     }
 
 
 def _trade_outcome(
-    trade: dict, risk_breakeven_enabled: bool
+    trade: dict,
+    risk_breakeven_enabled: bool,
+    risk_breakeven_r_threshold: float,
 ) -> str:
     """Classify a stored trade without changing its recorded P&L."""
     gross_pnl = float(trade.get("gross_pnl", 0.0))
     net_pnl = float(trade.get("net_pnl", 0.0))
     initial_risk = float(trade.get("initial_risk", 0.0))
+    fee = float(trade.get("fee", 0.0))
+    r_value = calculate_r_multiple(
+        net_pnl, initial_risk, fee
+    )
 
     if gross_pnl == 0:
         return "breakeven"
     if (
         risk_breakeven_enabled
-        and initial_risk > 0
-        and abs(net_pnl) <= initial_risk
+        and r_value is not None
+        and abs(r_value) <= risk_breakeven_r_threshold
     ):
         return "breakeven"
     if net_pnl > 0:
         return "winner"
-    if net_pnl < 0:
-        return "loser"
-    return "breakeven"
+    return "loser"
 
 
 class AnalyticsService:
@@ -202,10 +232,27 @@ class AnalyticsService:
     def __init__(self):
         self.user_repo = UserRepository()
 
-    def _risk_breakeven_enabled(self, user_id: str) -> bool:
-        """Return the user's opt-in outcome classification setting."""
+    def _risk_breakeven_settings(
+        self, user_id: str
+    ) -> tuple[bool, float]:
+        """Return enabled state and threshold for outcome classification."""
         user = self.user_repo.find_by_id(user_id)
-        return bool(user and user.get("risk_breakeven_enabled", False))
+        if not user or "risk_breakeven_r_threshold" not in user:
+            return False, DEFAULT_RISK_BREAKEVEN_R_THRESHOLD
+
+        try:
+            threshold = float(
+                user.get(
+                    "risk_breakeven_r_threshold",
+                    DEFAULT_RISK_BREAKEVEN_R_THRESHOLD,
+                )
+            )
+        except (TypeError, ValueError):
+            threshold = DEFAULT_RISK_BREAKEVEN_R_THRESHOLD
+
+        return bool(user.get("risk_breakeven_enabled", False)), max(
+            0.0, threshold
+        )
 
     def get_summary(
         self,
@@ -229,8 +276,8 @@ class AnalyticsService:
             filters = {}
 
         match = _build_base_match(user_id, filters)
-        risk_breakeven_enabled = self._risk_breakeven_enabled(
-            user_id
+        risk_breakeven_enabled, risk_breakeven_r_threshold = (
+            self._risk_breakeven_settings(user_id)
         )
 
         pipeline = [
@@ -277,7 +324,8 @@ class AnalyticsService:
             {
                 "$addFields": {
                     "outcome": _mongo_outcome_expr(
-                        risk_breakeven_enabled
+                        risk_breakeven_enabled,
+                        risk_breakeven_r_threshold,
                     )
                 }
             },
@@ -591,7 +639,9 @@ class AnalyticsService:
             for trade in trade_details
             if (
                 _trade_outcome(
-                    trade, risk_breakeven_enabled
+                    trade,
+                    risk_breakeven_enabled,
+                    risk_breakeven_r_threshold,
                 ) == "loser"
                 if risk_breakeven_enabled
                 else float(trade.get("net_pnl", 0.0)) < 0
@@ -615,7 +665,9 @@ class AnalyticsService:
             qty = trade.get("total_quantity", 0)
             pnl = float(trade.get("net_pnl", 0.0))
             outcome = _trade_outcome(
-                trade, risk_breakeven_enabled
+                trade,
+                risk_breakeven_enabled,
+                risk_breakeven_r_threshold,
             )
             if qty and qty > 0:
                 per_share = pnl / qty
@@ -653,7 +705,9 @@ class AnalyticsService:
                 if r_value is not None:
                     r_values.append(r_value)
                     outcome = _trade_outcome(
-                        trade, risk_breakeven_enabled
+                        trade,
+                        risk_breakeven_enabled,
+                        risk_breakeven_r_threshold,
                     )
                     if outcome == "winner":
                         winner_r_values.append(r_value)
@@ -889,8 +943,8 @@ class AnalyticsService:
             filters = {}
 
         match = _build_base_match(user_id, filters)
-        risk_breakeven_enabled = self._risk_breakeven_enabled(
-            user_id
+        risk_breakeven_enabled, risk_breakeven_r_threshold = (
+            self._risk_breakeven_settings(user_id)
         )
 
         pipeline = [
@@ -898,7 +952,8 @@ class AnalyticsService:
             {
                 "$addFields": {
                     "outcome": _mongo_outcome_expr(
-                        risk_breakeven_enabled
+                        risk_breakeven_enabled,
+                        risk_breakeven_r_threshold,
                     )
                 }
             },
@@ -1153,8 +1208,8 @@ class AnalyticsService:
             filters = {}
 
         match = _build_base_match(user_id, filters)
-        risk_breakeven_enabled = self._risk_breakeven_enabled(
-            user_id
+        risk_breakeven_enabled, risk_breakeven_r_threshold = (
+            self._risk_breakeven_settings(user_id)
         )
 
         pipeline = [
@@ -1162,7 +1217,8 @@ class AnalyticsService:
             {
                 "$addFields": {
                     "outcome": _mongo_outcome_expr(
-                        risk_breakeven_enabled
+                        risk_breakeven_enabled,
+                        risk_breakeven_r_threshold,
                     )
                 }
             },
@@ -1234,8 +1290,8 @@ class AnalyticsService:
             filters = {}
 
         match = _build_base_match(user_id, filters)
-        risk_breakeven_enabled = self._risk_breakeven_enabled(
-            user_id
+        risk_breakeven_enabled, risk_breakeven_r_threshold = (
+            self._risk_breakeven_settings(user_id)
         )
 
         pipeline = [
@@ -1243,7 +1299,8 @@ class AnalyticsService:
             {
                 "$addFields": {
                     "outcome": _mongo_outcome_expr(
-                        risk_breakeven_enabled
+                        risk_breakeven_enabled,
+                        risk_breakeven_r_threshold,
                     )
                 }
             },
@@ -1568,8 +1625,8 @@ class AnalyticsService:
         safe_min_side = max(1, min_side_count)
 
         match = _build_base_match(user_id, filters)
-        risk_breakeven_enabled = self._risk_breakeven_enabled(
-            user_id
+        risk_breakeven_enabled, risk_breakeven_r_threshold = (
+            self._risk_breakeven_settings(user_id)
         )
         trades = list(
             mongo.db.trades.find(
@@ -1636,7 +1693,9 @@ class AnalyticsService:
                 float(trade.get("fee", 0.0)),
             )
             outcome = _trade_outcome(
-                trade, risk_breakeven_enabled
+                trade,
+                risk_breakeven_enabled,
+                risk_breakeven_r_threshold,
             )
 
             cumulative_net_pnl += net_pnl

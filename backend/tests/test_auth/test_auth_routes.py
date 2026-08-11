@@ -386,16 +386,65 @@ def test_update_risk_breakeven_persists_to_profile(client):
         "/api/auth/me", headers=headers
     )
     assert profile_response.get_json()["risk_breakeven_enabled"] is False
+    assert profile_response.get_json()["risk_breakeven_r_threshold"] == 0.05
 
     response = client.put(
         "/api/auth/risk-breakeven",
-        json={"risk_breakeven_enabled": True},
+        json={
+            "risk_breakeven_enabled": True,
+            "risk_breakeven_r_threshold": 0.1,
+        },
         headers=headers,
     )
     assert response.status_code == 200
     assert response.get_json()["risk_breakeven_enabled"] is True
+    assert response.get_json()["risk_breakeven_r_threshold"] == 0.1
 
     profile_response = client.get(
         "/api/auth/me", headers=headers
     )
     assert profile_response.get_json()["risk_breakeven_enabled"] is True
+    assert profile_response.get_json()["risk_breakeven_r_threshold"] == 0.1
+
+
+def test_update_risk_breakeven_rejects_negative_threshold(client):
+    """Risk breakeven thresholds cannot be negative."""
+    reg = client.post("/api/auth/register", json={
+        "username": "riskbreakevenvalidation",
+        "password": "testpass123",
+        "timezone": "America/New_York",
+    })
+    headers = {"Authorization": f"Bearer {reg.get_json()['token']}"}
+
+    response = client.put(
+        "/api/auth/risk-breakeven",
+        json={
+            "risk_breakeven_enabled": True,
+            "risk_breakeven_r_threshold": -0.01,
+        },
+        headers=headers,
+    )
+    assert response.status_code == 400
+
+
+def test_legacy_profile_defaults_to_disabled_threshold(app, client):
+    """Profiles without the new threshold use safe legacy defaults."""
+    reg = client.post("/api/auth/register", json={
+        "username": "legacyriskbreakeven",
+        "password": "testpass123",
+        "timezone": "America/New_York",
+    })
+    token = reg.get_json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    with app.app_context():
+        from app.extensions import mongo
+
+        mongo.db.users.update_one(
+            {"username": "legacyriskbreakeven"},
+            {"$unset": {"risk_breakeven_r_threshold": ""}},
+        )
+
+    profile = client.get("/api/auth/me", headers=headers).get_json()
+    assert profile["risk_breakeven_enabled"] is False
+    assert profile["risk_breakeven_r_threshold"] == 0.05

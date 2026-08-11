@@ -246,7 +246,10 @@ class TestAnalyticsSummary:
 
         enabled = client.put(
             "/api/auth/risk-breakeven",
-            json={"risk_breakeven_enabled": True},
+            json={
+                "risk_breakeven_enabled": True,
+                "risk_breakeven_r_threshold": 0.5,
+            },
             headers=auth_headers,
         )
         assert enabled.status_code == 200
@@ -254,22 +257,22 @@ class TestAnalyticsSummary:
         summary = client.get(
             "/api/analytics/summary", headers=auth_headers
         ).get_json()
-        assert summary["winners"] == 2
+        assert summary["winners"] == 3
         assert summary["losers"] == 1
-        assert summary["breakeven"] == 3
-        assert summary["win_rate"] == 33.33
+        assert summary["breakeven"] == 2
+        assert summary["win_rate"] == 50.0
         assert summary["total_net_pnl"] == 3.0
         # Real defined R values are +0.5, +1.0, +1.5, -0.5, -1.5.
         # Risk-classified breakevens stay in Expectancy (R), but not W:L.
         assert summary["expectancy_r"] == 0.2
-        assert summary["wl_ratio_r"] == 1.0
+        assert summary["wl_ratio_r"] == 0.83
         assert summary["profit_factor_r"] == 1.5
 
         curve = client.get(
             "/api/analytics/equity-curve", headers=auth_headers
         ).get_json()
-        assert curve[0]["winners"] == 2
-        assert curve[0]["win_rate"] == 33.33
+        assert curve[0]["winners"] == 3
+        assert curve[0]["win_rate"] == 50.0
         assert curve[0]["daily_pnl"] == 3.0
 
         evolution = client.get(
@@ -279,8 +282,92 @@ class TestAnalyticsSummary:
         assert evolution[0]["running_mean_r"] == 0.5
         assert evolution[-1]["cum_r"] == 1.0
         assert evolution[-1]["running_mean_r"] == 0.2
-        assert evolution[-1]["running_r_avg_win"] == 1.5
+        assert evolution[-1]["running_r_avg_win"] == 1.25
         assert evolution[-1]["running_r_avg_loss_abs"] == 1.5
+
+    def test_risk_breakeven_threshold_boundary_and_disable(
+        self, app, client, auth_headers
+    ):
+        """R threshold is inclusive and disabled mode keeps only gross-flat BEs."""
+        user_id = _get_user_id(app)
+        base = datetime(2025, 1, 16, 12, 0, 0)
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=5.0,
+            initial_risk=100.0,
+            exit_time=base,
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=-5.0,
+            initial_risk=100.0,
+            exit_time=base + timedelta(minutes=1),
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=5.01,
+            initial_risk=100.0,
+            exit_time=base + timedelta(minutes=2),
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=-5.01,
+            initial_risk=100.0,
+            exit_time=base + timedelta(minutes=3),
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=-2.0,
+            gross_pnl=0.0,
+            fee=2.0,
+            initial_risk=100.0,
+            exit_time=base + timedelta(minutes=4),
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=5.5,
+            fee=10.0,
+            initial_risk=100.0,
+            exit_time=base + timedelta(minutes=5),
+        )
+
+        enabled = client.put(
+            "/api/auth/risk-breakeven",
+            json={
+                "risk_breakeven_enabled": True,
+                "risk_breakeven_r_threshold": 0.05,
+            },
+            headers=auth_headers,
+        )
+        assert enabled.status_code == 200
+        summary = client.get(
+            "/api/analytics/summary", headers=auth_headers
+        ).get_json()
+        assert summary["winners"] == 1
+        assert summary["losers"] == 1
+        assert summary["breakeven"] == 4
+
+        disabled = client.put(
+            "/api/auth/risk-breakeven",
+            json={
+                "risk_breakeven_enabled": False,
+                "risk_breakeven_r_threshold": 0.05,
+            },
+            headers=auth_headers,
+        )
+        assert disabled.status_code == 200
+        summary = client.get(
+            "/api/analytics/summary", headers=auth_headers
+        ).get_json()
+        assert summary["winners"] == 3
+        assert summary["losers"] == 2
+        assert summary["breakeven"] == 1
 
     def test_summary_wl_ratio_r_excludes_gross_flat_breakeven(
         self, app, client, auth_headers

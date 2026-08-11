@@ -2,6 +2,7 @@
 
 from typing import Optional
 
+from app.models.user import DEFAULT_RISK_BREAKEVEN_R_THRESHOLD
 from app.repositories.base import BaseRepository
 
 
@@ -125,9 +126,12 @@ class UserRepository(BaseRepository):
         )
 
     def update_risk_breakeven_enabled(
-        self, user_id: str, risk_breakeven_enabled: bool
+        self,
+        user_id: str,
+        risk_breakeven_enabled: bool,
+        risk_breakeven_r_threshold: float = DEFAULT_RISK_BREAKEVEN_R_THRESHOLD,
     ) -> bool:
-        """Update the user's risk-based breakeven preference."""
+        """Update the user's risk-based breakeven settings."""
         from app.utils.datetime_utils import utc_now
 
         return self.update_one(
@@ -135,6 +139,7 @@ class UserRepository(BaseRepository):
             {
                 "$set": {
                     "risk_breakeven_enabled": risk_breakeven_enabled,
+                    "risk_breakeven_r_threshold": risk_breakeven_r_threshold,
                     "updated_at": utc_now(),
                 }
             },
@@ -203,6 +208,7 @@ class UserRepository(BaseRepository):
         symbol_mappings: dict,
         market_data_mappings: dict,
         risk_breakeven_enabled: bool = False,
+        risk_breakeven_r_threshold: float = DEFAULT_RISK_BREAKEVEN_R_THRESHOLD,
     ) -> bool:
         """Update all portable user settings in one write."""
         from app.utils.datetime_utils import utc_now
@@ -215,6 +221,7 @@ class UserRepository(BaseRepository):
                     "display_timezone": display_timezone,
                     "starting_equity": starting_equity,
                     "risk_breakeven_enabled": risk_breakeven_enabled,
+                    "risk_breakeven_r_threshold": risk_breakeven_r_threshold,
                     "symbol_mappings": symbol_mappings,
                     "market_data_mappings": market_data_mappings,
                     "updated_at": utc_now(),

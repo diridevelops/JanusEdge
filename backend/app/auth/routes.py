@@ -360,6 +360,9 @@ def update_risk_breakeven():
         risk_breakeven_enabled=validated[
             "risk_breakeven_enabled"
         ],
+        risk_breakeven_r_threshold=validated[
+            "risk_breakeven_r_threshold"
+        ],
     )
     return jsonify(profile), 200
 
