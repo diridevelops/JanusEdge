@@ -190,7 +190,7 @@ class TestAnalyticsSummary:
         assert data["winners"] == 3
         assert data["losers"] == 1
         assert data["breakeven"] == 1
-        assert data["win_rate"] == 60.0
+        assert data["win_rate"] == 75.0
         assert data["total_net_pnl"] == 143.0
         assert data["total_fees"] == 10.0
 
@@ -205,8 +205,9 @@ class TestAnalyticsSummary:
         # profit factor = 225 / 82 = 2.7439 -> 2.74
         # fee-only breakeven trades are included in PF denominator
         assert data["profit_factor"] == 2.74
-        # expectancy = 0.6*75 + 0.4*(-80) = 45-32 = 13.0
-        assert data["expectancy"] == 13.0
+        # Expectancy excludes the breakeven trade:
+        # 0.75*75 + 0.25*(-80) = 36.25.
+        assert data["expectancy"] == 36.25
 
         # APPT = 143 / 5 = 28.6
         assert data["appt"] == 28.6
@@ -345,6 +346,28 @@ class TestAnalyticsSummary:
         assert summary["max_winning_streak"] == 0
         assert summary["max_losing_streak"] == 2
 
+    def test_summary_win_rate_zero_for_only_breakevens(
+        self, app, client, auth_headers
+    ):
+        """Win rate is zero when no trades have a winner/loser outcome."""
+        user_id = _get_user_id(app)
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=-2.0,
+            gross_pnl=0.0,
+            fee=2.0,
+        )
+
+        summary = client.get(
+            "/api/analytics/summary", headers=auth_headers
+        ).get_json()
+        assert summary["winners"] == 0
+        assert summary["losers"] == 0
+        assert summary["breakeven"] == 1
+        assert summary["win_rate"] == 0.0
+        assert summary["expectancy"] == 0.0
+
     def test_risk_breakeven_reclassifies_outcomes(
         self, app, client, auth_headers
     ):
@@ -385,7 +408,7 @@ class TestAnalyticsSummary:
         assert summary["winners"] == 3
         assert summary["losers"] == 1
         assert summary["breakeven"] == 2
-        assert summary["win_rate"] == 50.0
+        assert summary["win_rate"] == 75.0
         assert summary["total_net_pnl"] == 3.0
         # Real defined R values are +0.5, +1.0, +1.5, -0.5, -1.5.
         # Risk-classified breakevens stay in Expectancy (R), but not W:L.
@@ -397,7 +420,7 @@ class TestAnalyticsSummary:
             "/api/analytics/equity-curve", headers=auth_headers
         ).get_json()
         assert curve[0]["winners"] == 3
-        assert curve[0]["win_rate"] == 50.0
+        assert curve[0]["win_rate"] == 75.0
         assert curve[0]["daily_pnl"] == 3.0
 
         evolution = client.get(
@@ -477,6 +500,7 @@ class TestAnalyticsSummary:
         assert summary["winners"] == 1
         assert summary["losers"] == 1
         assert summary["breakeven"] == 4
+        assert summary["win_rate"] == 50.0
 
         disabled = client.put(
             "/api/auth/risk-breakeven",
@@ -493,6 +517,7 @@ class TestAnalyticsSummary:
         assert summary["winners"] == 3
         assert summary["losers"] == 2
         assert summary["breakeven"] == 1
+        assert summary["win_rate"] == 60.0
 
     def test_summary_wl_ratio_r_excludes_gross_flat_breakeven(
         self, app, client, auth_headers
@@ -740,6 +765,13 @@ class TestEquityCurve:
         _insert_trade(
             app,
             user_id,
+            net_pnl=0.0,
+            gross_pnl=0.0,
+            exit_time=datetime(2025, 1, 15, 13, 0, 0),
+        )
+        _insert_trade(
+            app,
+            user_id,
             net_pnl=50.0,
             exit_time=datetime(2025, 1, 16, 10, 0, 0),
         )
@@ -753,14 +785,14 @@ class TestEquityCurve:
 
         # Two days of data
         assert len(data) == 2
-        # Day 1: 100 + (-30) = 70 daily, 70 cumulative
+        # Day 1: 100 + (-30) + 0 = 70 daily, 70 cumulative
         assert data[0]["date"] == "2025-01-15"
         assert data[0]["daily_pnl"] == 70.0
         assert data[0]["cumulative_pnl"] == 70.0
-        assert data[0]["trade_count"] == 2
+        assert data[0]["trade_count"] == 3
         assert data[0]["winners"] == 1
         assert data[0]["win_rate"] == 50.0
-        assert data[0]["appt"] == 35.0
+        assert data[0]["appt"] == 23.33
         # Day 2: 50 daily, 120 cumulative
         assert data[1]["date"] == "2025-01-16"
         assert data[1]["daily_pnl"] == 50.0
@@ -939,7 +971,7 @@ class TestTimeOfDay:
         """Time-of-day groups trades by entry hour."""
         user_id = _get_user_id(app)
 
-        # Two trades at hour 9, one at hour 14
+        # Three trades at hour 9 (one breakeven), one at hour 14
         _insert_trade(
             app,
             user_id,
@@ -953,6 +985,14 @@ class TestTimeOfDay:
             net_pnl=-50.0,
             entry_time=datetime(2025, 1, 15, 9, 30, 0),
             exit_time=datetime(2025, 1, 15, 10, 0, 0),
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=0.0,
+            gross_pnl=0.0,
+            entry_time=datetime(2025, 1, 15, 9, 45, 0),
+            exit_time=datetime(2025, 1, 15, 10, 15, 0),
         )
         _insert_trade(
             app,
@@ -975,7 +1015,7 @@ class TestTimeOfDay:
 
         assert len(data) == 2
         h9 = next(d for d in data if d["hour"] == 9)
-        assert h9["trade_count"] == 2
+        assert h9["trade_count"] == 3
         assert h9["net_pnl"] == 50.0
         assert h9["win_rate"] == 50.0
 
@@ -1022,6 +1062,13 @@ class TestByTag:
             net_pnl=-50.0,
             tag_ids=[tag1_id, tag2_id],
         )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=0.0,
+            gross_pnl=0.0,
+            tag_ids=[tag1_id],
+        )
         # Trade with tag2
         _insert_trade(
             app,
@@ -1047,7 +1094,7 @@ class TestByTag:
             d for d in data if d["tag_name"] == "Reversal"
         )
 
-        assert momentum["trade_count"] == 2
+        assert momentum["trade_count"] == 3
         assert momentum["net_pnl"] == 50.0
         assert momentum["win_rate"] == 50.0
 
@@ -1436,6 +1483,65 @@ class TestEvolution:
         assert fourth["running_mean_r"] == 1.0
         # Rolling R over last 3 defined-R trades = (2 + -1 + 2) / 3 = 1
         assert fourth["rolling_mean_r"] == 1.0
+
+    def test_evolution_win_rate_excludes_classified_breakevens(
+        self, app, client, auth_headers
+    ):
+        """Running R win rate excludes threshold-classified breakevens."""
+        user_id = _get_user_id(app)
+        base = datetime(2025, 2, 4, 10, 0, 0)
+
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=100.0,
+            initial_risk=100.0,
+            exit_time=base,
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=5.0,
+            initial_risk=100.0,
+            exit_time=base + timedelta(minutes=5),
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=-100.0,
+            initial_risk=100.0,
+            exit_time=base + timedelta(minutes=10),
+        )
+        _insert_trade(
+            app,
+            user_id,
+            net_pnl=100.0,
+            initial_risk=100.0,
+            exit_time=base + timedelta(minutes=15),
+        )
+
+        enabled = client.put(
+            "/api/auth/risk-breakeven",
+            json={
+                "risk_breakeven_enabled": True,
+                "risk_breakeven_r_threshold": 0.05,
+            },
+            headers=auth_headers,
+        )
+        assert enabled.status_code == 200
+
+        response = client.get(
+            "/api/analytics/evolution",
+            headers=auth_headers,
+        )
+        assert response.status_code == 200
+        data = response.get_json()
+
+        assert data[0]["running_r_win_rate"] == 1.0
+        # The +0.05R trade is breakeven and excluded, not a loss.
+        assert data[1]["running_r_win_rate"] == 1.0
+        assert data[2]["running_r_win_rate"] == 0.5
+        assert data[3]["running_r_win_rate"] == round(2 / 3, 4)
 
     def test_evolution_r_multiple_includes_fees_in_risk(
         self, app, client, auth_headers

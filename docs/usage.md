@@ -107,7 +107,7 @@ It shows:
 
 - total trades
 - net P&L
-- win rate
+- win rate (winners ÷ classified winners and losers; breakevens excluded)
 - APPT
 - expectancy in R
 - equity curve

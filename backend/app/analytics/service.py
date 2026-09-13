@@ -220,6 +220,14 @@ def _trade_outcome(
     return "loser"
 
 
+def _classified_win_rate(winners: int, losers: int) -> float:
+    """Return win rate over classified winner and loser trades only."""
+    classified_trades = winners + losers
+    if classified_trades == 0:
+        return 0.0
+    return winners / classified_trades * 100
+
+
 class AnalyticsService:
     """
     Service for computing trade analytics and metrics.
@@ -536,10 +544,11 @@ class AnalyticsService:
         sum_winners = data["sum_winners"]
         sum_losers = data["sum_losers"]
 
-        win_rate = (
-            (winners_count / total * 100)
-            if total > 0
-            else 0.0
+        losers_count = data["losers"]
+        classified_trade_count = winners_count + losers_count
+        win_rate = _classified_win_rate(
+            winners_count,
+            losers_count,
         )
 
         avg_winner = (
@@ -548,18 +557,24 @@ class AnalyticsService:
             else 0.0
         )
         avg_loser = (
-            (sum_losers / data["losers"])
-            if data["losers"] > 0
+            (sum_losers / losers_count)
+            if losers_count > 0
             else 0.0
         )
 
-        # Expectancy: (win_rate% × avg_winner) +
-        #             ((1 - win_rate%) × avg_loser)
-        win_pct = win_rate / 100.0
-        loss_pct = data["losers"] / total if total else 0.0
+        # Expectancy excludes breakeven trades from both probabilities.
+        win_pct = (
+            winners_count / classified_trade_count
+            if classified_trade_count > 0
+            else 0.0
+        )
+        loss_pct = (
+            losers_count / classified_trade_count
+            if classified_trade_count > 0
+            else 0.0
+        )
         expectancy = (win_pct * avg_winner) + (
-            (loss_pct if risk_breakeven_enabled else 1 - win_pct)
-            * avg_loser
+            loss_pct * avg_loser
         )
 
         # APPT: Average Profitability Per Trade
@@ -570,7 +585,6 @@ class AnalyticsService:
         )
 
         # Per-contract (per-share) metrics
-        losers_count = data["losers"]
         win_per_share_avg = (
             (data["win_ppc_sum"] / winners_count)
             if winners_count > 0
@@ -1016,6 +1030,17 @@ class AnalyticsService:
                             ]
                         }
                     },
+                    "losers": {
+                        "$sum": {
+                            "$cond": [
+                                {
+                                    "$eq": ["$outcome", "loser"]
+                                },
+                                1,
+                                0,
+                            ]
+                        }
+                    },
                 }
             },
             {"$sort": {"_id": 1}},
@@ -1036,11 +1061,7 @@ class AnalyticsService:
                 if trade_count > 0
                 else 0.0
             )
-            win_rate = (
-                winners / trade_count * 100
-                if trade_count > 0
-                else 0.0
-            )
+            win_rate = _classified_win_rate(winners, r["losers"])
             curve.append(
                 {
                     "date": r["_id"],
@@ -1277,6 +1298,17 @@ class AnalyticsService:
                             ]
                         }
                     },
+                    "losers": {
+                        "$sum": {
+                            "$cond": [
+                                {
+                                    "$eq": ["$outcome", "loser"]
+                                },
+                                1,
+                                0,
+                            ]
+                        }
+                    },
                 }
             },
             {"$sort": {"_id": 1}},
@@ -1293,9 +1325,10 @@ class AnalyticsService:
                 "net_pnl": round(r["net_pnl"], 2),
                 "avg_pnl": round(r["avg_pnl"], 2),
                 "win_rate": round(
-                    r["winners"]
-                    / r["trade_count"]
-                    * 100,
+                    _classified_win_rate(
+                        r["winners"],
+                        r["losers"],
+                    ),
                     2,
                 ),
             }
@@ -1380,6 +1413,17 @@ class AnalyticsService:
                             ]
                         }
                     },
+                    "losers": {
+                        "$sum": {
+                            "$cond": [
+                                {
+                                    "$eq": ["$outcome", "loser"]
+                                },
+                                1,
+                                0,
+                            ]
+                        }
+                    },
                 }
             },
             {"$sort": {"net_pnl": -1}},
@@ -1402,10 +1446,9 @@ class AnalyticsService:
 
         output = []
         for r in results:
-            win_rate = (
-                (r["winners"] / r["trade_count"] * 100)
-                if r["trade_count"] > 0
-                else 0.0
+            win_rate = _classified_win_rate(
+                r["winners"],
+                r["losers"],
             )
             pf = (
                 (r["sum_winners"] / abs(r["sum_losers"]))
@@ -1840,12 +1883,15 @@ class AnalyticsService:
                     )
 
             # Running R decomposition
-            running_r_win_rate = None
+            running_r_classified_count = (
+                running_r_wins + running_r_losses
+            )
+            running_r_win_rate = 0.0
             running_r_avg_win = None
             running_r_avg_loss_abs = None
-            if running_r_count > 0:
+            if running_r_classified_count > 0:
                 running_r_win_rate = (
-                    running_r_wins / running_r_count
+                    running_r_wins / running_r_classified_count
                 )
             if running_r_wins > 0:
                 running_r_avg_win = (

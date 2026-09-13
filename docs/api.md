@@ -304,6 +304,11 @@ All analytics endpoints accept the common filter params `account`, `symbol`, `si
 
 The frontend currently depends on summary fields including:
 
+`win_rate` is calculated as classified winners divided by classified winners
+plus classified losers. Breakeven trades are excluded from the denominator
+according to the active outcome-classification settings; when no classified
+trades exist, the value is `0.0`.
+
 - `total_trades`
 - `winners`
 - `losers`
