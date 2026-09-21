@@ -23,7 +23,9 @@ from app.repositories.user_repo import UserRepository
 from app.market_data.symbol_mapper import (
     get_effective_market_data_mappings,
     get_effective_symbol_mappings,
+    get_forex_instrument,
     get_point_value,
+    get_trade_usd_multiplier,
 )
 from app.utils.datetime_utils import to_utc, utc_now
 from app.utils.errors import NotFoundError, ValidationError
@@ -40,6 +42,41 @@ _CANDLE_INTERVAL_SECONDS = {
     "15m": 15 * 60,
     "1h": 60 * 60,
 }
+_FOREX_MIN_LOT_SIZE = Decimal("0.001")
+
+
+def _decimal_number(value, field_name: str) -> Decimal:
+    """Parse one finite decimal input used by forex calculations."""
+    try:
+        parsed = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ValidationError(
+            f"{field_name} must be a valid number."
+        ) from exc
+    if not parsed.is_finite():
+        raise ValidationError(
+            f"{field_name} must be a finite number."
+        )
+    return parsed
+
+
+def _validate_forex_price(
+    value,
+    field_name: str,
+    price_precision: int,
+) -> Decimal:
+    """Validate a forex price without silently rounding it."""
+    price = _decimal_number(value, field_name)
+    if price <= 0:
+        raise ValidationError(
+            f"{field_name} must be greater than zero."
+        )
+    quantum = Decimal(1).scaleb(-price_precision)
+    if price.quantize(quantum) != price:
+        raise ValidationError(
+            f"{field_name} supports at most {price_precision} decimal places."
+        )
+    return price
 
 
 def _parse_date_from(value: str) -> datetime:
@@ -275,9 +312,8 @@ class TradeService:
         )
 
         try:
-            point_value = get_point_value(
-                trade.get("symbol", ""),
-                trade.get("raw_symbol"),
+            point_value = get_trade_usd_multiplier(
+                trade,
                 symbol_mappings,
             )
         except ValueError as exc:
@@ -294,6 +330,15 @@ class TradeService:
         return {
             "source": "ticks",
             "point_value": float(point_value),
+            "usd_multiplier": float(point_value),
+            "pnl_currency": "USD",
+            "native_pnl_currency": trade.get(
+                "native_pnl_currency"
+            ),
+            "quote_to_usd_rate": trade.get(
+                "quote_to_usd_rate"
+            ),
+            "lot_size": trade.get("lot_size"),
             "empty_reason": empty_reason,
             "points": points,
         }
@@ -321,25 +366,58 @@ class TradeService:
         )
 
         # Compute P&L
-        symbol = data["symbol"].upper()
+        symbol = data["symbol"].strip().upper()
         symbol_mappings = self._get_symbol_mappings(user_id)
-        try:
-            point_value = get_point_value(
-                symbol,
-                str(data.get("symbol", symbol)),
-                symbol_mappings,
+        forex_instrument = get_forex_instrument(
+            symbol,
+            str(data.get("symbol", symbol)),
+            symbol_mappings,
+        )
+        forex_metadata = {}
+        if forex_instrument is not None:
+            forex_metadata = self._calculate_forex_trade(
+                data,
+                forex_instrument,
             )
-        except ValueError as exc:
-            raise ValidationError(str(exc)) from exc
-        qty = data["total_quantity"]
-        entry_price = data["entry_price"]
-        exit_price = data["exit_price"]
-        fee = data.get("fee", 0.0)
-
-        if data["side"] == "Long":
-            gross_pnl = (exit_price - entry_price) * qty * point_value
+            qty = forex_metadata["lot_size"]
+            entry_price = forex_metadata["entry_price"]
+            exit_price = forex_metadata["exit_price"]
+            gross_pnl = forex_metadata["usd_pnl"]
         else:
-            gross_pnl = (entry_price - exit_price) * qty * point_value
+            try:
+                point_value = get_point_value(
+                    symbol,
+                    str(data.get("symbol", symbol)),
+                    symbol_mappings,
+                )
+            except ValueError as exc:
+                raise ValidationError(str(exc)) from exc
+            if data.get("total_quantity") is None:
+                raise ValidationError(
+                    "total_quantity is required for futures trades."
+                )
+            qty = data["total_quantity"]
+            entry_price = data["entry_price"]
+            exit_price = data["exit_price"]
+            if data.get("lot_size") is not None:
+                raise ValidationError(
+                    "lot_size is only supported for configured forex pairs."
+                )
+            if data.get("quote_to_usd_rate") is not None:
+                raise ValidationError(
+                    "quote_to_usd_rate is only supported for configured forex pairs."
+                )
+
+            if data["side"] == "Long":
+                gross_pnl = (
+                    exit_price - entry_price
+                ) * qty * point_value
+            else:
+                gross_pnl = (
+                    entry_price - exit_price
+                ) * qty * point_value
+
+        fee = data.get("fee", 0.0)
 
         net_pnl = gross_pnl - fee
         requested_initial_risk = float(
@@ -384,6 +462,34 @@ class TradeService:
             holding_time_seconds=holding_secs,
             execution_count=0,
             source="manual",
+            instrument_type=(
+                "forex" if forex_metadata else "futures"
+            ),
+            lot_size=forex_metadata.get("lot_size"),
+            base_currency=forex_metadata.get(
+                "base_currency"
+            ),
+            quote_currency=forex_metadata.get(
+                "quote_currency"
+            ),
+            pip_size=forex_metadata.get("pip_size"),
+            price_precision=forex_metadata.get(
+                "price_precision"
+            ),
+            contract_size=forex_metadata.get(
+                "contract_size"
+            ),
+            pip_value_per_standard_lot=forex_metadata.get(
+                "pip_value_per_standard_lot"
+            ),
+            pips=forex_metadata.get("pips"),
+            native_pnl=forex_metadata.get("native_pnl"),
+            native_pnl_currency=forex_metadata.get(
+                "native_pnl_currency"
+            ),
+            quote_to_usd_rate=forex_metadata.get(
+                "quote_to_usd_rate"
+            ),
         )
 
         # Auto-populate target_price for winners
@@ -407,6 +513,112 @@ class TradeService:
         trade = self.trade_repo.find_by_id(trade_id)
         clear_simulation_cache()
         return self.trade_repo.serialize_doc(trade)
+
+    @staticmethod
+    def _calculate_forex_trade(
+        data: dict,
+        instrument: dict,
+    ) -> dict:
+        """Calculate a closed forex trade using decimal arithmetic."""
+        lot_input = data.get("lot_size")
+        total_quantity = data.get("total_quantity")
+        if lot_input is None:
+            lot_input = total_quantity
+        elif total_quantity is not None and _decimal_number(
+            total_quantity, "total_quantity"
+        ) != _decimal_number(lot_input, "lot_size"):
+            raise ValidationError(
+                "total_quantity must match lot_size for forex trades."
+            )
+        if lot_input is None:
+            raise ValidationError(
+                "lot_size is required for configured forex pairs."
+            )
+
+        lot_size = _decimal_number(lot_input, "lot_size")
+        if lot_size < _FOREX_MIN_LOT_SIZE:
+            raise ValidationError(
+                "lot_size must be at least 0.001."
+            )
+
+        price_precision = int(instrument["price_precision"])
+        entry_price = _validate_forex_price(
+            data["entry_price"],
+            "entry_price",
+            price_precision,
+        )
+        exit_price = _validate_forex_price(
+            data["exit_price"],
+            "exit_price",
+            price_precision,
+        )
+        pip_size = _decimal_number(
+            instrument["pip_size"],
+            "pip_size",
+        )
+        contract_size = _decimal_number(
+            instrument["contract_size"],
+            "contract_size",
+        )
+        if pip_size <= 0 or contract_size <= 0:
+            raise ValidationError(
+                "Forex pip size and contract size must be greater than zero."
+            )
+
+        quote_currency = instrument["quote_currency"]
+        supplied_rate = data.get("quote_to_usd_rate")
+        if quote_currency == "USD":
+            if supplied_rate is not None and _decimal_number(
+                supplied_rate, "quote_to_usd_rate"
+            ) != Decimal("1"):
+                raise ValidationError(
+                    "quote_to_usd_rate must be 1 for USD-quoted instruments."
+                )
+            quote_to_usd_rate = Decimal("1")
+        else:
+            if supplied_rate is None:
+                raise ValidationError(
+                    "quote_to_usd_rate is required when the quote currency is not USD."
+                )
+            quote_to_usd_rate = _decimal_number(
+                supplied_rate,
+                "quote_to_usd_rate",
+            )
+            if quote_to_usd_rate <= 0:
+                raise ValidationError(
+                    "quote_to_usd_rate must be greater than zero."
+                )
+
+        direction = (
+            Decimal("1")
+            if data["side"] == "Long"
+            else Decimal("-1")
+        )
+        units = lot_size * contract_size
+        price_delta = exit_price - entry_price
+        pips = direction * price_delta / pip_size
+        native_pnl = direction * units * price_delta
+        usd_pnl = native_pnl * quote_to_usd_rate
+        pip_value_per_standard_lot = contract_size * pip_size
+
+        return {
+            "lot_size": float(lot_size),
+            "entry_price": float(entry_price),
+            "exit_price": float(exit_price),
+            "pips": float(pips),
+            "native_pnl": float(native_pnl),
+            "usd_pnl": float(usd_pnl),
+            "native_pnl_currency": quote_currency,
+            "quote_to_usd_rate": float(quote_to_usd_rate),
+            "pip_value_per_standard_lot": float(
+                pip_value_per_standard_lot
+            ),
+            "base_currency": instrument["base_currency"],
+            "quote_currency": quote_currency,
+            "pip_size": float(pip_size),
+            "price_precision": price_precision,
+            "contract_size": float(contract_size),
+        }
 
     def _get_symbol_mappings(self, user_id: str) -> dict:
         """Return the effective symbol mappings for a user."""
@@ -569,14 +781,14 @@ class TradeService:
     @staticmethod
     def _apply_execution_to_position(
         *,
-        current_position: int,
+        current_position: float,
         avg_entry_price: float,
         realized_pnl: float,
         execution: dict,
         point_value: float,
-    ) -> tuple[int, float, float]:
+    ) -> tuple[float, float, float]:
         """Apply one execution and return updated position state."""
-        quantity = int(execution.get("quantity", 0) or 0)
+        quantity = float(execution.get("quantity", 0) or 0)
         price = float(execution.get("price", 0.0) or 0.0)
         side = str(execution.get("side", ""))
         signed_quantity = (
@@ -641,7 +853,7 @@ class TradeService:
     @staticmethod
     def _calculate_unrealized_pnl(
         *,
-        current_position: int,
+        current_position: float,
         avg_entry_price: float,
         mark_price: float,
         point_value: float,
@@ -666,7 +878,12 @@ class TradeService:
         trade: dict,
     ) -> list[dict]:
         """Build minimal entry and exit executions for manual trades."""
-        quantity = int(trade.get("total_quantity", 0) or 0)
+        quantity = float(
+            trade.get("lot_size")
+            if trade.get("lot_size") is not None
+            else trade.get("total_quantity", 0)
+            or 0
+        )
         if quantity <= 0:
             return []
 
@@ -752,6 +969,11 @@ class TradeService:
         realized_pnl = 0.0
         last_tick_price: float | None = None
         points: list[dict] = []
+        native_pnl_rate = None
+        if trade.get("instrument_type") == "forex":
+            stored_rate = trade.get("quote_to_usd_rate")
+            if stored_rate:
+                native_pnl_rate = float(stored_rate)
         execution_index = 0
         tick_index = 0
 
@@ -832,14 +1054,18 @@ class TradeService:
                     point_value=point_value,
                 )
 
-            points.append(
-                {
-                    "time": timestamp.astimezone(
-                        timezone.utc
-                    ).isoformat(),
-                    "pnl": round(pnl_value, 2),
-                }
-            )
+            point = {
+                "time": timestamp.astimezone(
+                    timezone.utc
+                ).isoformat(),
+                "pnl": round(pnl_value, 2),
+            }
+            if native_pnl_rate:
+                point["native_pnl"] = round(
+                    pnl_value / native_pnl_rate,
+                    2,
+                )
+            points.append(point)
 
         execution_times = {
             execution_ts.astimezone(timezone.utc).isoformat()
@@ -854,13 +1080,22 @@ class TradeService:
         )
         if points and points[-1]["time"] == final_time:
             points[-1]["pnl"] = final_pnl
+            if native_pnl_rate:
+                points[-1]["native_pnl"] = round(
+                    final_pnl / native_pnl_rate,
+                    2,
+                )
         else:
-            points.append(
-                {
-                    "time": final_time,
-                    "pnl": final_pnl,
-                }
-            )
+            final_point = {
+                "time": final_time,
+                "pnl": final_pnl,
+            }
+            if native_pnl_rate:
+                final_point["native_pnl"] = round(
+                    final_pnl / native_pnl_rate,
+                    2,
+                )
+            points.append(final_point)
 
         return (
             self._downsample_running_pnl_points(

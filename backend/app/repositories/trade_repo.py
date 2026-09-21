@@ -170,6 +170,7 @@ class TradeRepository(BaseRepository):
                 "entry_time": 1,
                 "exit_time": 1,
                 "total_quantity": 1,
+                "lot_size": 1,
                 "avg_entry_price": 1,
                 "avg_exit_price": 1,
             },

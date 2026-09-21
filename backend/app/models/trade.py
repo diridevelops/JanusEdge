@@ -10,8 +10,8 @@ def create_trade_doc(
     symbol: str,
     raw_symbol: str,
     side: str,
-    total_quantity: int,
-    max_quantity: int,
+    total_quantity: float,
+    max_quantity: float,
     avg_entry_price: float,
     avg_exit_price: float,
     gross_pnl: float,
@@ -25,6 +25,18 @@ def create_trade_doc(
     execution_count: int,
     source: str = "imported",
     status: str = "closed",
+    instrument_type: str = "futures",
+    lot_size: float | None = None,
+    base_currency: str | None = None,
+    quote_currency: str | None = None,
+    pip_size: float | None = None,
+    price_precision: int | None = None,
+    contract_size: float | None = None,
+    pip_value_per_standard_lot: float | None = None,
+    pips: float | None = None,
+    native_pnl: float | None = None,
+    native_pnl_currency: str | None = None,
+    quote_to_usd_rate: float | None = None,
 ) -> dict:
     """
     Create a trade document for MongoDB insertion.
@@ -51,6 +63,18 @@ def create_trade_doc(
         execution_count: Number of fills.
         source: 'imported' or 'manual'.
         status: 'open', 'closed', or 'deleted'.
+        instrument_type: 'futures' or 'forex'.
+        lot_size: Forex lot size when applicable.
+        base_currency: Forex base currency when applicable.
+        quote_currency: Forex quote currency when applicable.
+        pip_size: Forex pip size when applicable.
+        price_precision: Forex decimal-place precision when applicable.
+        contract_size: Base-currency units per standard lot.
+        pip_value_per_standard_lot: Native quote-currency pip value.
+        pips: Signed pip movement.
+        native_pnl: Gross P&L in the quote currency.
+        native_pnl_currency: Currency of native_pnl.
+        quote_to_usd_rate: USD per one quote-currency unit.
 
     Returns:
         Dict ready for MongoDB insert.
@@ -78,6 +102,18 @@ def create_trade_doc(
         "holding_time_seconds": holding_time_seconds,
         "execution_count": execution_count,
         "source": source,
+        "instrument_type": instrument_type,
+        "lot_size": lot_size,
+        "base_currency": base_currency,
+        "quote_currency": quote_currency,
+        "pip_size": pip_size,
+        "price_precision": price_precision,
+        "contract_size": contract_size,
+        "pip_value_per_standard_lot": pip_value_per_standard_lot,
+        "pips": pips,
+        "native_pnl": native_pnl,
+        "native_pnl_currency": native_pnl_currency,
+        "quote_to_usd_rate": quote_to_usd_rate,
         "manually_adjusted": False,
         "status": status,
         "tag_ids": [],

@@ -5,7 +5,14 @@ import { listTags } from '../../api/tags.api';
 import { useAuth } from '../../hooks/useAuth';
 import type { Tag } from '../../types/marketData.types';
 import type { Trade } from '../../types/trade.types';
-import { formatCurrency, formatDateTime, formatDuration } from '../../utils/formatters';
+import {
+  formatCurrency,
+  formatDateTime,
+  formatDuration,
+  formatPips,
+  formatPrice,
+  formatQuantity,
+} from '../../utils/formatters';
 import { getTradeRMultiple } from '../../utils/tradeMetrics';
 
 interface TradeTableProps {
@@ -23,7 +30,7 @@ const SORTABLE_COLUMNS = [
   { key: 'entry_time', label: 'Date' },
   { key: 'symbol', label: 'Symbol' },
   { key: 'side', label: 'Side' },
-  { key: 'total_quantity', label: 'Qty' },
+  { key: 'total_quantity', label: 'Qty/Lots' },
   { key: 'avg_entry_price', label: 'Entry' },
   { key: 'avg_exit_price', label: 'Exit' },
   { key: 'net_pnl', label: 'Net P&L' },
@@ -77,6 +84,12 @@ export function TradeTable({ trades, sortBy, sortDir, onSortChange }: TradeTable
   function renderSortIndicator(column: string) {
     if (sortBy !== column) return null;
     return <span className="ml-1">{sortDir === 'asc' ? '▲' : '▼'}</span>;
+  }
+
+  function renderTradePrice(trade: Trade, value: number): string {
+    return trade.instrument_type === 'forex' && trade.price_precision != null
+      ? formatPrice(value, trade.price_precision)
+      : formatCurrency(value);
   }
 
   if (trades.length === 0) {
@@ -151,20 +164,31 @@ export function TradeTable({ trades, sortBy, sortDir, onSortChange }: TradeTable
                 </span>
               </td>
               <td className="px-4 py-2.5 text-right text-gray-900 dark:text-gray-100">
-                {trade.total_quantity}
+                {trade.instrument_type === 'forex'
+                  ? formatQuantity(trade.lot_size ?? trade.total_quantity)
+                  : trade.total_quantity}
               </td>
               <td className="px-4 py-2.5 text-right text-gray-900 dark:text-gray-100">
-                {formatCurrency(trade.avg_entry_price)}
+                {renderTradePrice(trade, trade.avg_entry_price)}
               </td>
               <td className="px-4 py-2.5 text-right text-gray-900 dark:text-gray-100">
-                {formatCurrency(trade.avg_exit_price)}
+                {renderTradePrice(trade, trade.avg_exit_price)}
               </td>
               <td
                 className={`px-4 py-2.5 text-right font-semibold ${
                   trade.net_pnl >= 0 ? 'text-profit' : 'text-loss'
                 }`}
               >
-                {formatCurrency(trade.net_pnl)}
+                <div>{formatCurrency(trade.net_pnl)}</div>
+                {trade.instrument_type === 'forex' && trade.native_pnl != null && (
+                  <div className="text-xs font-normal text-gray-500 dark:text-gray-400">
+                    Native: {formatCurrency(trade.native_pnl, trade.native_pnl_currency ?? 'USD')}
+                    {' · '}
+                    {trade.pips != null
+                      ? `${trade.pips >= 0 ? '+' : ''}${formatPips(trade.pips)} pips`
+                      : '—'}
+                  </div>
+                )}
               </td>
               <td className="px-4 py-2.5 text-right font-medium text-gray-900 dark:text-gray-100">
                 {(() => {

@@ -85,9 +85,8 @@ def create_trade():
     """
     Create a manual trade.
 
-    Expects JSON: {symbol, side, total_quantity,
-        entry_price, exit_price, entry_time, exit_time,
-        fee?, account?, tags?, notes?}
+    Expects futures JSON with total_quantity, or configured forex JSON
+    with lot_size and (for non-USD quote currencies) quote_to_usd_rate.
     """
     user_id = get_jwt_identity()
     data = request.get_json()

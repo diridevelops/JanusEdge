@@ -202,7 +202,11 @@ The backend stores:
 
 Market-data lookup and point-value lookup are configured separately:
 
-- `symbol_mappings` controls dollar value per point by normalized base symbol.
+- `symbol_mappings` controls futures dollar value per point by normalized base
+  symbol and nested forex instrument definitions. Manual forex trades use
+  `units = lot_size * contract_size`, signed pip movement from the configured
+  pip size, native quote-currency P&L, and `quote_to_usd_rate` (USD per one
+  quote-currency unit) to produce the USD `gross_pnl` used by analytics.
 - `market_data_mappings` controls explicit cross-symbol market-data lookup.
 - When no `market_data_mappings` entry matches, the backend looks up the imported symbol as-is. There are no built-in cross-symbol defaults.
 

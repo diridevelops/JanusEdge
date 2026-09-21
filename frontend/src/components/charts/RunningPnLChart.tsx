@@ -19,6 +19,7 @@ interface RunningPnLChartProps {
   data: RunningPnLPoint[];
   isLoading: boolean;
   displayTimezone?: string;
+  nativePnlCurrency?: string | null;
   emptyStateMessage?: string;
 }
 
@@ -53,6 +54,7 @@ export function RunningPnLChart({
   data,
   isLoading,
   displayTimezone,
+  nativePnlCurrency,
   emptyStateMessage,
 }: RunningPnLChartProps) {
   const c = useChartColors();
@@ -122,6 +124,13 @@ export function RunningPnLChart({
                     )}
                   </div>
                   <div>{formatCurrency(point.pnl)} Gross P&amp;L</div>
+                  {point.native_pnl != null
+                    && nativePnlCurrency
+                    && nativePnlCurrency !== 'USD' && (
+                    <div>
+                      {formatCurrency(point.native_pnl, nativePnlCurrency)} Native P&amp;L
+                    </div>
+                  )}
                 </div>
               );
             }}

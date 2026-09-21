@@ -3,8 +3,28 @@ export interface SymbolMappingEntry {
   dollar_value_per_point: number;
 }
 
-/** User symbol mappings keyed by normalized base symbol. */
-export type SymbolMappings = Record<string, SymbolMappingEntry>;
+/** A configured forex instrument used for manual trade entry and P&L. */
+export interface ForexSymbolMappingEntry {
+  base_currency: string;
+  quote_currency: string;
+  pip_size: number;
+  price_precision: number;
+  contract_size: number;
+}
+
+/** User-configured forex instruments keyed by canonical pair (for example EUR/USD). */
+export type ForexSymbolMappings = Record<string, ForexSymbolMappingEntry>;
+
+/**
+ * User symbol mappings.
+ *
+ * Futures mappings remain top-level for backwards compatibility. Forex mappings
+ * live under the reserved `forex` key.
+ */
+export interface SymbolMappings {
+  [symbol: string]: SymbolMappingEntry | ForexSymbolMappings | undefined;
+  forex?: ForexSymbolMappings;
+}
 
 /** User market-data mappings keyed by source symbol. */
 export type MarketDataMappings = Record<string, string>;
