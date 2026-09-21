@@ -18,6 +18,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useFilters } from '../hooks/useFilters';
 import { useToast } from '../hooks/useToast';
 import type {
+  ForexSymbolMappings,
   MarketDataMappings,
   RestoreSummary,
   SymbolMappings,
@@ -80,6 +81,16 @@ interface SymbolMappingRow {
   dollarValuePerPoint: string;
 }
 
+interface ForexMappingRow {
+  id: string;
+  pair: string;
+  baseCurrency: string;
+  quoteCurrency: string;
+  pipSize: string;
+  pricePrecision: string;
+  contractSize: string;
+}
+
 interface MarketDataMappingRow {
   id: string;
   sourceSymbol: string;
@@ -90,6 +101,65 @@ const EMPTY_SYMBOL_MAPPINGS: SymbolMappings = {};
 const EMPTY_MARKET_DATA_MAPPINGS: MarketDataMappings = {};
 const COMPACT_INPUT_CLASS_NAME = 'input-field h-9 px-3 py-1.5 text-sm';
 const MAPPINGS_TABLE_MAX_HEIGHT_CLASS = 'max-h-[20rem]';
+
+const DEFAULT_FOREX_SYMBOL_MAPPINGS: ForexSymbolMappings = {
+  'EUR/USD': {
+    base_currency: 'EUR',
+    quote_currency: 'USD',
+    pip_size: 0.0001,
+    price_precision: 5,
+    contract_size: 100000,
+  },
+  'GBP/USD': {
+    base_currency: 'GBP',
+    quote_currency: 'USD',
+    pip_size: 0.0001,
+    price_precision: 5,
+    contract_size: 100000,
+  },
+  'AUD/USD': {
+    base_currency: 'AUD',
+    quote_currency: 'USD',
+    pip_size: 0.0001,
+    price_precision: 5,
+    contract_size: 100000,
+  },
+  'NZD/USD': {
+    base_currency: 'NZD',
+    quote_currency: 'USD',
+    pip_size: 0.0001,
+    price_precision: 5,
+    contract_size: 100000,
+  },
+  'USD/JPY': {
+    base_currency: 'USD',
+    quote_currency: 'JPY',
+    pip_size: 0.01,
+    price_precision: 3,
+    contract_size: 100000,
+  },
+  'USD/CHF': {
+    base_currency: 'USD',
+    quote_currency: 'CHF',
+    pip_size: 0.0001,
+    price_precision: 5,
+    contract_size: 100000,
+  },
+  'USD/CAD': {
+    base_currency: 'USD',
+    quote_currency: 'CAD',
+    pip_size: 0.0001,
+    price_precision: 5,
+    contract_size: 100000,
+  },
+  'BTC/USD': {
+    base_currency: 'BTC',
+    quote_currency: 'USD',
+    pip_size: 1,
+    price_precision: 2,
+    contract_size: 1,
+  },
+};
 
 function createRowId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -110,6 +180,29 @@ function createMappingRow(
   };
 }
 
+function createForexMappingRow(
+  pair = '',
+  mapping?: Partial<{
+    base_currency: string;
+    quote_currency: string;
+    pip_size: number;
+    price_precision: number;
+    contract_size: number;
+  }>
+): ForexMappingRow {
+  return {
+    id: createRowId(),
+    pair,
+    baseCurrency: mapping?.base_currency ?? '',
+    quoteCurrency: mapping?.quote_currency ?? '',
+    pipSize: mapping?.pip_size != null ? String(mapping.pip_size) : '',
+    pricePrecision:
+      mapping?.price_precision != null ? String(mapping.price_precision) : '',
+    contractSize:
+      mapping?.contract_size != null ? String(mapping.contract_size) : '',
+  };
+}
+
 function createMarketDataMappingRow(
   sourceSymbol = '',
   targetSymbol = ''
@@ -122,11 +215,31 @@ function createMarketDataMappingRow(
 }
 
 function recordToMappingRows(entries: SymbolMappings): SymbolMappingRow[] {
-  return Object.entries(entries).map(([baseSymbol, mapping]) =>
-    createMappingRow(
+  const rows: SymbolMappingRow[] = [];
+  for (const [baseSymbol, mapping] of Object.entries(entries)) {
+    if (baseSymbol === 'forex' || !isFuturesMappingEntry(mapping)) {
+      continue;
+    }
+    rows.push(createMappingRow(
       baseSymbol,
       String(mapping.dollar_value_per_point)
-    )
+    ));
+  }
+  return rows;
+}
+
+function isFuturesMappingEntry(mapping: unknown): mapping is { dollar_value_per_point: number } {
+  return typeof mapping === 'object'
+    && mapping !== null
+    && 'dollar_value_per_point' in mapping;
+}
+
+function recordToForexMappingRows(
+  entries: ForexSymbolMappings | undefined
+): ForexMappingRow[] {
+  const source = entries === undefined ? DEFAULT_FOREX_SYMBOL_MAPPINGS : entries;
+  return Object.entries(source).map(([pair, mapping]) =>
+    createForexMappingRow(pair, mapping)
   );
 }
 
@@ -156,10 +269,22 @@ function updateMarketDataMappingRow(
   return rows.map((row) => (row.id === rowId ? { ...row, [field]: value } : row));
 }
 
-function buildSymbolMappings(rows: SymbolMappingRow[]): SymbolMappings {
+function updateForexMappingRow(
+  rows: ForexMappingRow[],
+  rowId: string,
+  field: keyof Omit<ForexMappingRow, 'id'>,
+  value: string
+): ForexMappingRow[] {
+  return rows.map((row) => (row.id === rowId ? { ...row, [field]: value } : row));
+}
+
+function buildSymbolMappings(
+  futuresRows: SymbolMappingRow[],
+  forexRows: ForexMappingRow[]
+): SymbolMappings {
   const result: SymbolMappings = {};
 
-  for (const row of rows) {
+  for (const row of futuresRows) {
     const baseSymbol = row.baseSymbol.trim();
     const dollarValuePerPoint = row.dollarValuePerPoint.trim();
 
@@ -187,6 +312,56 @@ function buildSymbolMappings(rows: SymbolMappingRow[]): SymbolMappings {
       dollar_value_per_point: numericDollarValuePerPoint,
     };
   }
+
+  const forex: ForexSymbolMappings = {};
+  for (const row of forexRows) {
+    const pair = row.pair.trim().toUpperCase();
+    const baseCurrency = row.baseCurrency.trim().toUpperCase();
+    const quoteCurrency = row.quoteCurrency.trim().toUpperCase();
+    const pipSize = row.pipSize.trim();
+    const pricePrecision = row.pricePrecision.trim();
+    const contractSize = row.contractSize.trim();
+
+    if (!pair && !baseCurrency && !quoteCurrency && !pipSize && !pricePrecision && !contractSize) {
+      continue;
+    }
+
+    if (!pair || !baseCurrency || !quoteCurrency || !pipSize || !pricePrecision) {
+      throw new Error('Each forex mapping row must include a pair, base currency, quote currency, pip size, and price precision.');
+    }
+
+    const pairParts = pair.split('/');
+    if (!/^[A-Z]{3}\/[A-Z]{3}$/.test(pair) || pairParts[0] !== baseCurrency || pairParts[1] !== quoteCurrency) {
+      throw new Error(`Forex pair ${pair} must use the form AAA/BBB and match its base and quote currencies.`);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(forex, pair)) {
+      throw new Error(`Duplicate forex pair: ${pair}`);
+    }
+
+    const numericPipSize = Number(pipSize);
+    const numericPricePrecision = Number(pricePrecision);
+    const numericContractSize = Number(contractSize || '100000');
+    if (!Number.isFinite(numericPipSize) || numericPipSize <= 0) {
+      throw new Error(`Pip size must be a number greater than zero for ${pair}.`);
+    }
+    if (!Number.isInteger(numericPricePrecision) || numericPricePrecision < 0) {
+      throw new Error(`Price precision must be a non-negative whole number for ${pair}.`);
+    }
+    if (!Number.isFinite(numericContractSize) || numericContractSize <= 0) {
+      throw new Error(`Contract size must be a number greater than zero for ${pair}.`);
+    }
+
+    forex[pair] = {
+      base_currency: baseCurrency,
+      quote_currency: quoteCurrency,
+      pip_size: numericPipSize,
+      price_precision: numericPricePrecision,
+      contract_size: numericContractSize,
+    };
+  }
+
+  result.forex = forex;
 
   return result;
 }
@@ -261,6 +436,7 @@ export function SettingsPage() {
 
   // Symbol mappings
   const [symbolMappingRows, setSymbolMappingRows] = useState<SymbolMappingRow[]>([]);
+  const [forexMappingRows, setForexMappingRows] = useState<ForexMappingRow[]>([]);
   const [symbolMappingsLoading, setSymbolMappingsLoading] = useState(false);
 
   // Market-data mappings
@@ -304,6 +480,7 @@ export function SettingsPage() {
   useEffect(() => {
     const symbolMappings = user?.symbol_mappings ?? EMPTY_SYMBOL_MAPPINGS;
     setSymbolMappingRows(recordToMappingRows(symbolMappings));
+    setForexMappingRows(recordToForexMappingRows(symbolMappings.forex));
   }, [user?.symbol_mappings]);
 
   useEffect(() => {
@@ -430,7 +607,7 @@ export function SettingsPage() {
 
     let symbolMappings: SymbolMappings;
     try {
-      symbolMappings = buildSymbolMappings(symbolMappingRows);
+      symbolMappings = buildSymbolMappings(symbolMappingRows, forexMappingRows);
     } catch (error: unknown) {
       addToast(
         'error',
@@ -775,7 +952,7 @@ export function SettingsPage() {
             Symbol Mappings
           </h2>
           <p className="text-xs text-gray-500 dark:text-gray-400">
-            Configure normalized base symbols that match imported symbols by prefix. When an imported symbol starts with a configured base symbol, {APP_NAME} uses the configured dollar value per point for analytics and trade calculations.
+            Configure Futures base symbols and Forex instruments used by analytics, market-data lookup, and manual closed-trade entry.
           </p>
           <p className="text-xs text-gray-500 dark:text-gray-400">
             Changes apply to future trade imports, stop-analysis calculations, and backup exports.
@@ -787,7 +964,7 @@ export function SettingsPage() {
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                  Base Symbol Rules
+                  Futures
                 </h3>
                 <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                   A single base symbol can cover variants such as MES, MESM26, or MES 03-26 as long as the imported symbol starts with that prefix.
@@ -885,6 +1062,133 @@ export function SettingsPage() {
               >
                 <Plus className="h-4 w-4" aria-hidden="true" />
                 Add Row
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                  Forex
+                </h3>
+                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Configure canonical pairs for manual closed-trade entry. Prices use the configured pipette precision; contract size defaults to 100,000 base-currency units when omitted.
+                </p>
+              </div>
+            </div>
+
+            <div
+              className={`overflow-auto rounded-lg border border-gray-200 dark:border-gray-700 ${MAPPINGS_TABLE_MAX_HEIGHT_CLASS}`}
+            >
+              <table className="min-w-[60rem] divide-y divide-gray-200 text-sm dark:divide-gray-700">
+                <thead className="bg-gray-50 dark:bg-gray-800">
+                  <tr>
+                    {['Pair', 'Base Currency', 'Quote Currency', 'Pip Size', 'Price Precision', 'Contract Size', 'Action'].map((heading) => (
+                      <th
+                        key={heading}
+                        className="sticky top-0 z-10 bg-gray-50 px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:bg-gray-800 dark:text-gray-400"
+                      >
+                        {heading}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                  {forexMappingRows.length > 0 ? (
+                    forexMappingRows.map((row) => (
+                      <tr key={row.id} className="bg-white align-top dark:bg-gray-800">
+                        <td className="px-3 py-2">
+                          <input
+                            type="text"
+                            className={COMPACT_INPUT_CLASS_NAME}
+                            value={row.pair}
+                            onChange={(event) => setForexMappingRows((current) => updateForexMappingRow(current, row.id, 'pair', event.target.value))}
+                            placeholder="EUR/USD"
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            type="text"
+                            className={COMPACT_INPUT_CLASS_NAME}
+                            value={row.baseCurrency}
+                            onChange={(event) => setForexMappingRows((current) => updateForexMappingRow(current, row.id, 'baseCurrency', event.target.value))}
+                            placeholder="EUR"
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            type="text"
+                            className={COMPACT_INPUT_CLASS_NAME}
+                            value={row.quoteCurrency}
+                            onChange={(event) => setForexMappingRows((current) => updateForexMappingRow(current, row.id, 'quoteCurrency', event.target.value))}
+                            placeholder="USD"
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            type="number"
+                            min="0"
+                            step="any"
+                            className={COMPACT_INPUT_CLASS_NAME}
+                            value={row.pipSize}
+                            onChange={(event) => setForexMappingRows((current) => updateForexMappingRow(current, row.id, 'pipSize', event.target.value))}
+                            placeholder="0.0001"
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            type="number"
+                            min="0"
+                            step="1"
+                            className={COMPACT_INPUT_CLASS_NAME}
+                            value={row.pricePrecision}
+                            onChange={(event) => setForexMappingRows((current) => updateForexMappingRow(current, row.id, 'pricePrecision', event.target.value))}
+                            placeholder="5"
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            type="number"
+                            min="0"
+                            step="any"
+                            className={COMPACT_INPUT_CLASS_NAME}
+                            value={row.contractSize}
+                            onChange={(event) => setForexMappingRows((current) => updateForexMappingRow(current, row.id, 'contractSize', event.target.value))}
+                            placeholder="100000"
+                          />
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <button
+                            type="button"
+                            className="inline-flex h-9 items-center gap-1.5 text-sm font-medium text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300"
+                            onClick={() => setForexMappingRows((current) => current.filter((item) => item.id !== row.id))}
+                          >
+                            <Trash2 className="h-4 w-4" aria-hidden="true" />
+                            Remove
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr className="bg-white dark:bg-gray-800">
+                      <td colSpan={7} className="px-3 py-4 text-xs text-gray-500 dark:text-gray-400">
+                        No forex mappings configured.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div>
+              <button
+                type="button"
+                className="btn-secondary inline-flex items-center gap-2"
+                onClick={() => setForexMappingRows((current) => [...current, createForexMappingRow()])}
+              >
+                <Plus className="h-4 w-4" aria-hidden="true" />
+                Add Forex Pair
               </button>
             </div>
           </div>

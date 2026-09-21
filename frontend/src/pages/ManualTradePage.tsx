@@ -2,11 +2,13 @@ import { ArrowLeft } from 'lucide-react';
 import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { createManualTrade } from '../api/trades.api';
+import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
 
 /** Manual trade entry page. */
 export function ManualTradePage() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const { addToast } = useToast();
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -20,9 +22,19 @@ export function ManualTradePage() {
     exit_time: '',
     fee: '',
     initial_risk: '',
+    quote_to_usd_rate: '',
     account_name: '',
     notes: '',
   });
+
+  const normalizedSymbol = form.symbol.trim().toUpperCase();
+  const forexInstrument = user?.symbol_mappings?.forex?.[normalizedSymbol];
+  const isForex = forexInstrument !== undefined;
+  const priceStep = forexInstrument
+    ? forexInstrument.price_precision > 0
+      ? `0.${'0'.repeat(forexInstrument.price_precision - 1)}1`
+      : '1'
+    : '0.01';
 
   function updateField(field: string, value: string) {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -36,7 +48,12 @@ export function ManualTradePage() {
       const trade = await createManualTrade({
         symbol: form.symbol,
         side: form.side,
-        total_quantity: parseFloat(form.quantity),
+        ...(isForex
+          ? { lot_size: parseFloat(form.quantity) }
+          : { total_quantity: parseFloat(form.quantity) }),
+        ...(isForex && forexInstrument?.quote_currency !== 'USD'
+          ? { quote_to_usd_rate: parseFloat(form.quote_to_usd_rate) }
+          : {}),
         entry_price: parseFloat(form.entry_price),
         exit_price: parseFloat(form.exit_price),
         entry_time: new Date(form.entry_time).toISOString(),
@@ -78,7 +95,7 @@ export function ManualTradePage() {
               id="symbol"
               type="text"
               required
-              placeholder="e.g. NQ, ES"
+              placeholder="e.g. NQ, ES, EUR/USD"
               value={form.symbol}
               onChange={(e) => updateField('symbol', e.target.value.toUpperCase())}
               className="input-field mt-1"
@@ -100,18 +117,18 @@ export function ManualTradePage() {
           </div>
         </div>
 
-        {/* Quantity */}
+        {/* Quantity / lots */}
         <div>
           <label htmlFor="quantity" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-            Quantity *
+            {isForex ? 'Lot Size *' : 'Quantity *'}
           </label>
           <input
             id="quantity"
             type="number"
             required
-            min="1"
-            step="1"
-            placeholder="1"
+            min={isForex ? '0.001' : '1'}
+            step={isForex ? '0.001' : '1'}
+            placeholder={isForex ? '0.001' : '1'}
             value={form.quantity}
             onChange={(e) => updateField('quantity', e.target.value)}
             className="input-field mt-1"
@@ -128,7 +145,7 @@ export function ManualTradePage() {
               id="entry_price"
               type="number"
               required
-              step="0.01"
+              step={priceStep}
               placeholder="0.00"
               value={form.entry_price}
               onChange={(e) => updateField('entry_price', e.target.value)}
@@ -143,7 +160,7 @@ export function ManualTradePage() {
               id="exit_price"
               type="number"
               required
-              step="0.01"
+              step={priceStep}
               placeholder="0.00"
               value={form.exit_price}
               onChange={(e) => updateField('exit_price', e.target.value)}
@@ -151,6 +168,28 @@ export function ManualTradePage() {
             />
           </div>
         </div>
+
+        {isForex && forexInstrument?.quote_currency !== 'USD' && (
+          <div>
+            <label htmlFor="quote_to_usd_rate" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+              USD per 1 {forexInstrument.quote_currency} *
+            </label>
+            <input
+              id="quote_to_usd_rate"
+              type="number"
+              required
+              min="0"
+              step="any"
+              placeholder="1.00"
+              value={form.quote_to_usd_rate}
+              onChange={(e) => updateField('quote_to_usd_rate', e.target.value)}
+              className="input-field mt-1"
+            />
+            <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              Enter the USD value of one {forexInstrument.quote_currency}.
+            </p>
+          </div>
+        )}
 
         {/* Entry/Exit times */}
         <div className="grid grid-cols-2 gap-4">

@@ -77,6 +77,15 @@ The shapes below are based on the document-construction helpers in `backend/app/
   "symbol_mappings": {
     "MES": {
       "dollar_value_per_point": 5.0
+    },
+    "forex": {
+      "EUR/USD": {
+        "base_currency": "EUR",
+        "quote_currency": "USD",
+        "pip_size": 0.0001,
+        "price_precision": 5,
+        "contract_size": 100000
+      }
     }
   },
   "market_data_mappings": {
@@ -89,8 +98,8 @@ The shapes below are based on the document-construction helpers in `backend/app/
 
 Notes:
 
-- `symbol_mappings` is initialized with built-in point-value defaults.
-- Built-in defaults currently include MES, ES, MNQ, NQ, MYM, YM, MCL, CL, GC, and MGC.
+- `symbol_mappings` is initialized with built-in futures point-value defaults and a nested `forex` mapping.
+- Forex entries retain base/quote currency, pip size, decimal precision, and contract size. Legacy futures entries remain top-level.
 - `market_data_mappings` is initialized to an empty object.
 - An empty `market_data_mappings` object means market data lookup uses the symbol as stored on the trade or dataset.
 
@@ -185,6 +194,18 @@ Notes:
   "holding_time_seconds": 0,
   "execution_count": 0,
   "source": "imported | manual",
+  "instrument_type": "futures | forex",
+  "lot_size": null,
+  "base_currency": null,
+  "quote_currency": null,
+  "pip_size": null,
+  "price_precision": null,
+  "contract_size": null,
+  "pip_value_per_standard_lot": null,
+  "pips": null,
+  "native_pnl": null,
+  "native_pnl_currency": null,
+  "quote_to_usd_rate": null,
   "manually_adjusted": false,
   "status": "open | closed | deleted",
   "tag_ids": [],
@@ -203,6 +224,8 @@ Notes:
 Notes:
 
 - `target_price` is auto-populated for winning imported or manual trades.
+- For manual forex trades, `total_quantity` and `max_quantity` mirror fractional `lot_size` for compatibility. `gross_pnl` and `net_pnl` are USD; `native_pnl` is gross P&L in the quote currency and `pips` is signed.
+- `quote_to_usd_rate` always means USD per one unit of the quote currency and is stored as `1` for USD-quoted instruments.
 - `wish_stop_price` is used by what-if analysis.
 - `attachments` exists on the trade document model, but the active media feature uses the separate `media` collection plus MinIO. Treat `attachments` as legacy or currently unused unless new code begins writing to it.
 

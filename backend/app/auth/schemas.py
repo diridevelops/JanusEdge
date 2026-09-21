@@ -97,7 +97,9 @@ class UpdateSymbolMappingsSchema(Schema):
         keys=fields.Str(
             validate=validate.Length(min=1, max=32)
         ),
-        values=fields.Nested(BaseSymbolMappingSchema()),
+        # Futures entries remain flat, while forex definitions are nested
+        # under the reserved ``forex`` key and are validated centrally.
+        values=fields.Raw(),
         required=True,
     )
 

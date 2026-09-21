@@ -28,6 +28,8 @@ interface CandlestickChartProps {
   avgEntryPrice?: number;
   /** Average exit price line. */
   avgExitPrice?: number;
+  /** Decimal places for execution-marker prices. */
+  pricePrecision?: number;
   /** Whether data is loading. */
   isLoading?: boolean;
   /** Display timezone (IANA) for shifting chart times. */
@@ -81,6 +83,7 @@ export function CandlestickChart({
   onIntervalChange,
   avgEntryPrice,
   avgExitPrice,
+  pricePrecision = 2,
   isLoading,
   displayTimezone,
   emptyStateMessage,
@@ -116,11 +119,11 @@ export function CandlestickChart({
           position: (exec.side === 'Buy' ? 'belowBar' : 'aboveBar') as 'belowBar' | 'aboveBar',
           color: exec.side === 'Buy' ? '#22c55e' : '#ef4444',
           shape: (exec.side === 'Buy' ? 'arrowUp' : 'arrowDown') as 'arrowUp' | 'arrowDown',
-          text: `${exec.side} ${exec.quantity} @ ${exec.price.toFixed(2)}`,
+          text: `${exec.side} ${exec.quantity} @ ${exec.price.toFixed(pricePrecision)}`,
         };
       })
       .sort((a, b) => (a.time as number) - (b.time as number));
-  }, [executions, shiftTime, interval]);
+  }, [executions, shiftTime, interval, pricePrecision]);
 
   // Create / destroy chart
   useEffect(() => {

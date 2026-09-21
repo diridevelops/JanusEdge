@@ -148,7 +148,7 @@ If you need an exact stable schema here, treat it as TODO because the preview re
 | GET | `/api/trades` | Yes | List trades with filters and pagination | Query params: `account`, `symbol`, `side`, `tag`, `date_from`, `date_to`, `page`, `per_page`, `sort_by`, `sort_dir` | `{ trades, total, page, per_page, pages }` |
 | GET | `/api/trades/:trade_id` | Yes | Get one trade with executions | Path parameter `trade_id` | `{ trade, executions }` |
 | GET | `/api/trades/:trade_id/running-pnl` | Yes | Get a position-aware running gross P&L series from stored raw ticks | Path parameter `trade_id` | `{ source, point_value, empty_reason, points }` |
-| POST | `/api/trades` | Yes | Create a manual trade | JSON with `symbol`, `side`, `total_quantity`, `entry_price`, `exit_price`, `entry_time`, `exit_time`, optional `fee`, `initial_risk`, `account`, `tags`, `notes` | `{ trade }` |
+| POST | `/api/trades` | Yes | Create a manual trade | Futures JSON uses `total_quantity`; configured forex JSON uses `lot_size`, `entry_price`, `exit_price`, and optional `quote_to_usd_rate` (required when the quote currency is not USD), plus optional `fee`, `initial_risk`, `account`, `tags`, and `notes` | `{ trade }` |
 | PUT | `/api/trades/:trade_id` | Yes | Update journaling and risk fields on a trade | JSON may include `fee`, `fee_source`, `initial_risk`, `strategy`, `pre_trade_notes`, `post_trade_notes`, `tag_ids`, `wish_stop_price`, `target_price` | `{ trade }` |
 | POST | `/api/trades/:trade_id/detect-wish-stop` | Yes | Detect a suggested wishful stop from stored 1-minute OHLC data for the trade day | Path parameter `trade_id` | `{ wish_stop_price }` |
 | DELETE | `/api/trades/:trade_id` | Yes | Delete a trade and related data | Path parameter `trade_id` | `{ "message": "Trade deleted." }` |
@@ -170,19 +170,49 @@ If you need an exact stable schema here, treat it as TODO because the preview re
   - executions are applied in timestamp order
   - realized gross P&L from partial exits is retained
   - any remaining open size is marked to each tick `last_price`
-- `point_value` is resolved from the user's current `symbol_mappings`, so futures like `ES` or `MES` convert price points into USD correctly.
+- `point_value` is resolved from the user's current `symbol_mappings`, so futures like `ES` or `MES` convert price points into USD correctly. For a stored forex trade it is the USD multiplier derived from `contract_size * quote_to_usd_rate`, preserving fractional lots.
 - The response shape is:
 
 ```json
 {
   "source": "ticks",
   "point_value": 50.0,
+  "usd_multiplier": 50.0,
+  "pnl_currency": "USD",
+  "native_pnl_currency": null,
+  "quote_to_usd_rate": null,
+  "lot_size": null,
   "empty_reason": null,
   "points": [
     { "time": "2026-01-01T10:00:00+00:00", "pnl": 0.0 }
   ]
 }
 ```
+
+### Symbol mappings
+
+Futures mappings remain top-level for backwards compatibility. Forex mappings
+are nested under `symbol_mappings.forex` and use canonical `AAA/BBB` keys:
+
+```json
+{
+  "MES": { "dollar_value_per_point": 5 },
+  "forex": {
+    "EUR/USD": {
+      "base_currency": "EUR",
+      "quote_currency": "USD",
+      "pip_size": 0.0001,
+      "price_precision": 5,
+      "contract_size": 100000
+    }
+  }
+}
+```
+
+`price_precision` is the number of decimal places accepted for manual entry.
+Forex P&L is calculated in the quote currency and converted with a rate that
+means USD per one unit of quote currency. USD-quoted pairs always use a rate of
+1. `contract_size` defaults to 100,000 for newly configured forex instruments.
 
 - `empty_reason` can currently be:
   - `missing_tick_data` when one or more required raw tick partitions are unavailable

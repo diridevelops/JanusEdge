@@ -9,6 +9,18 @@ export interface Trade {
   side: 'Long' | 'Short';
   total_quantity: number;
   max_quantity: number;
+  instrument_type?: 'futures' | 'forex' | string;
+  lot_size?: number | null;
+  base_currency?: string | null;
+  quote_currency?: string | null;
+  pip_size?: number | null;
+  price_precision?: number | null;
+  contract_size?: number | null;
+  pip_value_per_standard_lot?: number | null;
+  pips?: number | null;
+  native_pnl?: number | null;
+  native_pnl_currency?: string | null;
+  quote_to_usd_rate?: number | null;
   avg_entry_price: number;
   avg_exit_price: number;
   gross_pnl: number;
@@ -38,6 +50,7 @@ export interface Trade {
 export interface RunningPnLPoint {
   time: string;
   pnl: number;
+  native_pnl?: number | null;
 }
 
 /** Empty-state reasons for the running P&L endpoint. */
@@ -49,7 +62,12 @@ export type RunningPnLEmptyReason =
 /** Running P&L response from the trade detail API. */
 export interface RunningPnLResponse {
   source: 'ticks';
-  point_value: number;
+  point_value?: number;
+  usd_multiplier?: number;
+  pnl_currency?: string;
+  native_pnl_currency?: string;
+  quote_to_usd_rate?: number;
+  lot_size?: number;
   empty_reason: RunningPnLEmptyReason;
   points: RunningPnLPoint[];
 }
@@ -58,7 +76,9 @@ export interface RunningPnLResponse {
 export interface ManualTradeRequest {
   symbol: string;
   side: 'Long' | 'Short';
-  total_quantity: number;
+  total_quantity?: number;
+  lot_size?: number;
+  quote_to_usd_rate?: number;
   entry_price: number;
   exit_price: number;
   entry_time: string;

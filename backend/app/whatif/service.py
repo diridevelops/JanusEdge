@@ -14,7 +14,7 @@ from app.market_data.service import MarketDataService
 from app.market_data.symbol_mapper import (
     get_effective_market_data_mappings,
     get_effective_symbol_mappings,
-    get_point_value,
+    get_trade_usd_multiplier,
 )
 from app.repositories.tag_repo import TagRepository
 from app.repositories.trade_repo import TradeRepository
@@ -534,9 +534,8 @@ class WhatIfService:
                 ).date()
 
             try:
-                point_value = get_point_value(
-                    symbol,
-                    raw_sym,
+                point_value = get_trade_usd_multiplier(
+                    t,
                     symbol_mappings,
                 )
             except ValueError as exc:

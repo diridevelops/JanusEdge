@@ -33,13 +33,16 @@ def _normalize_decimal(value: Any) -> str:
 
 def build_trade_fingerprint(trade: Mapping[str, Any]) -> str:
     """Build the stable trade fingerprint required for restore dedupe."""
+    quantity = trade.get("total_quantity")
+    if quantity is None:
+        quantity = trade.get("lot_size")
     fingerprint_parts = [
         str(trade.get("source") or ""),
         str(trade.get("symbol") or ""),
         str(trade.get("side") or ""),
         _normalize_datetime(trade.get("entry_time")),
         _normalize_datetime(trade.get("exit_time")),
-        str(int(trade.get("total_quantity") or 0)),
+        _normalize_decimal(quantity or 0),
         _normalize_decimal(trade.get("avg_entry_price") or 0),
         _normalize_decimal(trade.get("avg_exit_price") or 0),
     ]

@@ -211,6 +211,11 @@ endpoint. It uses stored raw ticks plus the trade's executions to show realized
 and unrealized gross P&L over time, converted to USD through the user's symbol
 point-value settings.
 
+Forex running P&L uses the stored trade contract size and quote-to-USD rate,
+so fractional lots remain consistent with the closed-trade USD P&L. The trade
+summary and list format forex prices with the stored decimal precision and show
+signed pips plus native quote-currency P&L.
+
 For losing trades, the stop-analysis editor includes a `Detect` action for the
 wishful stop field. It requests an OHLC-based suggestion from the backend,
 fills the local form value, and still requires the user to click `Save` to
@@ -224,7 +229,8 @@ The settings page currently includes:
 - trading timezone
 - display timezone
 - starting equity
-- base-symbol point-value editor
+- separate Futures and Forex symbol-mapping editors
+- forex pair precision, pip-size, currency, and contract-size fields
 - backup export and restore
 
 ## Local Development Workflow

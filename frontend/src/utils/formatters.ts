@@ -1,13 +1,36 @@
 /**
- * Format a number as USD currency.
+ * Format a number as currency.
  *
- * @param value - The number to format.
- * @returns Formatted currency string (e.g., "$1,234.56").
+ * USD remains the default because dashboard and analytics P&L are USD-based.
  */
-export function formatCurrency(value: number): string {
+export function formatCurrency(value: number, currency = 'USD'): string {
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
-    currency: 'USD',
+    currency,
+  }).format(value);
+}
+
+/** Format a price with the instrument's configured decimal precision. */
+export function formatPrice(value: number, decimals = 2): string {
+  const safeDecimals = Number.isFinite(decimals)
+    ? Math.max(0, Math.min(20, Math.round(decimals)))
+    : 2;
+
+  return new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: safeDecimals,
+    maximumFractionDigits: safeDecimals,
+  }).format(value);
+}
+
+/** Format a pip count without applying a currency symbol. */
+export function formatPips(value: number, decimals = 2): string {
+  return formatPrice(value, decimals);
+}
+
+/** Format a contract or lot quantity without losing fractional lots. */
+export function formatQuantity(value: number, maximumFractionDigits = 3): string {
+  return new Intl.NumberFormat('en-US', {
+    maximumFractionDigits,
   }).format(value);
 }
 

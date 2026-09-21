@@ -295,7 +295,7 @@ You can enter:
 
 - symbol
 - long or short side
-- quantity
+- quantity for futures, or lot size for a configured forex pair (minimum `0.001` lots)
 - entry price
 - exit price
 - entry time
@@ -306,6 +306,12 @@ You can enter:
 - notes
 
 After saving, the app opens the new trade detail page automatically.
+
+For configured forex pairs, the entry and exit fields use that pair's pipette
+precision. The trade stores signed pips and native quote-currency P&L while
+`gross_pnl` and `net_pnl` remain USD values for dashboards and analytics. When
+the quote currency is not USD, enter the applicable `USD per 1 [quote currency]`
+conversion rate; USD-quoted pairs use a rate of 1 automatically.
 
 ## Trade Detail Page
 
@@ -325,6 +331,9 @@ At the top of the page you can review:
 - initial risk
 - R-multiple
 - duration
+
+Forex trades additionally show lot size, pair-precision prices, signed pips,
+native quote-currency P&L, and the quote-to-USD rate.
 
 ### Price Chart
 
@@ -353,7 +362,7 @@ It shows:
 - live mark-to-market movement based on stored raw ticks
 - realized plus unrealized P&L for trades that scale in or out
 
-If the instrument trades in points instead of dollars, the chart converts movement using your configured symbol mapping dollar-value-per-point setting.
+If the instrument trades in points instead of dollars, the chart converts movement using your configured symbol mapping dollar-value-per-point setting. For forex, it uses the stored contract size and quote-to-USD rate, including fractional lots.
 
 Important limitation:
 
@@ -622,7 +631,10 @@ only gross-flat trades classified as breakeven.
 
 ### Symbol Mappings
 
-Use Symbol Mappings to control point-value resolution only.
+The Symbol Mappings page has separate Futures and Forex sections. Futures retain
+top-level base-symbol point values. Forex pairs use canonical `AAA/BBB` keys and
+define base currency, quote currency, pip size, price precision, and contract
+size. New forex contract sizes default to 100,000 base-currency units.
 
 Each row defines:
 
