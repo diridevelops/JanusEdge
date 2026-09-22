@@ -145,6 +145,22 @@ class UserRepository(BaseRepository):
             },
         )
 
+    def update_username(
+        self, user_id: str, username: str
+    ) -> bool:
+        """Update a user's login username."""
+        from app.utils.datetime_utils import utc_now
+
+        return self.update_one(
+            user_id,
+            {
+                "$set": {
+                    "username": username,
+                    "updated_at": utc_now(),
+                }
+            },
+        )
+
     def update_symbol_mappings(
         self,
         user_id: str,

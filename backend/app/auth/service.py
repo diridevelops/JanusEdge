@@ -4,7 +4,9 @@ import bcrypt
 import hashlib
 import secrets
 from flask_jwt_extended import create_access_token
+from pymongo.errors import DuplicateKeyError
 
+from app.auth.account_service import AccountDeletionService
 from app.auth.backup_service import PortableBackupService
 from app.market_data.symbol_mapper import (
     get_effective_market_data_mappings,
@@ -41,6 +43,7 @@ class AuthService:
             AuthRefreshSessionRepository()
         )
         self.backup_service = PortableBackupService()
+        self.account_deletion_service = AccountDeletionService()
 
     def register(
         self,
@@ -248,6 +251,67 @@ class AuthService:
             user_id
         )
         return {"message": "Password changed successfully."}
+
+    def update_username(
+        self,
+        user_id: str,
+        username: str,
+        current_password: str,
+    ) -> dict:
+        """Change the authenticated user's login username."""
+        user = self.user_repo.find_by_id(user_id)
+        if not user:
+            raise AuthenticationError("User not found.")
+
+        if not bcrypt.checkpw(
+            current_password.encode("utf-8"),
+            user["password_hash"].encode("utf-8"),
+        ):
+            raise AuthenticationError(
+                "Current password is incorrect."
+            )
+
+        existing = self.user_repo.find_by_username(username)
+        if existing and str(existing["_id"]) != user_id:
+            raise ValidationError("Username already exists.")
+
+        try:
+            self.user_repo.update_username(user_id, username)
+        except DuplicateKeyError as exc:
+            # Preserve uniqueness even when two rename requests race.
+            raise ValidationError(
+                "Username already exists."
+            ) from exc
+
+        updated_user = dict(user)
+        updated_user["username"] = username
+        return self._serialize_user_profile(updated_user)
+
+    def delete_account(
+        self,
+        user_id: str,
+        current_password: str,
+        username_confirmation: str,
+    ) -> None:
+        """Permanently delete the authenticated user's account."""
+        user = self.user_repo.find_by_id(user_id)
+        if not user:
+            raise AuthenticationError("User not found.")
+
+        if not bcrypt.checkpw(
+            current_password.encode("utf-8"),
+            user["password_hash"].encode("utf-8"),
+        ):
+            raise AuthenticationError(
+                "Current password is incorrect."
+            )
+
+        if username_confirmation != user["username"]:
+            raise ValidationError(
+                "Username confirmation does not match."
+            )
+
+        self.account_deletion_service.delete_account(user_id)
 
     def logout(
         self,

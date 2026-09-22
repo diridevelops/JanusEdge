@@ -19,12 +19,14 @@ from app.auth.schemas import (
     RegisterSchema,
     RestoreArchiveSchema,
     ChangePasswordSchema,
+    DeleteAccountSchema,
     UpdateMarketDataMappingsSchema,
     UpdateSymbolMappingsSchema,
     UpdateTimezoneSchema,
     UpdateDisplayTimezoneSchema,
     UpdateStartingEquitySchema,
     UpdateRiskBreakevenSchema,
+    UpdateUsernameSchema,
 )
 from app.auth.service import AuthService
 from app.utils.errors import AuthenticationError
@@ -34,6 +36,8 @@ auth_service = AuthService()
 register_schema = RegisterSchema()
 login_schema = LoginSchema()
 change_password_schema = ChangePasswordSchema()
+update_username_schema = UpdateUsernameSchema()
+delete_account_schema = DeleteAccountSchema()
 update_timezone_schema = UpdateTimezoneSchema()
 update_display_timezone_schema = UpdateDisplayTimezoneSchema()
 update_starting_equity_schema = UpdateStartingEquitySchema()
@@ -250,6 +254,58 @@ def change_password():
         new_password=validated["new_password"],
     )
     return jsonify(result), 200
+
+
+@auth_bp.route("/username", methods=["PUT"])
+@jwt_required()
+def update_username():
+    """Update the current user's login username."""
+    data = request.get_json()
+    if not data:
+        raise ValidationError("Request body is required.")
+
+    try:
+        validated = update_username_schema.load(data)
+    except MarshmallowError as e:
+        raise ValidationError(
+            "Validation failed.", details=e.messages
+        )
+
+    profile = auth_service.update_username(
+        user_id=get_jwt_identity(),
+        username=validated["username"],
+        current_password=validated["current_password"],
+    )
+    return jsonify(profile), 200
+
+
+@auth_bp.route("/account", methods=["DELETE"])
+@jwt_required()
+def delete_account():
+    """Permanently delete the authenticated application account."""
+    data = request.get_json()
+    if not data:
+        raise ValidationError("Request body is required.")
+
+    try:
+        validated = delete_account_schema.load(data)
+    except MarshmallowError as e:
+        raise ValidationError(
+            "Validation failed.", details=e.messages
+        )
+
+    auth_service.delete_account(
+        user_id=get_jwt_identity(),
+        current_password=validated["current_password"],
+        username_confirmation=validated[
+            "username_confirmation"
+        ],
+    )
+    response = make_response(
+        jsonify({"message": "Account deleted successfully."}),
+        200,
+    )
+    return _clear_refresh_cookie(response)
 
 
 @auth_bp.route("/timezone", methods=["PUT"])

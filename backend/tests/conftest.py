@@ -2,6 +2,7 @@
 
 from datetime import date
 from io import BytesIO
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pandas as pd
@@ -99,6 +100,21 @@ class InMemoryMinio:
         """Delete a stored object."""
 
         self.objects.pop((bucket, object_name), None)
+
+    def list_objects(
+        self,
+        bucket: str,
+        prefix: str = "",
+        recursive: bool = False,
+    ):
+        """List stored objects under a prefix."""
+
+        del recursive
+        return [
+            SimpleNamespace(object_name=object_name)
+            for object_bucket, object_name in self.objects
+            if object_bucket == bucket and object_name.startswith(prefix)
+        ]
 
     def _presigned_get_object(
         self,

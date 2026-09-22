@@ -44,6 +44,23 @@ class ChangePasswordSchema(Schema):
     )
 
 
+class UpdateUsernameSchema(Schema):
+    """Schema for changing the login username."""
+
+    username = fields.Str(
+        required=True,
+        validate=validate.Length(min=3, max=50),
+    )
+    current_password = fields.Str(required=True)
+
+
+class DeleteAccountSchema(Schema):
+    """Schema for permanently deleting the authenticated account."""
+
+    current_password = fields.Str(required=True)
+    username_confirmation = fields.Str(required=True)
+
+
 class UpdateTimezoneSchema(Schema):
     """Schema for timezone update."""
 
