@@ -80,6 +80,35 @@ export async function changePassword(
   return res.data;
 }
 
+/** Change the current user's login username. */
+export async function updateUsername(
+  username: string,
+  currentPassword: string
+): Promise<User> {
+  const res = await apiClient.put<User>('/auth/username', {
+    username,
+    current_password: currentPassword,
+  });
+  return res.data;
+}
+
+/** Permanently delete the current user's application account. */
+export async function deleteAccount(
+  currentPassword: string,
+  usernameConfirmation: string
+): Promise<{ message: string }> {
+  const res = await apiClient.delete<{ message: string }>(
+    '/auth/account',
+    {
+      data: {
+        current_password: currentPassword,
+        username_confirmation: usernameConfirmation,
+      },
+    }
+  );
+  return res.data;
+}
+
 /** Update the current user's trading timezone. */
 export async function updateTimezone(
   timezone: string

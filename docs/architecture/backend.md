@@ -39,6 +39,7 @@ graph TB
 		ImportSvc[Import service]
 		TradeSvc[Trade service]
 		AuthSvc[Auth service]
+		AccountDeletionSvc[Account deletion service]
 		MarketSvc[Market data service]
 		TickDataSvc[Tick-data service]
 		AnalyticsSvc[Analytics service]
@@ -63,6 +64,9 @@ graph TB
 	TickDataSvc --> Mongo
 	MediaSvc --> MinIO
 	AuthSvc --> MinIO
+	AuthSvc --> AccountDeletionSvc
+	AccountDeletionSvc --> Mongo
+	AccountDeletionSvc --> MinIO
 ```
 
 ## Entry Points
@@ -164,6 +168,9 @@ Serialization renames `_id` to `id` in API output.
 - `POST /api/auth/refresh` rotates the current refresh session and issues a new access token.
 - Logout revokes the current browser refresh session and clears the cookie.
 - Password changes revoke all persistent refresh sessions for that user.
+- `PUT /api/auth/username` changes the unique login username after rechecking the current password and does not revoke sessions.
+- `DELETE /api/auth/account` rechecks the current password and exact username, deletes user-owned records and media objects, removes all refresh sessions, and clears the refresh cookie.
+- Market-data datasets are shared storage records without `user_id`; account deletion removes the user's market-data import-batch records but preserves shared datasets and Parquet objects.
 
 ## Import Pipeline
 

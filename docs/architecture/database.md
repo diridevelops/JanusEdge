@@ -16,6 +16,7 @@ Media binaries are not stored in MongoDB. They are stored in MinIO, while MongoD
 ```mermaid
 graph TB
   Users[(users)]
+  RefreshSessions[(auth_refresh_sessions)]
   Accounts[(trade_accounts)]
   Batches[(import_batches)]
   Executions[(executions)]
@@ -27,6 +28,7 @@ graph TB
   Audit[(audit_logs)]
 
   Users --> Accounts
+  Users --> RefreshSessions
   Users --> Batches
   Users --> Executions
   Users --> Trades
@@ -50,6 +52,7 @@ The backend explicitly uses these MongoDB collections:
 | Collection | Purpose |
 | --- | --- |
 | `users` | User accounts, password hashes, timezones, starting equity, and symbol mappings |
+| `auth_refresh_sessions` | Persistent browser refresh sessions owned by a user |
 | `trade_accounts` | Imported or manual trading accounts per user |
 | `import_batches` | Metadata for each imported CSV file |
 | `executions` | Normalized execution-level rows from imported files |
@@ -304,11 +307,24 @@ Notes:
 ## Relationships Between Persisted Objects
 
 - One `users` document owns many `trade_accounts`, `import_batches`, `executions`, `trades`, `tags`, `media`, and `audit_logs`.
+- One `users` document owns many `auth_refresh_sessions` and market-data import batches.
 - One `trade_accounts` document can be referenced by many `executions` and `trades`.
 - One `import_batches` document can produce many `executions` and `trades`.
 - One `trades` document can reference many `executions` through `execution.trade_id`.
 - One `trades` document can have many `media` rows through `media.trade_id`.
 - Trade tags are many-to-many in practice through the `trades.tag_ids` array.
+
+## Account Deletion Coverage
+
+`DELETE /api/auth/account` permanently deletes the authenticated user's
+document, refresh sessions, trade accounts, CSV import batches, executions,
+trades, tags, tag categories, audit logs, market-data import batches, and media
+metadata. It also removes all MinIO media objects under the user's object-key
+prefix.
+
+`market_data_datasets` and their Parquet objects are shared across accounts and
+do not contain `user_id`, so they are intentionally preserved during account
+deletion.
 
 ## Backup And Restore Data Coverage Diagram
 

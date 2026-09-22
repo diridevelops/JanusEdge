@@ -20,6 +20,8 @@ Unless otherwise noted, IDs are MongoDB ObjectId strings serialized as plain str
 | GET | `/api/auth/me` | Yes | Get current profile | None | Direct serialized user object |
 | POST | `/api/auth/logout` | No | Clear the current browser session | None; clears refresh cookie if present | `{ "message": "Logged out." }` |
 | POST | `/api/auth/change-password` | Yes | Change password | JSON with `current_password`, `new_password` | `{ "message": "Password changed successfully." }` |
+| PUT | `/api/auth/username` | Yes | Change the login username | JSON with `username`, `current_password` | Direct serialized user object |
+| DELETE | `/api/auth/account` | Yes | Permanently delete the authenticated application account | JSON with `current_password`, `username_confirmation` | `{ "message": "Account deleted successfully." }` plus cleared refresh cookie |
 | PUT | `/api/auth/timezone` | Yes | Update trading timezone | JSON with `timezone` | Direct serialized user object |
 | PUT | `/api/auth/display-timezone` | Yes | Update display timezone | JSON with `display_timezone` | Direct serialized user object |
 | PUT | `/api/auth/starting-equity` | Yes | Update starting equity used by simulations | JSON with `starting_equity` | Direct serialized user object |
@@ -59,6 +61,9 @@ Where the backend returns a serialized user object, the frontend currently expec
 - Reopening the app in the same browser restores the session by calling `POST /api/auth/refresh`.
 - `POST /api/auth/logout` clears the current browser refresh session.
 - Changing the password revokes all persistent refresh sessions for that user.
+- Changing the username requires the current password, accepts 3–50 characters, enforces the unique username index, and keeps existing sessions active.
+- Account deletion requires the current password and an exact username confirmation. It permanently removes the user, refresh sessions, user-owned trading and journaling records, market-data import batches, and media objects under the user's MinIO prefix.
+- Account deletion preserves shared `market_data_datasets` records and their Parquet objects because those datasets are not user-owned.
 
 ## Client Config
 

@@ -3,6 +3,7 @@ import { Download, Plus, Settings, Trash2, Upload, X } from 'lucide-react';
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import {
   changePassword,
+  deleteAccount,
   exportBackup,
   restoreBackup,
   updateMarketDataMappings,
@@ -11,6 +12,7 @@ import {
   updateStartingEquity,
   updateSymbolMappings,
   updateTimezone,
+  updateUsername,
 } from '../api/auth.api';
 import { createTag, createTagCategory, deleteTag, deleteTagCategory, listTagCategories, listTags, moveTag, updateTagCategory } from '../api/tags.api';
 import { PageHeader } from '../components/ui/PageHeader';
@@ -396,12 +398,20 @@ function buildMarketDataMappings(
   return result;
 }
 
-/** Settings page — password change and timezone update. */
+/** Settings page — account, password, timezone, and data preferences. */
 export function SettingsPage() {
-  const { user, refreshProfile } = useAuth();
+  const { user, logout, refreshProfile } = useAuth();
   const { filters, setFilters } = useFilters();
   const { addToast } = useToast();
   const restoreInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Application account
+  const [username, setUsername] = useState(user?.username ?? '');
+  const [usernamePassword, setUsernamePassword] = useState('');
+  const [usernameLoading, setUsernameLoading] = useState(false);
+  const [deleteAccountPassword, setDeleteAccountPassword] = useState('');
+  const [deleteAccountUsername, setDeleteAccountUsername] = useState('');
+  const [deleteAccountLoading, setDeleteAccountLoading] = useState(false);
 
   // Password change
   const [currentPassword, setCurrentPassword] = useState('');
@@ -462,6 +472,7 @@ export function SettingsPage() {
     restoreSummary?.market_data_datasets ?? restoreSummary?.market_data_cache ?? null;
 
   useEffect(() => {
+    setUsername(user?.username ?? '');
     setTimezone(user?.timezone ?? 'America/New_York');
     setDisplayTimezone(
       user?.display_timezone ?? user?.timezone ?? 'America/New_York'
@@ -470,6 +481,7 @@ export function SettingsPage() {
     setRiskBreakevenEnabled(user?.risk_breakeven_enabled ?? false);
     setRiskBreakevenRThreshold(String(user?.risk_breakeven_r_threshold ?? 0.05));
   }, [
+    user?.username,
     user?.display_timezone,
     user?.risk_breakeven_enabled,
     user?.risk_breakeven_r_threshold,
@@ -575,6 +587,48 @@ export function SettingsPage() {
       addToast('error', message);
     } finally {
       setSeLoading(false);
+    }
+  }
+
+  async function handleUpdateUsername(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const nextUsername = username;
+    if (nextUsername.length < 3 || nextUsername.length > 50) {
+      addToast('error', 'Username must be between 3 and 50 characters.');
+      return;
+    }
+
+    setUsernameLoading(true);
+    try {
+      await updateUsername(nextUsername, usernamePassword);
+      await refreshProfile();
+      setUsernamePassword('');
+      addToast('success', 'Username updated successfully.');
+    } catch (err: unknown) {
+      addToast('error', getErrorMessage(err, 'Failed to update username.'));
+    } finally {
+      setUsernameLoading(false);
+    }
+  }
+
+  async function handleDeleteAccount(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!user?.username || deleteAccountUsername !== user.username) {
+      addToast('error', 'Type your current username exactly to continue.');
+      return;
+    }
+
+    setDeleteAccountLoading(true);
+    try {
+      const result = await deleteAccount(
+        deleteAccountPassword,
+        deleteAccountUsername
+      );
+      logout();
+      addToast('success', result.message);
+    } catch (err: unknown) {
+      addToast('error', getErrorMessage(err, 'Failed to delete account.'));
+      setDeleteAccountLoading(false);
     }
   }
 
@@ -1554,6 +1608,90 @@ export function SettingsPage() {
             {pwLoading ? 'Changing…' : 'Change Password'}
           </button>
         </form>
+      </div>
+
+      {/* Application account */}
+      <div className="card p-4">
+        <h2 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+          Account
+        </h2>
+        <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+          Change the username used to sign in to {APP_NAME} or permanently delete this application account.
+        </p>
+
+        <form onSubmit={handleUpdateUsername} className="space-y-4">
+          <div>
+            <label htmlFor="username" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+              New Username
+            </label>
+            <input
+              id="username"
+              type="text"
+              className="input-field mt-1"
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              minLength={3}
+              maxLength={50}
+              required
+            />
+          </div>
+          <div>
+            <label htmlFor="usernamePassword" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+              Current Password
+            </label>
+            <input
+              id="usernamePassword"
+              type="password"
+              className="input-field mt-1"
+              value={usernamePassword}
+              onChange={(event) => setUsernamePassword(event.target.value)}
+              required
+            />
+          </div>
+          <button type="submit" className="btn-primary" disabled={usernameLoading}>
+            {usernameLoading ? 'Saving…' : 'Update Username'}
+          </button>
+        </form>
+
+        <div className="mt-6 border-t border-gray-200 pt-6 dark:border-gray-700">
+          <h3 className="text-sm font-semibold text-red-700 dark:text-red-400">
+            Delete Account
+          </h3>
+          <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
+            This permanently deletes your login, trades, executions, settings, tags, import records, audit records, and media. Shared market-data datasets are retained for other users.
+          </p>
+          <form onSubmit={handleDeleteAccount} className="mt-4 space-y-4">
+            <div>
+              <label htmlFor="deleteAccountPassword" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                Current Password
+              </label>
+              <input
+                id="deleteAccountPassword"
+                type="password"
+                className="input-field mt-1"
+                value={deleteAccountPassword}
+                onChange={(event) => setDeleteAccountPassword(event.target.value)}
+                required
+              />
+            </div>
+            <div>
+              <label htmlFor="deleteAccountUsername" className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                Type <span className="font-mono">{user?.username ?? ''}</span> to confirm
+              </label>
+              <input
+                id="deleteAccountUsername"
+                type="text"
+                className="input-field mt-1"
+                value={deleteAccountUsername}
+                onChange={(event) => setDeleteAccountUsername(event.target.value)}
+                required
+              />
+            </div>
+            <button type="submit" className="btn-danger" disabled={deleteAccountLoading}>
+              {deleteAccountLoading ? 'Deleting…' : 'Permanently Delete Account'}
+            </button>
+          </form>
+        </div>
       </div>
     </div>
   );

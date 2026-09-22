@@ -9,11 +9,24 @@ from app.market_data.symbol_mapper import (
 
 @pytest.fixture(autouse=True)
 def clean_db(app):
-    """Clean the users collection before each test."""
+    """Clean auth-owned collections before each test."""
     with app.app_context():
         from app.extensions import mongo
-        mongo.db.users.delete_many({})
-        mongo.db.auth_refresh_sessions.delete_many({})
+        for collection_name in [
+            "users",
+            "auth_refresh_sessions",
+            "trade_accounts",
+            "import_batches",
+            "executions",
+            "trades",
+            "tags",
+            "tag_categories",
+            "audit_logs",
+            "market_data_import_batches",
+            "media",
+            "market_data_datasets",
+        ]:
+            mongo.db[collection_name].delete_many({})
     yield
 
 
@@ -264,6 +277,332 @@ def test_change_password_revokes_refresh_sessions(client):
     refresh_response = client.post("/api/auth/refresh")
 
     assert refresh_response.status_code == 401
+
+
+def test_update_username_requires_password_and_keeps_session_active(
+    client,
+):
+    """A username change updates login identity without revoking sessions."""
+    reg = client.post("/api/auth/register", json={
+        "username": "oldusername",
+        "password": "testpass123",
+        "timezone": "America/New_York",
+    })
+    token = reg.get_json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    response = client.put(
+        "/api/auth/username",
+        headers=headers,
+        json={
+            "username": "newusername",
+            "current_password": "testpass123",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["username"] == "newusername"
+    assert client.get("/api/auth/me", headers=headers).status_code == 200
+    refresh_response = client.post("/api/auth/refresh")
+    assert refresh_response.status_code == 200
+    assert refresh_response.get_json()["user"]["username"] == "newusername"
+
+    old_login = client.post("/api/auth/login", json={
+        "username": "oldusername",
+        "password": "testpass123",
+    })
+    new_login = client.post("/api/auth/login", json={
+        "username": "newusername",
+        "password": "testpass123",
+    })
+    assert old_login.status_code == 401
+    assert new_login.status_code == 200
+
+
+def test_update_username_rejects_duplicate_and_wrong_password(client):
+    """Username updates enforce uniqueness and current-password checks."""
+    first = client.post("/api/auth/register", json={
+        "username": "firstusername",
+        "password": "testpass123",
+        "timezone": "America/New_York",
+    })
+    client.post("/api/auth/register", json={
+        "username": "secondusername",
+        "password": "testpass123",
+        "timezone": "America/New_York",
+    })
+    headers = {
+        "Authorization": f"Bearer {first.get_json()['token']}"
+    }
+
+    duplicate = client.put(
+        "/api/auth/username",
+        headers=headers,
+        json={
+            "username": "secondusername",
+            "current_password": "testpass123",
+        },
+    )
+    wrong_password = client.put(
+        "/api/auth/username",
+        headers=headers,
+        json={
+            "username": "anotherusername",
+            "current_password": "wrongpass",
+        },
+    )
+
+    assert duplicate.status_code == 400
+    assert wrong_password.status_code == 401
+
+    invalid_length = client.put(
+        "/api/auth/username",
+        headers=headers,
+        json={
+            "username": "ab",
+            "current_password": "testpass123",
+        },
+    )
+    assert invalid_length.status_code == 400
+
+
+def test_update_username_requires_authentication(client):
+    """Username updates require an access token."""
+    response = client.put(
+        "/api/auth/username",
+        json={
+            "username": "newusername",
+            "current_password": "testpass123",
+        },
+    )
+
+    assert response.status_code == 401
+
+
+def test_delete_account_removes_owned_data_and_media(
+    client, app
+):
+    """Account deletion cascades owned data but preserves shared data."""
+    from datetime import datetime
+    from io import BytesIO
+
+    from bson import ObjectId
+
+    from app.extensions import mongo
+
+    reg = client.post("/api/auth/register", json={
+        "username": "deleteaccount",
+        "password": "testpass123",
+        "timezone": "America/New_York",
+    })
+    token = reg.get_json()["token"]
+    user_id = ObjectId(reg.get_json()["user"]["id"])
+    headers = {"Authorization": f"Bearer {token}"}
+
+    other_client = app.test_client()
+    other_reg = other_client.post("/api/auth/register", json={
+        "username": "keepaccount",
+        "password": "testpass123",
+        "timezone": "America/New_York",
+    })
+    other_user_id = ObjectId(other_reg.get_json()["user"]["id"])
+
+    media_key = f"{user_id}/trade/media.png"
+    orphan_media_key = f"{user_id}/orphan/orphan.png"
+    other_media_key = f"{other_user_id}/trade/media.png"
+    shared_symbol = f"SHARED-{user_id}"
+    shared_object_key = f"{shared_symbol}/ticks/2026/01/01.parquet"
+    with app.app_context():
+        from app.storage import (
+            get_bucket,
+            get_client,
+            get_market_data_bucket,
+        )
+
+        object_store = get_client()
+        bucket = get_bucket()
+        market_data_bucket = get_market_data_bucket()
+        object_store.put_object(
+            bucket,
+            media_key,
+            BytesIO(b"owned"),
+            length=5,
+            content_type="image/png",
+        )
+        object_store.put_object(
+            bucket,
+            orphan_media_key,
+            BytesIO(b"orphan"),
+            length=6,
+            content_type="image/png",
+        )
+        object_store.put_object(
+            bucket,
+            other_media_key,
+            BytesIO(b"other"),
+            length=5,
+            content_type="image/png",
+        )
+        object_store.put_object(
+            market_data_bucket,
+            shared_object_key,
+            BytesIO(b"shared"),
+            length=6,
+            content_type="application/octet-stream",
+        )
+
+        for collection_name in [
+            "trade_accounts",
+            "import_batches",
+            "executions",
+            "trades",
+            "tags",
+            "tag_categories",
+            "audit_logs",
+            "market_data_import_batches",
+            "media",
+        ]:
+            owned_doc = {
+                "user_id": user_id,
+                "marker": "owned",
+            }
+            other_doc = {
+                "user_id": other_user_id,
+                "marker": "other",
+            }
+            if collection_name == "media":
+                owned_doc["object_key"] = media_key
+                other_doc["object_key"] = other_media_key
+            mongo.db[collection_name].insert_one(owned_doc)
+            mongo.db[collection_name].insert_one(other_doc)
+
+        mongo.db.market_data_datasets.insert_one({
+            "symbol": shared_symbol,
+            "dataset_type": "ticks",
+            "timeframe": None,
+            "date": datetime(2026, 1, 1),
+            "object_key": shared_object_key,
+        })
+
+    response = client.delete(
+        "/api/auth/account",
+        headers=headers,
+        json={
+            "current_password": "testpass123",
+            "username_confirmation": "deleteaccount",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["message"] == "Account deleted successfully."
+    assert client.get_cookie(
+        _refresh_cookie_name(app),
+        path=_refresh_cookie_path(app),
+    ) is None
+
+    with app.app_context():
+        assert mongo.db.users.count_documents(
+            {"_id": user_id}
+        ) == 0
+        for collection_name in [
+            "auth_refresh_sessions",
+            "trade_accounts",
+            "import_batches",
+            "executions",
+            "trades",
+            "tags",
+            "tag_categories",
+            "audit_logs",
+            "market_data_import_batches",
+            "media",
+        ]:
+            assert mongo.db[collection_name].count_documents(
+                {"user_id": user_id}
+            ) == 0
+
+        assert mongo.db.users.count_documents(
+            {"_id": other_user_id}
+        ) == 1
+        assert mongo.db.media.count_documents(
+            {"user_id": other_user_id}
+        ) == 1
+        assert mongo.db.market_data_datasets.count_documents(
+            {"symbol": shared_symbol}
+        ) == 1
+
+        from app.storage import (
+            get_bucket,
+            get_client,
+            get_market_data_bucket,
+        )
+
+        object_store = get_client()
+        bucket = get_bucket()
+        assert (bucket, media_key) not in object_store.objects
+        assert (bucket, orphan_media_key) not in object_store.objects
+        assert (bucket, other_media_key) in object_store.objects
+        assert (get_market_data_bucket(), shared_object_key) in object_store.objects
+
+
+def test_delete_account_rejects_invalid_confirmation_without_deleting(
+    client
+):
+    """Deletion requires exact username confirmation and password."""
+    reg = client.post("/api/auth/register", json={
+        "username": "protectedaccount",
+        "password": "testpass123",
+        "timezone": "America/New_York",
+    })
+    token = reg.get_json()["token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    wrong_confirmation = client.delete(
+        "/api/auth/account",
+        headers=headers,
+        json={
+            "current_password": "testpass123",
+            "username_confirmation": "wrongaccount",
+        },
+    )
+    wrong_password = client.delete(
+        "/api/auth/account",
+        headers=headers,
+        json={
+            "current_password": "wrongpass",
+            "username_confirmation": "protectedaccount",
+        },
+    )
+
+    assert wrong_confirmation.status_code == 400
+    assert wrong_password.status_code == 401
+    assert client.post("/api/auth/refresh").status_code == 200
+
+
+def test_deleted_username_can_be_registered_again(client):
+    """A deleted username is released by account deletion."""
+    reg = client.post("/api/auth/register", json={
+        "username": "reusableaccount",
+        "password": "testpass123",
+        "timezone": "America/New_York",
+    })
+    client.delete(
+        "/api/auth/account",
+        headers={
+            "Authorization": f"Bearer {reg.get_json()['token']}"
+        },
+        json={
+            "current_password": "testpass123",
+            "username_confirmation": "reusableaccount",
+        },
+    )
+
+    response = client.post("/api/auth/register", json={
+        "username": "reusableaccount",
+        "password": "testpass123",
+        "timezone": "America/New_York",
+    })
+
+    assert response.status_code == 201
 
 
 def test_update_symbol_mappings_persists_to_profile(client):

@@ -699,6 +699,19 @@ You must enter:
 - new password
 - confirmation of the new password
 
+### Account
+
+Use the Account section at the bottom of Settings to manage the login account.
+
+To rename the account, enter a 3–50 character username and the current
+password. The new username must be unique and existing sessions remain active.
+
+To delete the account, enter the current password and type the current
+username exactly. Deletion is permanent and removes the login, trades,
+executions, settings, tags, import records, audit records, and media. Shared
+market-data datasets are retained because they can be used by other accounts.
+Export a backup before deleting if the data may be needed later.
+
 ## Common Tasks
 
 ### Import A New Batch Of Trades
