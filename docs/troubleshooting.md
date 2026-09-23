@@ -205,7 +205,5 @@ If Python dependencies drift or the virtual environment is broken:
 ```bash
 cd backend
 rm -rf .venv
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+uv sync
 ```

@@ -280,16 +280,14 @@ Install dependencies and run the API locally:
 ```bash
 cd backend
 cp .env.example .env
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-flask run --port 5000
+uv sync
+uv run flask run --port 5000
 ```
 
 Install development test dependencies:
 
 ```bash
-pip install -r requirements-dev.txt
+uv sync --group dev
 ```
 
 ## Testing
@@ -310,8 +308,7 @@ Run the backend test suite with:
 
 ```bash
 cd backend
-source .venv/bin/activate
-pytest
+uv run --group dev pytest
 ```
 
 The checked-in dev dependencies include `pytest`, `pytest-cov`, `pytest-flask`, and `mongomock`.
