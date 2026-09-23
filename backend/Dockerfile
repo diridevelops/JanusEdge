@@ -1,5 +1,7 @@
 FROM python:3.12-slim
 
+COPY --from=ghcr.io/astral-sh/uv:0.12.18 /uv /uvx /bin/
+
 WORKDIR /app
 
 # Install system dependencies required by some Python packages
@@ -7,13 +9,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy dependency files first for Docker layer caching
-COPY requirements.txt requirements-dev.txt* ./
+# Copy dependency metadata first for Docker layer caching
+COPY pyproject.toml uv.lock ./
 
-# Create virtual environment and install dependencies
-RUN python -m venv .venv \
-    && .venv/bin/pip install --no-cache-dir --upgrade pip \
-    && .venv/bin/pip install --no-cache-dir -r requirements.txt
+# Install locked runtime dependencies without the development group
+RUN uv sync --locked --no-dev
 
 # Copy application code
 COPY . .

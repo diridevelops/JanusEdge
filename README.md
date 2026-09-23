@@ -69,7 +69,8 @@ docker compose down
 
 For mixed local development, install these additional prerequisites:
 
-- Python 3.11+
+- Python 3.12
+- [uv](https://docs.astral.sh/uv/getting-started/installation/)
 - Node.js 20+
 
 If you have not cloned the repository yet, do that first:
@@ -90,10 +91,8 @@ Run the backend locally:
 ```bash
 cd backend
 cp .env.example .env
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-flask run --port 5000
+uv sync
+uv run flask run --port 5000
 ```
 
 Run the frontend locally:
@@ -128,8 +127,7 @@ For mixed local development, pull the latest code, refresh dependencies, and res
 git pull --rebase
 docker compose up mongo minio -d
 cd backend
-source .venv/bin/activate
-pip install -r requirements.txt
+uv sync
 cd ../frontend
 npm install
 ```

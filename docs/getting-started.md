@@ -14,7 +14,8 @@ To simply run the application:
 
 To develop:
 
-- Python 3.11 or newer
+- Python 3.12
+- [uv](https://docs.astral.sh/uv/getting-started/installation/)
 - Node.js 20 or newer
 
 ## Development Modes
@@ -59,10 +60,8 @@ Then run the backend locally:
 ```bash
 cd backend
 cp .env.example .env
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-flask run --port 5000
+uv sync
+uv run flask run --port 5000
 ```
 
 Then run the frontend locally in a second shell:
@@ -104,8 +103,7 @@ Pull the latest code, refresh your dependencies, and restart the local app proce
 git pull --rebase
 docker compose up mongo minio -d
 cd backend
-source .venv/bin/activate
-pip install -r requirements.txt
+uv sync
 cd ../frontend
 npm install
 ```

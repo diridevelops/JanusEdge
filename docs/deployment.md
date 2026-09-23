@@ -37,8 +37,8 @@ The backend image:
 
 - starts from `python:3.12-slim`
 - installs `gcc`
-- creates a virtual environment inside the image
-- installs `requirements.txt`
+- installs the pinned uv binary
+- creates the virtual environment and installs locked runtime dependencies from `uv.lock`
 - runs `flask run --host 0.0.0.0 --port 5000`
 
 ### Frontend Dockerfile
