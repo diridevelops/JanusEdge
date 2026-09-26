@@ -1,4 +1,6 @@
 import { LogOut, Moon, Sun, User } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { useWorkspaceMode } from '../../contexts/WorkspaceModeContext';
 import { useAuth } from '../../hooks/useAuth';
 import { useTheme } from '../../hooks/useTheme';
 import { APP_NAME, APP_TAGLINE } from '../../utils/constants';
@@ -6,8 +8,20 @@ import { JanusEdgeLogo } from '../ui/JanusEdgeLogo';
 
 /** Top header bar with user info and logout. */
 export function Header() {
+  const navigate = useNavigate();
   const { user, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
+  const { activeMode, isSaving, setActiveMode } = useWorkspaceMode();
+
+  async function handleWorkspaceChange(mode: 'real' | 'backtest') {
+    if (mode === activeMode || isSaving) return;
+    try {
+      await setActiveMode(mode);
+      navigate(mode === 'backtest' ? '/backtest/runs' : '/');
+    } catch {
+      // The provider displays an error and keeps the current mode selected.
+    }
+  }
 
   return (
     <header className="sticky top-0 z-20 flex h-20 items-center justify-between gap-6 border-b border-gray-200 bg-white px-6 dark:border-gray-700 dark:bg-gray-800">
@@ -17,6 +31,29 @@ export function Header() {
           <p className="font-app-brand truncate text-2xl text-gray-900 dark:text-gray-100">{APP_NAME}</p>
           <p className="font-tagline-app-brand whitespace-nowrap text-xs text-gray-500 dark:text-gray-400">{APP_TAGLINE}</p>
         </div>
+      </div>
+
+      <div
+        className="flex shrink-0 items-center gap-1 rounded-lg bg-gray-100 p-1 dark:bg-gray-700"
+        role="group"
+        aria-label="Workspace"
+      >
+        {(['real', 'backtest'] as const).map((mode) => (
+          <button
+            key={mode}
+            type="button"
+            aria-pressed={activeMode === mode}
+            disabled={isSaving}
+            onClick={() => void handleWorkspaceChange(mode)}
+            className={`rounded-md px-2.5 py-1.5 text-xs font-semibold capitalize transition-colors disabled:cursor-wait disabled:opacity-60 ${
+              activeMode === mode
+                ? 'bg-white text-gray-900 shadow-sm dark:bg-gray-800 dark:text-gray-100'
+                : 'text-gray-500 hover:text-gray-700 dark:text-gray-300 dark:hover:text-white'
+            }`}
+          >
+            {mode === 'real' ? 'Real' : 'Backtest'}
+          </button>
+        ))}
       </div>
 
       <div className="flex shrink-0 items-center gap-4">

@@ -159,4 +159,4 @@ Follow the reporting process in [SECURITY.md](./SECURITY.md) for vulnerabilities
 
 The original code in this repository is licensed under the Apache License 2.0. See [LICENSE](./LICENSE).
 
-Third-party dependencies and bundled assets remain under their own licenses.
+Third-party dependencies and bundled assets remain under their own licenses. The Backtest chart uses `@getcandlekit/charts` 0.1.0 (MIT) and `lightweight-charts` 5.2.1 (Apache-2.0). Their license texts and required attribution notices are included in [`frontend/public/third-party-notices`](./frontend/public/third-party-notices) and shipped with the frontend.

@@ -30,6 +30,7 @@ from app.whatif.bootstrap import (
     empty_confidence_intervals,
 )
 from app.whatif.constants import DEFAULT_TARGET_R_MULTIPLE
+from app.workspace_mode.service import get_workspace_account_ids
 
 
 _BAR_INTERVAL_SECONDS = {
@@ -89,10 +90,16 @@ def _build_match(
         "user_id": ObjectId(user_id),
         "status": "closed",
     }
+    active_account_ids = get_workspace_account_ids(user_id)
+    match["trade_account_id"] = {
+        "$in": active_account_ids
+    }
     if filters.get("account"):
-        match["trade_account_id"] = ObjectId(
-            filters["account"]
-        )
+        selected_account_id = ObjectId(filters["account"])
+        if selected_account_id in active_account_ids:
+            match["trade_account_id"] = selected_account_id
+        else:
+            match["trade_account_id"] = {"$in": []}
     if filters.get("symbol"):
         symbol = str(filters["symbol"]).strip().upper()
         if symbol:

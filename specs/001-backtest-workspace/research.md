@@ -1,30 +1,36 @@
 # Research: Backtest Candle Replay
 
-Research for the implementation plan was based on the active feature specification, the JanusEdge source tree, the CandleKit repository documentation, and the sibling Dukascopy downloader package documentation. No application implementation or dependency installation was performed.
+Research for the implementation plan was based on the active feature specification, the JanusEdge source tree, the published CandleKit npm artifact, and the sibling Dukascopy downloader package. The CandleKit tarball was downloaded and inspected in a temporary directory; no application dependency has been installed yet.
 
 ## Decisions
 
 ### 1. Use CandleKit’s React integration for the Backtest chart surface
 
-**Decision**: Use the CandleKit 0.1.1 React entry for ChartView and its replay and drawing overlays, including ReplayControls and DrawingToolbar. Use CandleKit’s replay and synchronization engines through a narrow JanusEdge adapter.
+**Decision**: Use the published CandleKit 0.1.0 React entry for ChartView and its replay and drawing overlays, including ReplayControls and DrawingToolbar. Use CandleKit’s replay and synchronization engines through a narrow JanusEdge adapter.
 
-**Rationale**: CandleKit exposes candlestick charting, a deterministic replay controller, multi-chart synchronization, and drawing tools/state through one toolkit. The README documents the React entry, ChartView, ReplayControls, DrawingToolbar, and DrawingController. The user specifically selected CandleKit for the Backtest charting, replay, synchronization, and drawing-state responsibilities. ReplayControls remains the transport UI; bind the specified 1x/5x/20x playback choices to its replay controller, and add a JanusEdge wrapper only for the speed selector if the package component does not expose those exact choices.
+**Rationale**: The npm registry returned E404 for `@getcandlekit/charts@0.1.1`; its package page lists one published version, 0.1.0. I inspected the 0.1.0 tarball (`sha512-E7TQWwcRi5uLJoOrSIoRHvBmrP9FhXUa9QfN5hcj1kitSnYaOmXiMrwO4Hpa5HF1aU9EFC49j1y9XJmkcYaLVQ==`). Its declarations export `ChartView`, `ReplayControls`, `DrawingToolbar`, `ReplayDataSource`, `SyncEngine`, `DrawingEngine`, and `DrawingController`. `ReplayControls` accepts a `speeds` prop, so the required `[1, 5, 20]` rates can be supplied without replacing its speed selector. The user selected CandleKit for the Backtest charting, replay, synchronization, and drawing-state responsibilities, and 0.1.0 satisfies those required APIs.
 
 **Alternatives considered**: Keep building directly on Lightweight Charts and create custom replay, drawing, and sync systems. Rejected because it would duplicate the responsibilities the user assigned to CandleKit. Continue using the existing Real trade chart unchanged at the feature level; only adapt its direct Lightweight Charts API use as required by the shared dependency upgrade.
 
-Sources: [CandleKit README](https://github.com/rohanbeingsocial/candlekit-charts/blob/main/README.md), [CandleKit API reference](https://github.com/rohanbeingsocial/candlekit-charts/blob/main/docs/api-reference.md).
+Sources: [CandleKit npm package and published versions](https://www.npmjs.com/package/%40getcandlekit/charts), [CandleKit 0.1.0 artifact](https://registry.npmjs.org/@getcandlekit/charts/-/charts-0.1.0.tgz), [CandleKit README](https://github.com/rohanbeingsocial/candlekit-charts/blob/main/README.md).
 
 ### 2. Align JanusEdge on Lightweight Charts 5.x and pin CandleKit
 
-**Decision**: Add CandleKit at exact version 0.1.1 and use one locked Lightweight Charts 5.x dependency across the frontend. Adapt the existing direct Lightweight Charts trade-detail wrapper to the 5.x API without changing its user-facing behavior.
+**Decision**: Add CandleKit at exact version 0.1.0 and use one locked Lightweight Charts 5.x dependency across the frontend. Adapt the existing direct Lightweight Charts trade-detail wrapper to the 5.x API without changing its user-facing behavior.
 
 **Rationale**: CandleKit package metadata declares Lightweight Charts 5.x as a peer dependency. JanusEdge currently depends on 4.2.1 and its Real trade chart uses the 4.x addCandlestickSeries API. Loading two major versions in one application would add bundle and type-resolution complexity; one shared version with a small compatibility migration is simpler.
 
-CandleKit’s own README describes the project as early-stage and advises pinning the version. The package metadata lists version 0.1.1, MIT license, React 18/19 peer support, and optional peers for unrelated workspace/indicator features. The main-branch metadata does not establish that every currently documented API is identical to the released npm artifact, so the pinned artifact must be inspected before implementation relies on those APIs.
+CandleKit’s README describes the project as early-stage and advises pinning the version. The registry currently publishes only 0.1.0; 0.1.1 cannot be installed. The 0.1.0 metadata declares MIT licensing, React 18/19 support, Lightweight Charts 5.x, and additional peers for indicator and workspace features. Pin 0.1.0 and keep it behind the adapter so later upgrades remain deliberate.
 
 **Alternatives considered**: Keep Lightweight Charts 4.x in Real mode and install a second 5.x copy for Backtest. Rejected because it creates duplicate runtimes and leaves package-manager peer resolution and type compatibility more complex. Float CandleKit to latest. Rejected because the upstream project explicitly recommends pinning.
 
-Sources: [CandleKit package metadata](https://github.com/rohanbeingsocial/candlekit-charts/blob/main/package.json), [CandleKit README and maturity/license notes](https://github.com/rohanbeingsocial/candlekit-charts/blob/main/README.md).
+Sources: [CandleKit npm metadata](https://www.npmjs.com/package/%40getcandlekit/charts), [CandleKit README and maturity/license notes](https://github.com/rohanbeingsocial/candlekit-charts/blob/main/README.md).
+
+### COMB midpoint and volume semantics
+
+The user selected Dukascopy COMB data represented as midpoint OHLC. Compute each open/high/low/close by averaging the corresponding BID and ASK value from the same minute. Dukascopy COMB files aggregate BID and ASK separately, so averaging the side highs/lows is an estimate and cannot reproduce exact tick-level midpoint extrema without synchronized tick data. Sum `bidVolume` and `askVolume` for the one available chart-volume value; the downloader documents these fields as quoted liquidity at the best bid/ask, not executed trade volume. Label the UI as quoted liquidity.
+
+Source: [Dukascopy downloader README](https://github.com/diridevelops/dukascopy-market-data-cli#decoding-and-aggregation).
 
 ### 3. Use an immutable run-owned one-minute snapshot as replay truth
 
@@ -66,7 +72,7 @@ Sources: [CandleKit sync contracts](https://github.com/rohanbeingsocial/candleki
 
 **Rationale**: CandleKit documents DrawingEngine export/import and drawing-change notifications. Its custom key-value store is synchronous, while JanusEdge API writes are asynchronous. An app adapter can hydrate before enabling edits and debounce backend writes after changes. This keeps drawing state in the same per-user context as the run and allows it to survive browser reloads and user devices.
 
-The current CandleKit repository documentation describes replay as cursor-bounded bar data and drawings as a separate plugin with data-space anchors and persistence. Its drawing guide does not document replay-cursor visibility or drawing-version history. The pinned 0.1.1 artifact must be inspected during integration; preserve any replay-aware visibility behavior it actually provides. If none exists, apply the specified anchor-only filter and do not add drawing creation/edit-time history. This fallback means a drawing created later but anchored entirely in the past may remain visible after rewind, an accepted v1 trade-off.
+The inspected 0.1.0 artifact exposes drawing anchors and DrawingEngine import/export but no replay-cursor visibility behavior. Apply the specified anchor-only filter and do not add drawing creation/edit-time history. This fallback means a drawing created later but anchored entirely in the past may remain visible after rewind, an accepted v1 trade-off.
 
 **Alternatives considered**: Use CandleKit localStorage as the only persistence. Rejected because it is browser-local and does not follow authenticated user/run ownership. Pass JanusEdge’s asynchronous API directly as CandleKit’s KVStore. Rejected because the documented KVStore contract is synchronous. Keep drawings only in memory. Rejected because leaving and reopening a replay would lose the drawing state.
 
@@ -94,10 +100,10 @@ Sources: [sibling downloader instrument catalog API](../../../dukascopy-market-d
 
 ## Implementation-Time Validations
 
-- Inspect the installed CandleKit 0.1.1 artifact and confirm ChartView, ReplayControls, DrawingToolbar, ReplayDataSource, SyncEngine, and DrawingEngine export/import APIs before using repository-main-only API assumptions.
+- The requested CandleKit 0.1.1 version is not published. The 0.1.0 tarball's declarations confirm ChartView, ReplayControls, DrawingToolbar, ReplayDataSource, SyncEngine, DrawingEngine export/import, and configurable speed choices; no replay-aware drawing visibility API is present.
 - Lock a single Lightweight Charts 5.x version and confirm the existing TradeDetail chart still builds and retains its marker, price-line, and theme behavior.
 - Resolve PyArrow >=25 from the Dukascopy package against the backend’s other locked dependencies.
-- Confirm the pinned downloader version exports `fetch_instrument_codes` and the per-day candle API used by catalog loading and UTC-date checkpointing.
+- Pin the sibling downloader at Git revision `e8dd0b7fc01631e5d519b92b6eea34ed2f156957`. Its `fetch_instrument_codes` catalog API and per-UTC-date `run_downloads(instrument, "COMB", date, 1, ...)` API are present. This revision requires PyArrow >=25.0, so the backend's 18.1.0 pin must be raised and locked consistently.
 - Exercise worker lease expiry and recovery after API and worker restarts; verify completed UTC-date staging is reused and the ready transition writes the first-candle cursor with the ready status.
 - Verify the run-list polling stops when no run is preparing and makes no more than five seconds elapse between progress refreshes while preparation continues.
 - Verify sync mapping on tabs with different chart intervals and empty/gap dates.

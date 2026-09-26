@@ -140,6 +140,8 @@ Example response:
 
 The adapter maps time_ms to CandleKit’s UTC epoch-millisecond Bar time. API availability of future historical rows does not authorize the chart to render them: each chart update remains bounded by the shared replay cursor.
 
+`open`, `high`, `low`, and `close` are component-wise arithmetic midpoints of the corresponding COMB BID/ASK OHLC values. Since BID and ASK minute extrema are aggregated independently, the midpoint high and low are estimates rather than exact tick-level midpoint extrema. `volume` is summed bid and ask quoted liquidity, not executed trade volume; the replay UI labels it accordingly.
+
 ## Save the shared replay position
 
 ### PUT /api/backtest/runs/{run_id}/replay-position
@@ -169,7 +171,7 @@ Example response:
 ~~~json
 {
   "interval_minutes": 5,
-  "candlekit_version": "0.1.1",
+  "candlekit_version": "0.1.0",
   "schema_version": 1,
   "revision": 3,
   "serialized_state": null
@@ -182,14 +184,14 @@ Request:
 
 ~~~json
 {
-  "candlekit_version": "0.1.1",
+  "candlekit_version": "0.1.0",
   "schema_version": 1,
   "expected_revision": 3,
-  "serialized_state": "{}"
+  "serialized_state": "[]"
 }
 ~~~
 
-The server validates interval limits, ownership, payload size, and JSON shape, then upserts the opaque exported string by user/run/interval. Return the persisted payload and incremented revision. A revision conflict returns 409 so another open tab cannot silently overwrite a newer drawing set. An empty drawing set is a valid saved state. Preserve replay-aware drawing visibility if provided by the pinned CandleKit artifact; otherwise the frontend filters drawings with any time anchor later than the replay cursor and shows them again when all anchors are at or before it. This fallback does not use drawing creation or edit time and does not alter the persisted payload.
+The server validates interval limits, ownership, payload size, and JSON shape, then upserts the opaque exported string by user/run/interval. CandleKit 0.1.0 exports drawings as a JSON array; the API also accepts a JSON object-shaped empty state. Return the persisted payload and incremented revision. A revision conflict returns 409 so another open tab cannot silently overwrite a newer drawing set. An empty drawing set is a valid saved state. Preserve replay-aware drawing visibility if provided by the pinned CandleKit artifact; otherwise the frontend filters drawings with any time anchor later than the replay cursor and shows them again when all anchors are at or before it. This fallback does not use drawing creation or edit time and does not alter the persisted payload.
 
 ## Status and error behavior
 

@@ -93,6 +93,8 @@ def create_app(config_class=None):
     from app.media import media_bp
     from app.client_config import client_config_bp
     from app.whatif import whatif_bp
+    from app.backtests import backtest_bp
+    from app.workspace_mode import workspace_mode_bp
 
     del market_data_routes
 
@@ -107,6 +109,8 @@ def create_app(config_class=None):
     app.register_blueprint(media_bp)
     app.register_blueprint(client_config_bp)
     app.register_blueprint(whatif_bp)
+    app.register_blueprint(backtest_bp)
+    app.register_blueprint(workspace_mode_bp)
 
     # Initialise MinIO object storage
     try:

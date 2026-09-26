@@ -1,0 +1,113 @@
+.backtest-candlekit {
+  --ck-bg: rgb(255 255 255);
+  --ck-fg: rgb(31 41 55);
+  --ck-muted: rgb(107 114 128);
+  --ck-border: rgb(229 231 235);
+  --ck-accent: rgb(37 99 235);
+  --ck-accent-fg: rgb(255 255 255);
+  --ck-up: rgb(22 163 74);
+  --ck-down: rgb(220 38 38);
+  --ck-warn: rgb(217 119 6);
+  color-scheme: light;
+}
+
+.dark .backtest-candlekit {
+  --ck-bg: rgb(17 24 39);
+  --ck-fg: rgb(229 231 235);
+  --ck-muted: rgb(156 163 175);
+  --ck-border: rgb(55 65 81);
+  --ck-accent: rgb(96 165 250);
+  --ck-accent-fg: rgb(17 24 39);
+  --ck-up: rgb(52 211 153);
+  --ck-down: rgb(248 113 113);
+  --ck-warn: rgb(251 191 36);
+  color-scheme: dark;
+}
+
+.backtest-candlekit .backtest-candlekit-replay {
+  width: 100%;
+  border-radius: 0.75rem;
+  padding: 1rem;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.05);
+}
+
+.backtest-candlekit .backtest-candlekit-chart {
+  height: 100%;
+  min-height: 310px;
+  overflow: hidden;
+  border-radius: 0.5rem;
+}
+
+.backtest-candlekit .backtest-candlekit-chart-view {
+  min-height: 310px;
+}
+
+.backtest-candlekit .backtest-drawing-toolbar {
+  top: 10px;
+  left: 10px;
+}
+
+.backtest-candlekit .backtest-drawing-hint {
+  position: absolute;
+  z-index: 10;
+  bottom: 10px;
+  left: 10px;
+  max-width: calc(100% - 20px);
+  border: 1px solid var(--ck-border);
+  border-radius: var(--ck-radius, 6px);
+  padding: 4px 8px;
+  color: var(--ck-muted);
+  background: var(--ck-bg);
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.backtest-candlekit .backtest-drawing-status {
+  position: absolute;
+  z-index: 20;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  max-width: min(460px, calc(100% - 20px));
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--ck-border);
+  border-radius: var(--ck-radius, 6px);
+  padding: 7px 9px;
+  color: var(--ck-fg);
+  background: var(--ck-bg);
+  font-size: 12px;
+}
+
+.backtest-candlekit .backtest-drawing-status-error {
+  border-color: color-mix(in srgb, var(--ck-down) 40%, var(--ck-border));
+  color: var(--ck-down);
+}
+
+.backtest-candlekit .backtest-drawing-status button {
+  flex: none;
+  border: 1px solid var(--ck-border);
+  border-radius: 4px;
+  padding: 3px 6px;
+  color: var(--ck-accent);
+  background: var(--ck-bg);
+  font-weight: 600;
+}
+
+.backtest-candlekit .backtest-drawing-status button:hover {
+  border-color: var(--ck-accent);
+}
+
+.backtest-candlekit .backtest-drawing-saved {
+  position: absolute;
+  z-index: 9;
+  right: 10px;
+  bottom: 10px;
+  border: 1px solid var(--ck-border);
+  border-radius: var(--ck-radius, 6px);
+  padding: 3px 7px;
+  color: var(--ck-muted);
+  background: var(--ck-bg);
+  font-size: 10px;
+  pointer-events: none;
+}

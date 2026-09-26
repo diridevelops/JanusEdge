@@ -10,6 +10,10 @@ from app.executions import executions_bp
 from app.repositories.execution_repo import (
     ExecutionRepository,
 )
+from app.workspace_mode.service import (
+    get_active_workspace_mode,
+    get_workspace_account_ids,
+)
 from app.utils.errors import NotFoundError
 
 exec_repo = ExecutionRepository()
@@ -53,6 +57,11 @@ def list_executions():
             datetime.fromisoformat(date_to)
         )
 
+    active_mode = get_active_workspace_mode(user_id)
+    filters["trade_account_id"] = {
+        "$in": get_workspace_account_ids(user_id, active_mode)
+    }
+
     executions = exec_repo.find_by_user(
         user_id, filters, skip=skip, limit=per_page
     )
@@ -81,6 +90,11 @@ def get_execution(execution_id):
     if not execution:
         raise NotFoundError("Execution not found.")
     if str(execution["user_id"]) != user_id:
+        raise NotFoundError("Execution not found.")
+    active_mode = get_active_workspace_mode(user_id)
+    if execution.get("trade_account_id") not in get_workspace_account_ids(
+        user_id, active_mode
+    ):
         raise NotFoundError("Execution not found.")
 
     return jsonify({

@@ -11,9 +11,10 @@ dependencies = [
     "marshmallow==3.23.2",
     "minio==7.2.15",
     "pandas==2.2.3",
-    "pyarrow==18.1.0",
+    "pyarrow>=25.0",
     "python-dotenv==1.1.0",
     "gunicorn==23.0.0",
+    "dukascopy-market-data",
 ]
 
 [dependency-groups]
@@ -26,3 +27,6 @@ dev = [
 
 [tool.uv]
 package = false
+
+[tool.uv.sources]
+dukascopy-market-data = { git = "https://github.com/diridevelops/dukascopy-market-data-cli.git", rev = "e8dd0b7fc01631e5d519b92b6eea34ed2f156957" }

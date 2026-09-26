@@ -16,6 +16,7 @@ from app.trades.schemas import (
 )
 from app.trades.service import TradeService
 from app.utils.errors import ValidationError
+from app.workspace_mode.service import require_real_workspace
 
 trade_service = TradeService()
 manual_trade_schema = ManualTradeSchema()
@@ -89,6 +90,7 @@ def create_trade():
     with lot_size and (for non-USD quote currencies) quote_to_usd_rate.
     """
     user_id = get_jwt_identity()
+    require_real_workspace(user_id)
     data = request.get_json()
     if not data:
         raise ValidationError("Request body is required.")

@@ -30,8 +30,20 @@ class NotFoundError(AppError):
     status_code = 404
 
 
+class ForbiddenError(AppError):
+    """Authenticated user is not allowed to perform an action — 403."""
+
+    status_code = 403
+
+
 class DuplicateImportError(AppError):
     """Duplicate import detected — 409 Conflict."""
+
+    status_code = 409
+
+
+class ConflictError(AppError):
+    """A request conflicts with the current persisted resource state — 409."""
 
     status_code = 409
 

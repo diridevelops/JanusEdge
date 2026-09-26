@@ -29,6 +29,7 @@ One user-owned replay request and the saved one-minute candle selection for that
 | start_utc_ms | integer | Inclusive UTC start instant. |
 | end_utc_ms | integer | Exclusive UTC end instant. |
 | source | enum | dukascopy. |
+| source_side | enum | COMB, represented as component-wise midpoint OHLC. |
 | source_interval_minutes | integer | Fixed at 1. |
 | status | enum | preparing or ready. Failed/no-data runs are reported and deleted per the feature requirements. |
 | progress | object | Current preparation stage and a percentage when measurable; otherwise indicates indeterminate progress. |
@@ -80,6 +81,9 @@ Immutable one-minute OHLCV selection for one run, stored as Parquet in MinIO.
 | object_key | string | Unique MinIO key under the user/run namespace. |
 | sha256 | string | Content checksum used to verify the selected data is unchanged. |
 | instrument | string | Exact source instrument. |
+| source_side | enum | COMB. |
+| price_mode | enum | combined_midpoint. |
+| volume_semantics | enum | two_sided_quote_liquidity, not executed trade volume. |
 | interval_minutes | integer | Fixed at 1. |
 | first_time_ms / last_time_ms | integers | UTC epoch-millisecond timestamps of available candles. |
 | candle_count | integer | Number of available source candles. |
@@ -88,7 +92,7 @@ Immutable one-minute OHLCV selection for one run, stored as Parquet in MinIO.
 | partial_gap_summary | object | Summaries of missing one-minute source intervals between available candles within populated dates. |
 | fetched_at | UTC timestamp | Source acquisition completion time. |
 
-Each candle has a UTC timestamp in epoch milliseconds, open, high, low, close, and optional volume. Time rows are sorted, unique, and constrained to the requested UTC range. MinIO objects are addressed by user and run; shared market-data refresh operations never overwrite them.
+Each candle has a UTC timestamp in epoch milliseconds, open, high, low, close, and optional volume. For COMB, each midpoint OHLC field is the arithmetic mean of the corresponding BID and ASK field. The source does not synchronize the intraminute extrema, so midpoint high/low are estimates. Volume is the sum of bid and ask quoted liquidity and is not executed trade volume. Time rows are sorted, unique, and constrained to the requested UTC range. MinIO objects are addressed by user and run; shared market-data refresh operations never overwrite them.
 
 ## BacktestAccount
 

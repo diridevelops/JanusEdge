@@ -15,7 +15,10 @@ class AccountRepository(BaseRepository):
     collection_name = "trade_accounts"
 
     def find_by_user(
-        self, user_id: str, status: str = None
+        self,
+        user_id: str,
+        status: str = None,
+        workspace_mode: str = None,
     ) -> List[dict]:
         """
         Find all trade accounts for a user.
@@ -23,6 +26,8 @@ class AccountRepository(BaseRepository):
         Parameters:
             user_id: User's ObjectId string.
             status: Optional filter by status.
+            workspace_mode: Optional active workspace selector. Missing
+                workspace_mode fields count as Real for existing accounts.
 
         Returns:
             List of trade account documents.
@@ -30,6 +35,13 @@ class AccountRepository(BaseRepository):
         query = {"user_id": ObjectId(user_id)}
         if status:
             query["status"] = status
+        if workspace_mode == "real":
+            query["$or"] = [
+                {"workspace_mode": "real"},
+                {"workspace_mode": {"$exists": False}},
+            ]
+        elif workspace_mode is not None:
+            query["workspace_mode"] = workspace_mode
         return self.find_many(
             query, sort=[("created_at", -1)]
         )

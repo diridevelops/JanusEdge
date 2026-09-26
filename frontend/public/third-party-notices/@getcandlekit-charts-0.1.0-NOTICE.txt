@@ -1,0 +1,35 @@
+@getcandlekit/charts
+Copyright (c) 2026 candlekit contributors
+
+This product is licensed under the MIT License (see LICENSE).
+
+The drawing tools and indicators in this package are original implementations
+written for @getcandlekit/charts; they do not incorporate third-party drawing or
+indicator source.
+
+================================================================================
+Third-party software
+================================================================================
+
+@getcandlekit/charts renders on the following package, declared as a peer
+dependency and resolved at the consumer (its source is not vendored here). Its
+license governs its own code; the attribution below is provided to satisfy that
+license's notice requirement.
+
+--------------------------------------------------------------------------------
+lightweight-charts            (peer dependency)
+  Copyright (c) TradingView, Inc.
+  License: Apache License 2.0
+  https://github.com/tradingview/lightweight-charts
+
+  This product includes the "Lightweight Charts™" library by TradingView, Inc.,
+  used under the Apache 2.0 license. TradingView is a trademark of its owner;
+  this project is not affiliated with or endorsed by TradingView.
+--------------------------------------------------------------------------------
+fancy-canvas                  (transitive of lightweight-charts)
+  License: MIT
+  https://github.com/tradingview/fancy-canvas
+
+  Canvas rendering target used by lightweight-charts and by this package's
+  series primitives.
+--------------------------------------------------------------------------------

@@ -1,4 +1,15 @@
-import { createChart, type IChartApi, type IPriceLine, type ISeriesApi } from 'lightweight-charts';
+import {
+  CandlestickSeries,
+  createChart,
+  createSeriesMarkers,
+  LineStyle,
+  type IChartApi,
+  type IPriceLine,
+  type ISeriesApi,
+  type ISeriesMarkersPluginApi,
+  type SeriesMarker,
+  type Time,
+} from 'lightweight-charts';
 import { useCallback, useEffect, useRef } from 'react';
 import { useTheme } from '../../hooks/useTheme';
 import type { Execution } from '../../types/execution.types';
@@ -91,6 +102,7 @@ export function CandlestickChart({
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
   const { isDark } = useTheme();
 
@@ -103,7 +115,7 @@ export function CandlestickChart({
     [displayTimezone]
   );
 
-  const buildMarkers = useCallback(() => {
+  const buildMarkers = useCallback((): SeriesMarker<Time>[] => {
     if (!executions.length) return [];
 
     const intervalSec = INTERVAL_SECONDS[interval];
@@ -115,7 +127,7 @@ export function CandlestickChart({
         // markers align with the correct candlestick
         const floored = Math.floor(utcEpoch / intervalSec) * intervalSec;
         return {
-          time: shiftTime(floored) as unknown as import('lightweight-charts').Time,
+          time: shiftTime(floored) as Time,
           position: (exec.side === 'Buy' ? 'belowBar' : 'aboveBar') as 'belowBar' | 'aboveBar',
           color: exec.side === 'Buy' ? '#22c55e' : '#ef4444',
           shape: (exec.side === 'Buy' ? 'arrowUp' : 'arrowDown') as 'arrowUp' | 'arrowDown',
@@ -153,7 +165,7 @@ export function CandlestickChart({
       height: 400,
     });
 
-    const series = chart.addCandlestickSeries({
+    const series = chart.addSeries(CandlestickSeries, {
       upColor: '#22c55e',
       downColor: '#ef4444',
       borderUpColor: '#16a34a',
@@ -162,9 +174,11 @@ export function CandlestickChart({
       wickDownColor: '#dc2626',
       priceLineVisible: false,
     });
+    const markers = createSeriesMarkers(series, []);
 
     chartRef.current = chart;
     seriesRef.current = series;
+    markersRef.current = markers;
 
     // Resize observer
     const observer = new ResizeObserver((entries) => {
@@ -177,9 +191,11 @@ export function CandlestickChart({
 
     return () => {
       observer.disconnect();
+      markers.detach();
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
+      markersRef.current = null;
     };
   }, [isDark]);
 
@@ -214,7 +230,7 @@ export function CandlestickChart({
     priceLinesRef.current = [];
 
     const data = ohlcData.map((d) => ({
-      time: shiftTime(d.time) as unknown as import('lightweight-charts').Time,
+      time: shiftTime(d.time) as Time,
       open: d.open,
       high: d.high,
       low: d.low,
@@ -225,7 +241,7 @@ export function CandlestickChart({
 
     // Set markers
     const markers = buildMarkers();
-    seriesRef.current.setMarkers(markers);
+    markersRef.current?.setMarkers(markers);
 
     if (!ohlcData.length) return;
 
@@ -235,7 +251,7 @@ export function CandlestickChart({
         price: avgEntryPrice,
         color: '#22c55e',
         lineWidth: 1,
-        lineStyle: 2, // Dashed
+        lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,
         title: 'Avg Entry',
       });
@@ -247,7 +263,7 @@ export function CandlestickChart({
         price: avgExitPrice,
         color: '#ef4444',
         lineWidth: 1,
-        lineStyle: 2,
+        lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,
         title: 'Avg Exit',
       });

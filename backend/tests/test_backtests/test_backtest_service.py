@@ -1,0 +1,154 @@
+"""Backtest run validation and account-creation contract tests."""
+
+from datetime import datetime, timezone
+
+import pytest
+
+from app.extensions import mongo
+from app.utils.errors import ValidationError
+
+
+INSTRUMENTS = ["EUR-USD", "GBP-USD"]
+
+
+@pytest.fixture
+def backtest_service(monkeypatch):
+    """Use a fixed catalog without reaching Dukascopy or the network."""
+    import app.backtests.service as service_module
+
+    monkeypatch.setattr(
+        service_module, "fetch_instrument_codes", lambda: INSTRUMENTS
+    )
+    return service_module.BacktestService()
+
+
+def _new_run(
+    service,
+    *,
+    instrument="EUR-USD",
+    start_date="2026-03-29",
+    end_date="2026-03-29",
+    display_timezone="Europe/Rome",
+):
+    return service.create_run(
+        user_id="507f1f77bcf86cd799439011",
+        instrument=instrument,
+        start_date=start_date,
+        end_date=end_date,
+        display_timezone=display_timezone,
+    )
+
+
+def test_create_run_validates_instrument_against_current_catalog(
+    app, backtest_service
+):
+    """An instrument outside the current source catalog creates nothing."""
+    with app.app_context(), pytest.raises(ValidationError):
+        _new_run(backtest_service, instrument="NOT-A-SYMBOL")
+
+    assert mongo.db.backtest_runs.count_documents({}) == 0
+    assert mongo.db.trade_accounts.count_documents(
+        {"backtest_run_id": {"$exists": True}}
+    ) == 0
+    assert mongo.db.backtest_preparation_jobs.count_documents({}) == 0
+
+
+def test_create_run_rejects_unknown_iana_timezone_without_side_effects(
+    app, backtest_service
+):
+    """An invalid display timezone is rejected before run/account/job creation."""
+    with app.app_context(), pytest.raises(ValidationError):
+        _new_run(
+            backtest_service,
+            display_timezone="Mars/Olympus",
+        )
+
+    assert mongo.db.backtest_runs.count_documents({}) == 0
+    assert mongo.db.trade_accounts.count_documents(
+        {"backtest_run_id": {"$exists": True}}
+    ) == 0
+    assert mongo.db.backtest_preparation_jobs.count_documents({}) == 0
+
+
+def test_create_run_converts_inclusive_display_dates_to_utc_day_bounds(
+    app, backtest_service
+):
+    """Europe/Rome DST start day spans 23 hours in UTC, with an exclusive end."""
+    with app.app_context():
+        result = _new_run(backtest_service)
+        run = mongo.db.backtest_runs.find_one(
+            {"_id": result["id"]}
+        )
+
+    assert run["requested_start_date"] == "2026-03-29"
+    assert run["requested_end_date"] == "2026-03-29"
+    assert run["display_timezone"] == "Europe/Rome"
+    assert datetime.fromtimestamp(
+        run["start_utc_ms"] / 1000, tz=timezone.utc
+    ) == datetime(2026, 3, 28, 23, 0, tzinfo=timezone.utc)
+    assert datetime.fromtimestamp(
+        run["end_utc_ms"] / 1000, tz=timezone.utc
+    ) == datetime(2026, 3, 29, 22, 0, tzinfo=timezone.utc)
+
+
+def test_inclusive_one_calendar_year_limit_and_february_29_rule(
+    app, backtest_service
+):
+    """End date may be the day before the anniversary, including leap starts."""
+    with app.app_context():
+        valid_regular = _new_run(
+            backtest_service,
+            start_date="2025-04-10",
+            end_date="2026-04-09",
+            display_timezone="UTC",
+        )
+        valid_leap = _new_run(
+            backtest_service,
+            start_date="2024-02-29",
+            end_date="2025-02-28",
+            display_timezone="UTC",
+        )
+
+        assert valid_regular["id"]
+        assert valid_leap["id"]
+
+        with pytest.raises(ValidationError):
+            _new_run(
+                backtest_service,
+                start_date="2025-04-10",
+                end_date="2026-04-10",
+                display_timezone="UTC",
+            )
+        with pytest.raises(ValidationError):
+            _new_run(
+                backtest_service,
+                start_date="2024-02-29",
+                end_date="2025-03-01",
+                display_timezone="UTC",
+            )
+
+
+def test_each_run_has_exactly_one_backtest_account(
+    app, backtest_service
+):
+    """Repeatedly creating same-range runs associates one account with each."""
+    with app.app_context():
+        first = _new_run(backtest_service)
+        second = _new_run(backtest_service)
+
+        for run in (first, second):
+            accounts = list(
+                mongo.db.trade_accounts.find(
+                    {"backtest_run_id": run["id"]}
+                )
+            )
+            assert len(accounts) == 1
+            assert accounts[0]["_id"] == run["account_id"]
+
+        account_labels = {
+            account["display_name"]
+            for account in mongo.db.trade_accounts.find(
+                {"backtest_run_id": {"$in": [first["id"], second["id"]]}}
+            )
+        }
+        assert len(account_labels) == 2

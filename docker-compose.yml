@@ -69,6 +69,37 @@ services:
     networks:
       - janusedge-net
 
+  backtest-worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: janusedge-backtest-worker
+    command: ["python", "-m", "app.backtests.worker"]
+    volumes:
+      - ./backend/app:/app/app
+    environment:
+      FLASK_APP: ${FLASK_APP:-run.py}
+      FLASK_ENV: ${FLASK_ENV:-development}
+      MONGO_URI: ${MONGO_URI:-mongodb://mongo:27017/janusedge}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-dev-jwt-secret-change-in-production}
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-change-in-production}
+      MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-janusedge-media}
+      MINIO_MARKET_DATA_BUCKET: ${MINIO_MARKET_DATA_BUCKET:-janusedge-market-data}
+      MINIO_USE_SSL: ${MINIO_USE_SSL:-false}
+      MINIO_PUBLIC_URL: ${MINIO_PUBLIC_URL:-http://localhost:9000}
+      BACKTEST_WORKER_POLL_SECONDS: ${BACKTEST_WORKER_POLL_SECONDS:-2}
+      BACKTEST_JOB_LEASE_SECONDS: ${BACKTEST_JOB_LEASE_SECONDS:-300}
+    depends_on:
+      mongo:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    networks:
+      - janusedge-net
+
   frontend:
     build:
       context: ./frontend

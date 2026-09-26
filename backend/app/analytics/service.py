@@ -15,6 +15,7 @@ from app.extensions import mongo
 from app.models.user import DEFAULT_RISK_BREAKEVEN_R_THRESHOLD
 from app.repositories.user_repo import UserRepository
 from app.utils.trade_metrics import calculate_r_multiple
+from app.workspace_mode.service import get_workspace_account_ids
 
 
 def _parse_date_from(value: str) -> datetime:
@@ -56,10 +57,17 @@ def _build_base_match(
         "status": "closed",
     }
 
+    active_account_ids = get_workspace_account_ids(user_id)
+    match["trade_account_id"] = {
+        "$in": active_account_ids
+    }
+
     if filters.get("account"):
-        match["trade_account_id"] = ObjectId(
-            filters["account"]
-        )
+        selected_account_id = ObjectId(filters["account"])
+        if selected_account_id in active_account_ids:
+            match["trade_account_id"] = selected_account_id
+        else:
+            match["trade_account_id"] = {"$in": []}
 
     if filters.get("symbol"):
         symbol = str(filters["symbol"]).strip()

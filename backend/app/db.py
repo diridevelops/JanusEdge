@@ -133,3 +133,41 @@ def init_db(db: Database) -> None:
     db.media.create_index(
         [("user_id", 1), ("trade_id", 1), ("created_at", 1)]
     )
+
+    # Backtest workspace
+    db.backtest_runs.create_index(
+        [("user_id", 1), ("created_at", -1)]
+    )
+    # Snapshot objects are run-owned and immutable; sparse keeps preparing
+    # runs without a completed snapshot out of this uniqueness constraint.
+    db.backtest_runs.create_index(
+        [("snapshot.object_key", 1)], unique=True, sparse=True
+    )
+    db.trade_accounts.create_index(
+        [("user_id", 1), ("backtest_run_id", 1)],
+        unique=True,
+        partialFilterExpression={"backtest_run_id": {"$exists": True}},
+    )
+    db.backtest_preparation_jobs.create_index(
+        [("run_id", 1)], unique=True
+    )
+    db.backtest_preparation_jobs.create_index(
+        [("state", 1), ("lease_expires_at", 1), ("created_at", 1)]
+    )
+    db.backtest_chart_tabs.create_index(
+        [("user_id", 1), ("run_id", 1), ("id", 1)], unique=True
+    )
+    db.backtest_chart_tabs.create_index(
+        [("user_id", 1), ("run_id", 1), ("position", 1)]
+    )
+    db.backtest_drawing_states.create_index(
+        [
+            ("user_id", 1),
+            ("run_id", 1),
+            ("interval_minutes", 1),
+        ],
+        unique=True,
+    )
+    db.backtest_notices.create_index(
+        [("user_id", 1), ("dismissed", 1), ("created_at", -1)]
+    )

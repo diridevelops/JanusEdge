@@ -11,6 +11,9 @@ from app.repositories.account_repo import (
     AccountRepository,
 )
 from app.utils.errors import NotFoundError, ValidationError
+from app.workspace_mode.service import (
+    get_active_workspace_mode,
+)
 
 account_repo = AccountRepository()
 
@@ -20,7 +23,10 @@ account_repo = AccountRepository()
 def list_accounts():
     """List all trade accounts for the current user."""
     user_id = get_jwt_identity()
-    accounts = account_repo.find_by_user(user_id)
+    accounts = account_repo.find_by_user(
+        user_id,
+        workspace_mode=get_active_workspace_mode(user_id),
+    )
     return jsonify({
         "accounts": [
             account_repo.serialize_doc(a)
@@ -45,6 +51,10 @@ def update_account(account_id):
     if not account:
         raise NotFoundError("Account not found.")
     if str(account["user_id"]) != user_id:
+        raise NotFoundError("Account not found.")
+    if account.get("workspace_mode", "real") != get_active_workspace_mode(
+        user_id
+    ):
         raise NotFoundError("Account not found.")
 
     data = request.get_json()

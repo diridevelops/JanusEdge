@@ -32,6 +32,10 @@ from app.utils.errors import NotFoundError, ValidationError
 from app.utils.trade_metrics import (
     calculate_initial_risk_no_fees,
 )
+from app.workspace_mode.service import (
+    get_active_workspace_mode,
+    get_workspace_account_ids,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -168,6 +172,18 @@ class TradeService:
             dt_to = _parse_date_to(date_to)
             filters.setdefault("entry_time", {})
             filters["entry_time"]["$lte"] = dt_to
+
+        workspace_mode = get_active_workspace_mode(user_id)
+        allowed_account_ids = get_workspace_account_ids(
+            user_id, workspace_mode
+        )
+        requested_account_id = filters.get("trade_account_id")
+        if requested_account_id is None:
+            filters["trade_account_id"] = {
+                "$in": allowed_account_ids
+            }
+        elif requested_account_id not in allowed_account_ids:
+            filters["trade_account_id"] = {"$in": []}
 
         direction = -1 if sort_dir == "desc" else 1
         skip = (page - 1) * per_page
@@ -644,6 +660,11 @@ class TradeService:
         if str(trade["user_id"]) != user_id:
             raise NotFoundError("Trade not found.")
         if trade.get("status") == "deleted":
+            raise NotFoundError("Trade not found.")
+        active_mode = get_active_workspace_mode(user_id)
+        if trade.get("trade_account_id") not in get_workspace_account_ids(
+            user_id, active_mode
+        ):
             raise NotFoundError("Trade not found.")
         return trade
 
@@ -1412,13 +1433,7 @@ class TradeService:
         self, user_id: str, trade_id: str
     ) -> dict:
         """Detect a suggested wishful stop from stored 1-minute OHLC bars."""
-        trade = self.trade_repo.find_by_id(trade_id)
-        if not trade:
-            raise NotFoundError("Trade not found.")
-        if str(trade["user_id"]) != user_id:
-            raise NotFoundError("Trade not found.")
-        if trade.get("status") == "deleted":
-            raise NotFoundError("Trade not found.")
+        trade = self._get_trade_or_raise(user_id, trade_id)
         if trade.get("net_pnl", 0) >= 0:
             raise ValidationError(
                 "Wishful stop detection is only available for losing trades."
@@ -1487,13 +1502,7 @@ class TradeService:
         Raises:
             NotFoundError: If trade not found.
         """
-        trade = self.trade_repo.find_by_id(trade_id)
-        if not trade:
-            raise NotFoundError("Trade not found.")
-        if str(trade["user_id"]) != user_id:
-            raise NotFoundError("Trade not found.")
-        if trade.get("status") == "deleted":
-            raise NotFoundError("Trade not found.")
+        trade = self._get_trade_or_raise(user_id, trade_id)
 
         self._validate_stop_analysis_updates(trade, data)
 
@@ -1633,11 +1642,7 @@ class TradeService:
         Raises:
             NotFoundError: If trade not found.
         """
-        trade = self.trade_repo.find_by_id(trade_id)
-        if not trade:
-            raise NotFoundError("Trade not found.")
-        if str(trade["user_id"]) != user_id:
-            raise NotFoundError("Trade not found.")
+        trade = self._get_trade_or_raise(user_id, trade_id)
 
         self._delete_trade_media(user_id, trade_id)
         self.exec_repo.delete_many(
@@ -1666,11 +1671,7 @@ class TradeService:
         Raises:
             NotFoundError: If trade not found.
         """
-        trade = self.trade_repo.find_by_id(trade_id)
-        if not trade:
-            raise NotFoundError("Trade not found.")
-        if str(trade["user_id"]) != user_id:
-            raise NotFoundError("Trade not found.")
+        trade = self._get_trade_or_raise(user_id, trade_id)
 
         self.trade_repo.restore(trade_id)
         trade = self.trade_repo.find_by_id(trade_id)
@@ -1687,7 +1688,9 @@ class TradeService:
             List of matching trade documents.
         """
         trades = self.trade_repo.search_text(
-            user_id, query
+            user_id,
+            query,
+            workspace_mode=get_active_workspace_mode(user_id),
         )
         return [
             self.trade_repo.serialize_doc(t)
@@ -1696,7 +1699,10 @@ class TradeService:
 
     def list_symbols(self, user_id: str) -> list:
         """Return distinct symbols for a user's closed trades."""
-        return self.trade_repo.distinct_symbols(user_id)
+        return self.trade_repo.distinct_symbols(
+            user_id,
+            workspace_mode=get_active_workspace_mode(user_id),
+        )
 
     def _resolve_tags(
         self, user_id: str, tag_names: list

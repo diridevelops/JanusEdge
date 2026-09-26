@@ -16,10 +16,10 @@ description: "Dependency-ordered implementation tasks for Backtest Candle Replay
 
 **Purpose**: Resolve library and data-provider compatibility before feature implementation.
 
-- [ ] T001 Inspect the pinned `@getcandlekit/charts@0.1.1` artifact for the `ChartView`, `ReplayControls`, `DrawingToolbar`, `ReplayDataSource`, `SyncEngine`, and `DrawingEngine` APIs, including whether `ReplayControls` exposes 1x/5x/20x speeds; record verified exports in `specs/001-backtest-workspace/research.md`, and if a required core API is missing, identify a compatible CandleKit release before updating the dependency rather than substituting another chart library.
-- [ ] T002 Pin CandleKit and one compatible `lightweight-charts` 5.x version, add Vitest and a frontend test script, and update the lockfile in `frontend/package.json` and `frontend/package-lock.json`.
-- [ ] T003 Add the Dukascopy downloader as a pinned Git dependency, confirm its `fetch_instrument_codes` catalog and per-day download API, and reconcile its PyArrow 25+ requirement with the backend dependency set in `backend/pyproject.toml` and `backend/uv.lock`.
-- [ ] T004 Adapt the existing Real trade chart to the Lightweight Charts 5.x API while preserving its markers, price lines, interval selector, and theme behavior in `frontend/src/components/charts/CandlestickChart.tsx`.
+- [X] T001 Verify the requested `@getcandlekit/charts@0.1.1` release is unavailable, inspect the published 0.1.0 artifact for required React, replay, sync, drawing, and speed APIs, and record the compatible version in `specs/001-backtest-workspace/research.md`.
+- [X] T002 Pin CandleKit 0.1.0 and one compatible `lightweight-charts` 5.x version, add Vitest and a frontend test script, and update the lockfile in `frontend/package.json` and `frontend/package-lock.json`.
+- [X] T003 Add the Dukascopy downloader as a pinned Git dependency, confirm its `fetch_instrument_codes` catalog and per-day download API, and reconcile its PyArrow 25+ requirement with the backend dependency set in `backend/pyproject.toml` and `backend/uv.lock`.
+- [X] T004 Adapt the existing Real trade chart to the Lightweight Charts 5.x API while preserving its markers, price lines, interval selector, and theme behavior in `frontend/src/components/charts/CandlestickChart.tsx`.
 
 ---
 
@@ -27,9 +27,9 @@ description: "Dependency-ordered implementation tasks for Backtest Candle Replay
 
 **Purpose**: Add shared persistence and API boundaries required by all Backtest stories.
 
-- [ ] T005 [P] Add MongoDB indexes for user-scoped run lookups, unique run-to-account and run-to-preparation-job associations, queued/expired-lease job claims, immutable snapshot identity, per-run chart-tab identity, and per-user/run/interval drawing state in `backend/app/db.py`.
-- [ ] T006 [P] Create and register the authenticated Backtest Flask blueprint in `backend/app/backtests/__init__.py` and `backend/app/__init__.py`.
-- [ ] T007 [P] Define shared instrument-catalog, run, preparation-notice, candle, replay-position, chart-tab, and drawing API types and request helpers in `frontend/src/types/backtest.types.ts` and `frontend/src/api/backtests.api.ts`.
+- [X] T005 [P] Add MongoDB indexes for user-scoped run lookups, unique run-to-account and run-to-preparation-job associations, queued/expired-lease job claims, immutable snapshot identity, per-run chart-tab identity, and per-user/run/interval drawing state in `backend/app/db.py`.
+- [X] T006 [P] Create and register the authenticated Backtest Flask blueprint in `backend/app/backtests/__init__.py` and `backend/app/__init__.py`.
+- [X] T007 [P] Define shared instrument-catalog, run, preparation-notice, candle, replay-position, chart-tab, and drawing API types and request helpers in `frontend/src/types/backtest.types.ts` and `frontend/src/api/backtests.api.ts`.
 
 ---
 
@@ -41,16 +41,16 @@ description: "Dependency-ordered implementation tasks for Backtest Candle Replay
 
 ### Tests for User Story 1
 
-- [ ] T008 [P] [US1] Add pytest coverage for reading/updating a user's workspace mode, ownership, and the default Real mode in `backend/tests/test_workspace_mode/test_workspace_mode_routes.py`.
-- [ ] T009 [P] [US1] Add pytest coverage for legacy accounts defaulting to Real, mode-filtered trade/account/report results, and blocked Backtest trade-import/manual-entry writes in `backend/tests/test_workspace_mode/test_workspace_mode_isolation.py`.
+- [X] T008 [P] [US1] Add pytest coverage for reading/updating a user's workspace mode, ownership, and the default Real mode in `backend/tests/test_workspace_mode/test_workspace_mode_routes.py`.
+- [X] T009 [P] [US1] Add pytest coverage for legacy accounts defaulting to Real, mode-filtered trade/account/report results, and blocked Backtest trade-import/manual-entry writes in `backend/tests/test_workspace_mode/test_workspace_mode_isolation.py`.
 
 ### Implementation for User Story 1
 
-- [ ] T010 [US1] Implement user-scoped workspace-mode persistence and authenticated read/update routes in `backend/app/workspace_mode/repository.py`, `backend/app/workspace_mode/service.py`, `backend/app/workspace_mode/routes.py`, and `backend/app/workspace_mode/__init__.py`; register the blueprint in `backend/app/__init__.py`.
-- [ ] T011 [US1] Scope account, trade, execution, analytics, calendar, and What-if reads to the active mode, treating documents without a mode as Real, in `backend/app/repositories/account_repo.py`, `backend/app/repositories/trade_repo.py`, `backend/app/trades/service.py`, `backend/app/executions/routes.py`, `backend/app/analytics/routes.py`, `backend/app/analytics/service.py`, and `backend/app/whatif/routes.py`.
-- [ ] T012 [US1] Reject trade import and manual trade creation while Backtest mode is active while preserving their Real-mode behavior in `backend/app/imports/routes.py` and `backend/app/trades/routes.py`.
-- [ ] T013 [US1] Add the workspace-mode API/types and a provider that loads and persists the user's selected mode across navigation and reloads in `frontend/src/api/workspace.api.ts`, `frontend/src/types/workspace.types.ts`, and `frontend/src/contexts/WorkspaceModeContext.tsx`.
-- [ ] T014 [US1] Mount the workspace provider, add a visible mode switcher, route Backtest navigation to the run list, and hide or guard trade import/manual-entry actions in `frontend/src/App.tsx`, `frontend/src/components/layout/AppLayout.tsx`, `frontend/src/components/layout/Sidebar.tsx`, `frontend/src/pages/ImportPage.tsx`, and `frontend/src/pages/ManualTradePage.tsx`.
+- [X] T010 [US1] Implement user-scoped workspace-mode persistence and authenticated read/update routes in `backend/app/workspace_mode/repository.py`, `backend/app/workspace_mode/service.py`, `backend/app/workspace_mode/routes.py`, and `backend/app/workspace_mode/__init__.py`; register the blueprint in `backend/app/__init__.py`.
+- [X] T011 [US1] Scope account, trade, execution, analytics, calendar, and What-if reads to the active mode, treating documents without a mode as Real, in `backend/app/repositories/account_repo.py`, `backend/app/repositories/trade_repo.py`, `backend/app/trades/service.py`, `backend/app/executions/routes.py`, `backend/app/analytics/routes.py`, `backend/app/analytics/service.py`, and `backend/app/whatif/routes.py`.
+- [X] T012 [US1] Reject trade import and manual trade creation while Backtest mode is active while preserving their Real-mode behavior in `backend/app/imports/routes.py` and `backend/app/trades/routes.py`.
+- [X] T013 [US1] Add the workspace-mode API/types and a provider that loads and persists the user's selected mode across navigation and reloads in `frontend/src/api/workspace.api.ts`, `frontend/src/types/workspace.types.ts`, and `frontend/src/contexts/WorkspaceModeContext.tsx`.
+- [X] T014 [US1] Mount the workspace provider, add a visible mode switcher, route Backtest navigation to the run list, and hide or guard trade import/manual-entry actions in `frontend/src/App.tsx`, `frontend/src/components/layout/AppLayout.tsx`, `frontend/src/components/layout/Sidebar.tsx`, `frontend/src/pages/ImportPage.tsx`, and `frontend/src/pages/ManualTradePage.tsx`.
 
 **Checkpoint**: Both modes load independently; returning to Real preserves existing behavior and no Backtest account or activity appears in Real trade-facing sections.
 
@@ -64,20 +64,20 @@ description: "Dependency-ordered implementation tasks for Backtest Candle Replay
 
 ### Tests for User Story 2
 
-- [ ] T015 [P] [US2] Add pytest coverage for catalog-backed instrument validation, display-timezone date conversion, the inclusive one-calendar-year limit, February 29 handling, and exactly one account per run in `backend/tests/test_backtests/test_backtest_service.py`.
-- [ ] T016 [P] [US2] Add pytest coverage for progress, partial and fully empty dates, no-data/failure cleanup, durable job lease recovery and UTC-date checkpoints, retry idempotency, and immutable ready snapshots in `backend/tests/test_backtests/test_dukascopy_provider.py` and `backend/tests/test_backtests/test_backtest_routes.py`.
-- [ ] T017 [P] [US2] Add Vitest coverage for the client-side inclusive year boundary, February 29 rule, and invalid-range rejection in `frontend/src/utils/backtestDates.test.ts`.
+- [X] T015 [P] [US2] Add pytest coverage for catalog-backed instrument validation, display-timezone date conversion, the inclusive one-calendar-year limit, February 29 handling, and exactly one account per run in `backend/tests/test_backtests/test_backtest_service.py`.
+- [X] T016 [P] [US2] Add pytest coverage for progress, partial and fully empty dates, no-data/failure cleanup, durable job lease recovery and UTC-date checkpoints, retry idempotency, and immutable ready snapshots in `backend/tests/test_backtests/test_dukascopy_provider.py` and `backend/tests/test_backtests/test_backtest_routes.py`.
+- [X] T017 [P] [US2] Add Vitest coverage for the client-side inclusive year boundary, February 29 rule, and invalid-range rejection in `frontend/src/utils/backtestDates.test.ts`.
 
 ### Implementation for User Story 2
 
-- [ ] T018 [US2] Define Backtest run, account, coverage, progress, preparation-notice, and durable preparation-job schemas, including lease ownership/expiry and completed UTC-date checkpoints, plus owner-scoped repository operations in `backend/app/backtests/schemas.py` and `backend/app/backtests/repository.py`.
-- [ ] T019 [US2] Validate the instrument against the pinned downloader's current `fetch_instrument_codes` catalog, IANA display timezone, inclusive local dates, UTC day boundaries, and one-calendar-year rule, then create one preparing run, one uniquely labeled account, and one durable preparation job idempotently in `backend/app/backtests/service.py`, `backend/app/backtests/preparation_jobs.py`, `backend/app/models/trade_account.py`, and `backend/app/repositories/account_repo.py`.
-- [ ] T020 [US2] Implement the separate MongoDB-backed preparation worker with atomic expiring leases and lease renewal, recovery of expired jobs, per-UTC-date downloader calls, one-minute OHLCV normalization, measurable/indeterminate progress, empty-date and partial-gap summaries without synthesized candles, durable MinIO date staging and MongoDB date checkpoints, and persisted run progress across API or worker restarts in `backend/app/backtests/preparation_jobs.py`, `backend/app/backtests/worker.py`, `backend/app/backtests/dukascopy_provider.py`, `backend/app/backtests/service.py`, and the `backtest-worker` service in `docker-compose.yml`.
-- [ ] T021 [US2] Assemble completed UTC-date staging into a run-owned immutable MinIO Parquet snapshot with checksum, candle coverage, empty-date, and partial-gap metadata; after confirming at least one candle, update the run to ready and persist cursor index zero plus the first candle timestamp in the same MongoDB run-document write in `backend/app/backtests/snapshot_store.py` and `backend/app/backtests/service.py`.
-- [ ] T022 [US2] Persist a user-scoped notice and immediately remove the run/account/job and staging data after no-data or terminal provider failure; requeue the same job and preserve completed-date checkpoints for manual retry, while worker interruption remains recoverable through its lease, in `backend/app/backtests/repository.py`, `backend/app/backtests/preparation_jobs.py`, and `backend/app/backtests/service.py`.
-- [ ] T023 [US2] Implement authenticated instrument-catalog, create, list, detail, retry, notice-list, and notice-dismissal endpoints with owner filtering and the response shapes in `specs/001-backtest-workspace/contracts/backtest-api.md` in `backend/app/backtests/routes.py` and `backend/app/backtests/schemas.py`.
-- [ ] T024 [US2] Build the new-run form using the instrument catalog endpoint, with start/end dates, display-timezone boundary checks, inline one-year validation, and submission blocking for invalid ranges in `frontend/src/components/backtest/BacktestRunForm.tsx` and `frontend/src/utils/backtestDates.ts`.
-- [ ] T025 [US2] Build the run-list page with ready/preparing states, stage and percentage-or-indeterminate progress, five-second polling while any run prepares (stopping when none do), inline preparation notices, retry/dismiss/edit-range actions, and ready-only navigation in `frontend/src/pages/BacktestRunListPage.tsx` and `frontend/src/components/backtest/BacktestRunList.tsx`.
+- [X] T018 [US2] Define Backtest run, account, coverage, progress, preparation-notice, and durable preparation-job schemas, including lease ownership/expiry and completed UTC-date checkpoints, plus owner-scoped repository operations in `backend/app/backtests/schemas.py` and `backend/app/backtests/repository.py`.
+- [X] T019 [US2] Validate the instrument against the pinned downloader's current `fetch_instrument_codes` catalog, IANA display timezone, inclusive local dates, UTC day boundaries, and one-calendar-year rule, then create one preparing run, one uniquely labeled account, and one durable preparation job idempotently in `backend/app/backtests/service.py`, `backend/app/backtests/preparation_jobs.py`, `backend/app/models/trade_account.py`, and `backend/app/repositories/account_repo.py`.
+- [X] T020 [US2] Implement the separate MongoDB-backed preparation worker with atomic expiring leases and lease renewal, recovery of expired jobs, per-UTC-date downloader calls, one-minute OHLCV normalization, measurable/indeterminate progress, empty-date and partial-gap summaries without synthesized candles, durable MinIO date staging and MongoDB date checkpoints, and persisted run progress across API or worker restarts in `backend/app/backtests/preparation_jobs.py`, `backend/app/backtests/worker.py`, `backend/app/backtests/dukascopy_provider.py`, `backend/app/backtests/service.py`, and the `backtest-worker` service in `docker-compose.yml`.
+- [X] T021 [US2] Assemble completed UTC-date staging into a run-owned immutable MinIO Parquet snapshot with checksum, candle coverage, empty-date, and partial-gap metadata; after confirming at least one candle, update the run to ready and persist cursor index zero plus the first candle timestamp in the same MongoDB run-document write in `backend/app/backtests/snapshot_store.py` and `backend/app/backtests/service.py`.
+- [X] T022 [US2] Persist a user-scoped notice and immediately remove the run/account/job and staging data after no-data or terminal provider failure; requeue the same job and preserve completed-date checkpoints for manual retry, while worker interruption remains recoverable through its lease, in `backend/app/backtests/repository.py`, `backend/app/backtests/preparation_jobs.py`, and `backend/app/backtests/service.py`.
+- [X] T023 [US2] Implement authenticated instrument-catalog, create, list, detail, retry, notice-list, and notice-dismissal endpoints with owner filtering and the response shapes in `specs/001-backtest-workspace/contracts/backtest-api.md` in `backend/app/backtests/routes.py` and `backend/app/backtests/schemas.py`.
+- [X] T024 [US2] Build the new-run form using the instrument catalog endpoint, with start/end dates, display-timezone boundary checks, inline one-year validation, and submission blocking for invalid ranges in `frontend/src/components/backtest/BacktestRunForm.tsx` and `frontend/src/utils/backtestDates.ts`.
+- [X] T025 [US2] Build the run-list page with ready/preparing states, stage and percentage-or-indeterminate progress, five-second polling while any run prepares (stopping when none do), inline preparation notices, retry/dismiss/edit-range actions, and ready-only navigation in `frontend/src/pages/BacktestRunListPage.tsx` and `frontend/src/components/backtest/BacktestRunList.tsx`.
 
 **Checkpoint**: A ready run owns a non-empty immutable candle selection and one account; a failed or empty selection leaves only its dismissible result notice.
 
@@ -91,20 +91,20 @@ description: "Dependency-ordered implementation tasks for Backtest Candle Replay
 
 ### Tests for User Story 3
 
-- [ ] T026 [P] [US3] Add pytest coverage for owner-scoped available-date/day-candle reads and revision-checked cursor writes, including intentional step-back and stale-write rejection, in `backend/tests/test_backtests/test_backtest_replay_routes.py`.
-- [ ] T027 [P] [US3] Add Vitest coverage for UTC-aligned start-inclusive/end-exclusive OHLCV aggregation, active-bar updates, gaps, and cursor-bounded no-lookahead behavior in `frontend/src/utils/backtestCandles.test.ts`.
-- [ ] T028 [P] [US3] Add Vitest coverage for crosshair nearest-prior mapping and outward UTC range rounding across different intervals in `frontend/src/utils/backtestChartSync.test.ts`.
+- [X] T026 [P] [US3] Add pytest coverage for owner-scoped available-date/day-candle reads and revision-checked cursor writes, including intentional step-back and stale-write rejection, in `backend/tests/test_backtests/test_backtest_replay_routes.py`.
+- [X] T027 [P] [US3] Add Vitest coverage for UTC-aligned start-inclusive/end-exclusive OHLCV aggregation, active-bar updates, gaps, and cursor-bounded no-lookahead behavior in `frontend/src/utils/backtestCandles.test.ts`.
+- [X] T028 [P] [US3] Add Vitest coverage for crosshair nearest-prior mapping and outward UTC range rounding across different intervals in `frontend/src/utils/backtestChartSync.test.ts`.
 
 ### Implementation for User Story 3
 
-- [ ] T029 [US3] Implement authenticated available-UTC-date and one-day candle reads from the run's immutable snapshot in `backend/app/backtests/routes.py`, `backend/app/backtests/service.py`, and `backend/app/backtests/snapshot_store.py`.
-- [ ] T030 [US3] Persist the shared source-candle index and timestamp with monotonic revisions, validate each index/time pair against the immutable sequence, accept intentional step-back, and reject stale writes in `backend/app/backtests/repository.py`, `backend/app/backtests/service.py`, and `backend/app/backtests/routes.py`.
-- [ ] T031 [US3] Implement one CandleKit `ReplayController` per run and its `ReplayDataSource` adapter, restore the saved cursor paused on reload, and serialize/coalesce cursor writes in `frontend/src/hooks/useBacktestReplay.ts` and `frontend/src/api/backtests.api.ts`.
-- [ ] T032 [US3] Aggregate only revealed one-minute candles into each UTC-aligned interval using first open, maximum high, minimum low, latest close, and available-volume sum; update bars incrementally on forward replay and rebuild cursor-bounded bars on seek/back-step in `frontend/src/utils/backtestCandles.ts`, `frontend/src/hooks/useBacktestReplay.ts`, and `frontend/src/components/backtest/CandleKitReplayChart.tsx`.
-- [ ] T033 [US3] Integrate CandleKit `ReplayControls` for play, pause, resume, forward/back one-candle steps, timestamp seek, and completion state, binding them to the shared `ReplayController`; add a JanusEdge wrapper only for the 1x/5x/20x speed selector if CandleKit does not expose those choices in `frontend/src/components/backtest/BacktestReplayControls.tsx` and `frontend/src/pages/BacktestReplayPage.tsx`.
-- [ ] T034 [US3] Implement the nonempty, unbounded `PUT /api/backtest/runs/{run_id}/chart-tabs` contract with stable tab ids/order and 1–1,440 whole-minute validation, then restore each tab's interval and retain the last valid selection after inline errors in `backend/app/backtests/routes.py`, `backend/app/backtests/service.py`, `frontend/src/components/backtest/BacktestChartTab.tsx`, `frontend/src/pages/BacktestReplayPage.tsx`, and `frontend/src/api/backtests.api.ts`.
-- [ ] T035 [US3] Route crosshair, pan, and zoom through CandleKit `SyncEngine` with independent default-enabled switches; map positions through UTC, snap crosshairs to the nearest available prior candle, round visible ranges outward, and keep replay synchronization always on in `frontend/src/hooks/useBacktestChartSync.ts` and `frontend/src/components/backtest/BacktestSyncControls.tsx`.
-- [ ] T036 [US3] Build the separate replay detail page with run identity, configured-timezone timestamps, volume display, chart tabs, replay controls, and synchronization controls, and register its route in `frontend/src/pages/BacktestReplayPage.tsx` and `frontend/src/App.tsx`.
+- [X] T029 [US3] Implement authenticated available-UTC-date and one-day candle reads from the run's immutable snapshot in `backend/app/backtests/routes.py`, `backend/app/backtests/service.py`, and `backend/app/backtests/snapshot_store.py`.
+- [X] T030 [US3] Persist the shared source-candle index and timestamp with monotonic revisions, validate each index/time pair against the immutable sequence, accept intentional step-back, and reject stale writes in `backend/app/backtests/repository.py`, `backend/app/backtests/service.py`, and `backend/app/backtests/routes.py`.
+- [X] T031 [US3] Implement one CandleKit `ReplayController` per run and its `ReplayDataSource` adapter, restore the saved cursor paused on reload, and serialize/coalesce cursor writes in `frontend/src/hooks/useBacktestReplay.ts` and `frontend/src/api/backtests.api.ts`.
+- [X] T032 [US3] Aggregate only revealed one-minute candles into each UTC-aligned interval using first open, maximum high, minimum low, latest close, and available-volume sum; update bars incrementally on forward replay and rebuild cursor-bounded bars on seek/back-step in `frontend/src/utils/backtestCandles.ts`, `frontend/src/hooks/useBacktestReplay.ts`, and `frontend/src/components/backtest/CandleKitReplayChart.tsx`.
+- [X] T033 [US3] Integrate CandleKit `ReplayControls` for play, pause, resume, forward/back one-candle steps, timestamp seek, and completion state, binding them to the shared `ReplayController`; add a JanusEdge wrapper only for the 1x/5x/20x speed selector if CandleKit does not expose those choices in `frontend/src/components/backtest/BacktestReplayControls.tsx` and `frontend/src/pages/BacktestReplayPage.tsx`.
+- [X] T034 [US3] Implement the nonempty, unbounded `PUT /api/backtest/runs/{run_id}/chart-tabs` contract with stable tab ids/order and 1–1,440 whole-minute validation, then restore each tab's interval and retain the last valid selection after inline errors in `backend/app/backtests/routes.py`, `backend/app/backtests/service.py`, `frontend/src/components/backtest/BacktestChartTab.tsx`, `frontend/src/pages/BacktestReplayPage.tsx`, and `frontend/src/api/backtests.api.ts`.
+- [X] T035 [US3] Route crosshair, pan, and zoom through CandleKit `SyncEngine` with independent default-enabled switches; map positions through UTC, snap crosshairs to the nearest available prior candle, round visible ranges outward, and keep replay synchronization always on in `frontend/src/hooks/useBacktestChartSync.ts` and `frontend/src/components/backtest/BacktestSyncControls.tsx`.
+- [X] T036 [US3] Build the separate replay detail page with run identity, configured-timezone timestamps, volume display, chart tabs, replay controls, and synchronization controls, and register its route in `frontend/src/pages/BacktestReplayPage.tsx` and `frontend/src/App.tsx`.
 
 **Checkpoint**: All tabs share one saved replay position; higher-timeframe candles use only source bars already replayed, and seeking or stepping backward hides later data.
 
@@ -118,12 +118,12 @@ description: "Dependency-ordered implementation tasks for Backtest Candle Replay
 
 ### Tests for User Story 4
 
-- [ ] T037 [P] [US4] Add pytest coverage for one account per run, unique same-range labels, account-mode separation, and Backtest account selection with no trade records in `backend/tests/test_backtests/test_backtest_accounts.py`.
+- [X] T037 [P] [US4] Add pytest coverage for one account per run, unique same-range labels, account-mode separation, and Backtest account selection with no trade records in `backend/tests/test_backtests/test_backtest_accounts.py`.
 
 ### Implementation for User Story 4
 
-- [ ] T038 [US4] Return the associated run id and generated display label with Backtest account records while preserving Real account response behavior in `backend/app/accounts/routes.py`, `backend/app/repositories/account_repo.py`, `frontend/src/api/accounts.api.ts`, and `frontend/src/types/account.types.ts`.
-- [ ] T039 [US4] Show only active-mode accounts in the Trades selector, identify a selected Backtest run by its instrument/date-range label, and render the specified no-trades empty state in `frontend/src/components/filters/FilterBar.tsx` and `frontend/src/pages/TradeListPage.tsx`.
+- [X] T038 [US4] Return the associated run id and generated display label with Backtest account records while preserving Real account response behavior in `backend/app/accounts/routes.py`, `backend/app/repositories/account_repo.py`, `frontend/src/api/accounts.api.ts`, and `frontend/src/types/account.types.ts`.
+- [X] T039 [US4] Show only active-mode accounts in the Trades selector, identify a selected Backtest run by its instrument/date-range label, and render the specified no-trades empty state in `frontend/src/components/filters/FilterBar.tsx` and `frontend/src/pages/TradeListPage.tsx`.
 
 **Checkpoint**: Selecting a Backtest account identifies its run without showing Real trades or enabling trade recording.
 
@@ -137,16 +137,16 @@ description: "Dependency-ordered implementation tasks for Backtest Candle Replay
 
 ### Tests for User Story 5
 
-- [ ] T040 [P] [US5] Add pytest coverage for owner/run/interval-scoped drawing reads and writes, payload validation, empty saved state, and revision conflicts in `backend/tests/test_backtests/test_backtest_drawings.py`.
-- [ ] T041 [P] [US5] Add Vitest coverage for anchor-only visibility fallback, including hiding any future anchor, restoring at the cursor, and leaving the serialized drawing state unchanged in `frontend/src/utils/backtestDrawings.test.ts`.
+- [X] T040 [P] [US5] Add pytest coverage for owner/run/interval-scoped drawing reads and writes, payload validation, empty saved state, and revision conflicts in `backend/tests/test_backtests/test_backtest_drawings.py`.
+- [X] T041 [P] [US5] Add Vitest coverage for anchor-only visibility fallback, including hiding any future anchor, restoring at the cursor, and leaving the serialized drawing state unchanged in `frontend/src/utils/backtestDrawings.test.ts`.
 
 ### Implementation for User Story 5
 
-- [ ] T042 [US5] Implement owner-scoped drawing get/upsert operations keyed by user, run, and interval with CandleKit/schema versions, payload checks, and revision conflict handling in `backend/app/backtests/repository.py`, `backend/app/backtests/service.py`, `backend/app/backtests/schemas.py`, and `backend/app/backtests/routes.py`.
-- [ ] T043 [US5] Add typed drawing load/save API calls carrying expected revisions in `frontend/src/api/backtests.api.ts` and `frontend/src/types/backtest.types.ts`.
-- [ ] T044 [US5] Integrate CandleKit `DrawingController`, `DrawingEngine`, and `DrawingToolbar` for the standard create/select/reposition/edit/remove tools, and keep edits disabled until saved state is loaded in `frontend/src/components/backtest/CandleKitReplayChart.tsx` and `frontend/src/components/backtest/BacktestChartTab.tsx`.
-- [ ] T045 [US5] Debounce drawing saves, flush pending writes on pause/seek/route exit, persist edits and deletions, handle revision conflicts without overwriting newer state, and preserve pinned-artifact replay-aware visibility or apply the time-anchor-only fallback without filtering creation/edit time in `frontend/src/components/backtest/CandleKitReplayChart.tsx`, `frontend/src/hooks/useBacktestReplay.ts`, and `frontend/src/utils/backtestDrawings.ts`.
-- [ ] T046 [US5] Apply ThemeContext colors to CandleKit canvas and overlays, import its stylesheet once, and scope JanusEdge light/dark CSS overrides to the Backtest chart subtree in `frontend/src/components/backtest/CandleKitReplayChart.tsx`, `frontend/src/styles/backtest-candlekit.css`, and `frontend/src/main.tsx`.
+- [X] T042 [US5] Implement owner-scoped drawing get/upsert operations keyed by user, run, and interval with CandleKit/schema versions, payload checks, and revision conflict handling in `backend/app/backtests/repository.py`, `backend/app/backtests/service.py`, `backend/app/backtests/schemas.py`, and `backend/app/backtests/routes.py`.
+- [X] T043 [US5] Add typed drawing load/save API calls carrying expected revisions in `frontend/src/api/backtests.api.ts` and `frontend/src/types/backtest.types.ts`.
+- [X] T044 [US5] Integrate CandleKit `DrawingController`, `DrawingEngine`, and `DrawingToolbar` for the standard create/select/reposition/edit/remove tools, and keep edits disabled until saved state is loaded in `frontend/src/components/backtest/CandleKitReplayChart.tsx` and `frontend/src/components/backtest/BacktestChartTab.tsx`.
+- [X] T045 [US5] Debounce drawing saves, flush pending writes on pause/seek/route exit, persist edits and deletions, handle revision conflicts without overwriting newer state, and preserve pinned-artifact replay-aware visibility or apply the time-anchor-only fallback without filtering creation/edit time in `frontend/src/components/backtest/CandleKitReplayChart.tsx`, `frontend/src/hooks/useBacktestReplay.ts`, and `frontend/src/utils/backtestDrawings.ts`.
+- [X] T046 [US5] Apply ThemeContext colors to CandleKit canvas and overlays, import its stylesheet once, and scope JanusEdge light/dark CSS overrides to the Backtest chart subtree in `frontend/src/components/backtest/CandleKitReplayChart.tsx`, `frontend/src/styles/backtest-candlekit.css`, and `frontend/src/main.tsx`.
 
 **Checkpoint**: Drawing state survives reloads for the same user/run/timeframe; rewind visibility follows CandleKit behavior or the specified anchor-only fallback without mutating saved state.
 
@@ -156,7 +156,7 @@ description: "Dependency-ordered implementation tasks for Backtest Candle Replay
 
 **Purpose**: Verify package notices, the whole application, and the documented acceptance flows.
 
-- [ ] T047 Review CandleKit MIT and Lightweight Charts attribution requirements and add any required notices to `README.md` and the existing license/notice files.
+- [X] T047 Review CandleKit MIT and Lightweight Charts attribution requirements and add any required notices to `README.md` and the existing license/notice files.
 - [ ] T048 Run the full backend pytest suite and frontend Vitest (`npm test`), lint, and production build commands from `backend/pyproject.toml` and `frontend/package.json`; resolve failures before release.
 - [ ] T049 Run the authenticated browser scenarios in `specs/001-backtest-workspace/quickstart.md`, including catalog validation, Real/Backtest isolation, five-second progress polling, worker/API restart recovery, preparation outcomes, first-cursor persistence, CandleKit replay controls, replay timing and seek behavior, interval synchronization, drawing persistence, theme, and the existing Real chart.
 
@@ -216,4 +216,6 @@ US1 is the first independently testable safety slice. A usable replay MVP requir
 
 - Every implementation task names the primary file(s) to create or change; user-story labels map directly to `spec.md`.
 - `[P]` marks independent tasks on separate files with no unfinished dependencies.
-- No application implementation is part of this task-generation result; these are future implementation tasks.
+- This task list is the implementation checklist; checkmarks record work verified during implementation.
+- T048 remains open: the Backtest/workspace backend suites pass (34 tests), but the full backend suite cannot connect to MongoDB at `localhost:27017`. Frontend Vitest (32 tests), TypeScript, and lint pass; `npm run build` still fails while Vite's default config loader resolves the tracked config. A production build using `vite.config.ts` with Vite's runner loader succeeds, with a large-chunk warning.
+- T049 remains open because the authenticated browser scenarios require the unavailable local MongoDB-backed API and worker services.

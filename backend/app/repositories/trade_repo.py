@@ -20,6 +20,7 @@ class TradeRepository(BaseRepository):
         self,
         user_id: str,
         filters: dict = None,
+        workspace_mode: str = None,
         sort_by: str = "entry_time",
         sort_dir: int = -1,
         skip: int = 0,
@@ -45,6 +46,12 @@ class TradeRepository(BaseRepository):
         }
         if filters:
             query.update(filters)
+        if workspace_mode is not None:
+            query["trade_account_id"] = {
+                "$in": self._workspace_account_ids(
+                    user_id, workspace_mode
+                )
+            }
 
         return self.find_many(
             query,
@@ -54,7 +61,10 @@ class TradeRepository(BaseRepository):
         )
 
     def count_by_user(
-        self, user_id: str, filters: dict = None
+        self,
+        user_id: str,
+        filters: dict = None,
+        workspace_mode: str = None,
     ) -> int:
         """Count trades for a user with optional filters."""
         query = {
@@ -63,7 +73,27 @@ class TradeRepository(BaseRepository):
         }
         if filters:
             query.update(filters)
+        if workspace_mode is not None:
+            query["trade_account_id"] = {
+                "$in": self._workspace_account_ids(
+                    user_id, workspace_mode
+                )
+            }
         return self.count(query)
+
+    @staticmethod
+    def _workspace_account_ids(
+        user_id: str, workspace_mode: str
+    ) -> list[ObjectId]:
+        """Resolve account ids visible in one workspace."""
+        from app.repositories.account_repo import AccountRepository
+
+        return [
+            account["_id"]
+            for account in AccountRepository().find_by_user(
+                user_id, workspace_mode=workspace_mode
+            )
+        ]
 
     def soft_delete(self, trade_id: str) -> bool:
         """
@@ -108,7 +138,10 @@ class TradeRepository(BaseRepository):
         )
 
     def search_text(
-        self, user_id: str, query_text: str
+        self,
+        user_id: str,
+        query_text: str,
+        workspace_mode: str = None,
     ) -> List[dict]:
         """
         Full-text search on trades.
@@ -120,25 +153,41 @@ class TradeRepository(BaseRepository):
         Returns:
             List of matching trade documents.
         """
+        query = {
+            "user_id": ObjectId(user_id),
+            "status": {"$ne": "deleted"},
+            "$text": {"$search": query_text},
+        }
+        if workspace_mode is not None:
+            query["trade_account_id"] = {
+                "$in": self._workspace_account_ids(
+                    user_id, workspace_mode
+                )
+            }
         return self.find_many(
-            {
-                "user_id": ObjectId(user_id),
-                "status": {"$ne": "deleted"},
-                "$text": {"$search": query_text},
-            },
+            query,
             limit=50,
         )
 
     def distinct_symbols(
-        self, user_id: str
+        self,
+        user_id: str,
+        workspace_mode: str = None,
     ) -> List[str]:
         """Return sorted distinct symbols for a user's closed trades."""
+        query = {
+            "user_id": ObjectId(user_id),
+            "status": "closed",
+        }
+        if workspace_mode is not None:
+            query["trade_account_id"] = {
+                "$in": self._workspace_account_ids(
+                    user_id, workspace_mode
+                )
+            }
         symbols = self.collection.distinct(
             "symbol",
-            {
-                "user_id": ObjectId(user_id),
-                "status": "closed",
-            },
+            query,
         )
         return sorted(symbols)
 
