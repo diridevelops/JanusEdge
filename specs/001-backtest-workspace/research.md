@@ -8,7 +8,7 @@ Research for the implementation plan was based on the active feature specificati
 
 **Decision**: Use the CandleKit 0.1.1 React entry for ChartView and its replay and drawing overlays, including ReplayControls and DrawingToolbar. Use CandleKit’s replay and synchronization engines through a narrow JanusEdge adapter.
 
-**Rationale**: CandleKit exposes candlestick charting, a deterministic replay controller, multi-chart synchronization, and drawing tools/state through one toolkit. The README documents the React entry, ChartView, ReplayControls, DrawingToolbar, and DrawingController. The user specifically selected CandleKit for the Backtest charting, replay, synchronization, and drawing-state responsibilities. Bind the specified 1x/5x/20x playback choices to its replay controller; adapt the React control composition if the package component does not expose those exact choices.
+**Rationale**: CandleKit exposes candlestick charting, a deterministic replay controller, multi-chart synchronization, and drawing tools/state through one toolkit. The README documents the React entry, ChartView, ReplayControls, DrawingToolbar, and DrawingController. The user specifically selected CandleKit for the Backtest charting, replay, synchronization, and drawing-state responsibilities. ReplayControls remains the transport UI; bind the specified 1x/5x/20x playback choices to its replay controller, and add a JanusEdge wrapper only for the speed selector if the package component does not expose those exact choices.
 
 **Alternatives considered**: Keep building directly on Lightweight Charts and create custom replay, drawing, and sync systems. Rejected because it would duplicate the responsibilities the user assigned to CandleKit. Continue using the existing Real trade chart unchanged at the feature level; only adapt its direct Lightweight Charts API use as required by the shared dependency upgrade.
 
@@ -32,7 +32,7 @@ Sources: [CandleKit package metadata](https://github.com/rohanbeingsocial/candle
 
 **Rationale**: The existing /market-data/ohlc route reads candles derived from locally imported ticks. It does not download Dukascopy data or guarantee an immutable replay selection. A run-owned snapshot prevents later refreshes from changing historical replay. The sibling dukascopy-market-data package documents both an importable Python API and Parquet output, so the Flask service can use the API directly and stage output without launching a subprocess.
 
-The sibling package requires PyArrow 25 or later, while JanusEdge currently pins PyArrow 18.1.0. Dependency resolution must reconcile that difference and validate the current Pandas combination.
+The sibling package requires PyArrow 25 or later, while JanusEdge currently pins PyArrow 18.1.0. Dependency resolution must reconcile that difference and validate the current Pandas combination. Its `instruments.fetch_instrument_codes` function fetches the current catalog and returns validated, sorted codes; its `candles.run_downloads` function processes one requested UTC date, which supports durable per-date checkpoints. Run-form options and server validation use the same live catalog source.
 
 **Alternatives considered**: Reuse /market-data/ohlc or its shared cache. Rejected because those datasets are generated from imported tick files and can be rebuilt. Download candles in the browser. Rejected because user credentials, persistence, ownership checks, progress, and immutable snapshots belong at the authenticated backend boundary. Duplicate the downloader implementation inside JanusEdge. Rejected because a maintained package API already exists in the adjacent project.
 
@@ -82,11 +82,24 @@ Sources: [CandleKit drawing guide](https://github.com/rohanbeingsocial/candlekit
 
 Sources: [CandleKit architecture](https://github.com/rohanbeingsocial/candlekit-charts/blob/main/ARCHITECTURE.md), [JanusEdge ThemeContext](../../frontend/src/contexts/ThemeContext.tsx), [JanusEdge global styles](../../frontend/src/styles/globals.css).
 
+### 8. Persist preparation jobs and recover them through MongoDB leases
+
+**Decision**: Run preparation in a worker process separate from the Flask API. Store one preparation job per run in MongoDB, claim jobs with atomic expiring leases, and checkpoint completed UTC-date outcomes after writing their staged data to MinIO. Keep the worker as a dedicated Docker Compose service and do not add an external queue service for v1.
+
+**Rationale**: A MongoDB-backed job record survives API and worker restarts and uses persistence and infrastructure already required by JanusEdge. A separate process lets a backend API restart occur without interrupting active downloads. If the worker itself stops, an expired lease permits another worker instance to reclaim the job. Per-date checkpoints match the downloader API and limit recovery to re-fetching only an incomplete date.
+
+**Alternatives considered**: Run downloads in the request process or start an in-memory background thread. Rejected because process restart loses active work and queue state. Add Redis or another broker. Rejected for v1 because durable job state and atomic claim operations can use the existing MongoDB deployment without another service.
+
+Sources: [sibling downloader instrument catalog API](../../../dukascopy-market-data-cli/src/dukascopy_market_data/instruments.py), [sibling downloader per-day API](../../../dukascopy-market-data-cli/src/dukascopy_market_data/candles.py).
+
 ## Implementation-Time Validations
 
 - Inspect the installed CandleKit 0.1.1 artifact and confirm ChartView, ReplayControls, DrawingToolbar, ReplayDataSource, SyncEngine, and DrawingEngine export/import APIs before using repository-main-only API assumptions.
 - Lock a single Lightweight Charts 5.x version and confirm the existing TradeDetail chart still builds and retains its marker, price-line, and theme behavior.
 - Resolve PyArrow >=25 from the Dukascopy package against the backend’s other locked dependencies.
+- Confirm the pinned downloader version exports `fetch_instrument_codes` and the per-day candle API used by catalog loading and UTC-date checkpointing.
+- Exercise worker lease expiry and recovery after API and worker restarts; verify completed UTC-date staging is reused and the ready transition writes the first-candle cursor with the ready status.
+- Verify the run-list polling stops when no run is preparing and makes no more than five seconds elapse between progress refreshes while preparation continues.
 - Verify sync mapping on tabs with different chart intervals and empty/gap dates.
 - Verify drawing load completes before edits are accepted; save and restore state by authenticated user, run, and timeframe.
 - Inspect the pinned drawing implementation for replay-aware visibility; if absent, verify the anchor-only filter hides drawings with future anchors and restores them when all anchors are reached, without creation/edit-time filtering.

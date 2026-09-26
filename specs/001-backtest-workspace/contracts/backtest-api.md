@@ -4,9 +4,23 @@ This contract describes the authenticated Flask API used by the React Backtest p
 
 ## Authentication and ownership
 
-All endpoints require the existing JWT bearer authentication. The backend derives user_id from the JWT and applies owner filtering to every run, candle, account, replay-position, and drawing operation. Request bodies never accept a user_id. Access to another user’s resource returns the same not-found behavior as an unknown id.
+All endpoints require the existing JWT bearer authentication. The backend derives user_id from the JWT and applies owner filtering to every run, preparation job, candle, account, replay-position, and drawing operation. Request bodies never accept a user_id. Access to another user’s resource returns the same not-found behavior as an unknown id.
 
 Timestamps are UTC epoch milliseconds. Candle bars are returned in chronological order with one-minute source interval.
+
+## Supported instruments
+
+### GET /api/backtest/instruments
+
+Returns the current supported-instrument codes exposed by the pinned Dukascopy downloader (`dukascopy_market_data.instruments.fetch_instrument_codes`). The run form uses this response as its selector source.
+
+~~~json
+{
+  "instruments": ["EUR-USD", "GBP-USD"]
+}
+~~~
+
+If the catalog source is unavailable, return a service error and create no run or account. Run creation validates the submitted code against the same current catalog; a code not present in it uses the existing validation-error format.
 
 ## Create a run
 
@@ -23,7 +37,7 @@ Request:
 }
 ~~~
 
-The backend validates the supported instrument, date range, timezone, and inclusive one-calendar-year limit. For a February 29 start, February 28 of the following year is the latest permitted end date. It converts the selected local date boundaries to the equivalent UTC selection, then creates the run and exactly one associated Backtest account before starting preparation.
+The backend validates the submitted instrument against the current catalog from the pinned downloader, along with the date range, timezone, and inclusive one-calendar-year limit. For a February 29 start, February 28 of the following year is the latest permitted end date. It converts the selected local date boundaries to the equivalent UTC selection, then creates the run, exactly one associated Backtest account, and one durable MongoDB preparation job. Preparation is handled by a separate worker process; the HTTP request does not run the download.
 
 Accepted response:
 
@@ -42,17 +56,17 @@ Accepted response:
 }
 ~~~
 
-Return 202 while preparation continues. Invalid input uses the app’s validation-error format. If preparation later returns no data or fails, report the outcome with the instrument/range and remove the run/account as specified by the feature requirements.
+Return 202 while preparation continues. Invalid input uses the app’s validation-error format. If the catalog cannot be fetched, return a service error and create no run/account. If preparation later returns no data or fails terminally, report the outcome with the instrument/range and remove the run, account, job, and staging data as specified by the feature requirements. A worker restart or expired lease is recoverable interruption, not a terminal failure.
 
 ## List and inspect runs
 
 ### GET /api/backtest/runs
 
-Returns the authenticated user’s preparing and ready runs, newest first. Each list entry includes id, instrument, selected date range, generated account label, status, and preparation progress (`stage` plus a percentage when measurable, otherwise null). Failed/no-data records are not retained.
+Returns the authenticated user’s preparing and ready runs, newest first. Each list entry includes id, instrument, selected date range, generated account label, status, and preparation progress (`stage` plus a percentage when measurable, otherwise null). The frontend polls this endpoint every five seconds while at least one run is preparing and stops when none are preparing. Progress is read from MongoDB state updated by the worker. Failed/no-data records are not retained.
 
 ### GET /api/backtest/runs/{run_id}
 
-Returns the owned run detail, account label, available candle coverage, empty dates and partial-gap summary, saved cursor, persisted chart-tab configurations, and status. A preparing run remains on the list page and has no chart detail data. A ready run has at least one chart tab; a newly ready run receives a default 1m tab if the user has not selected another interval.
+Returns the owned run detail, account label, available candle coverage, empty dates and partial-gap summary, saved cursor, persisted chart-tab configurations, and status. A preparing run remains on the list page and has no chart detail data. A ready run has at least one chart tab; a newly ready run receives a default 1m tab if the user has not selected another interval. Its persisted cursor is already initialized to source index zero and the timestamp of its first available candle.
 
 ## Preparation result notices
 
@@ -85,7 +99,7 @@ The endpoint returns the saved tab list, which is included in the run detail res
 
 ### POST /api/backtest/runs/{run_id}/retry
 
-Restarts preparation for the existing owned preparing run and returns 202 with that same run id and account id. This operation is idempotent with respect to run/account creation. It does not permit retrying a ready run.
+Requeues the existing owned preparing run’s durable job and returns 202 with that same run id and account id. This operation is idempotent with respect to job/run/account creation. The worker resumes after the latest completed UTC-date checkpoint and may fetch again only an incomplete date. Worker recovery after an expired lease uses the same checkpoint without requiring this endpoint. Retry does not permit a ready run.
 
 ## CandleKit ReplayDataSource
 
@@ -142,6 +156,8 @@ Request:
 
 The server validates that the run is ready and the index/time pair matches the immutable snapshot. When expected_revision matches, it accepts any valid selected cursor, including an intentional step-back, and increments the revision. A stale revision returns 409. The client serializes/coalesces writes so an older in-flight request cannot overwrite a later selection, and flushes on pause, seek, and route exit.
 
+When a run first becomes ready, the server persists `source_candle_index: 0`, the first available candle’s `time_ms`, and revision zero in the same run-document update that changes status to ready. The frontend uses this stored cursor and starts playback paused.
+
 ## Persist drawing state
 
 ### GET /api/backtest/runs/{run_id}/drawings?interval_minutes={n}
@@ -178,7 +194,7 @@ The server validates interval limits, ownership, payload size, and JSON shape, t
 ## Status and error behavior
 
 - Preparing and ready are the only retained run statuses.
-- Interrupted preparation stays preparing and can be retried.
+- Interrupted preparation stays preparing. A separate worker claims durable MongoDB jobs with expiring leases; after a worker restart or lease expiry, the job resumes from the last completed UTC-date checkpoint. Manual retry requeues the same job.
 - Failed and no-data runs are reported and then deleted with their account.
 - Invalid input and out-of-range requests use the existing validation error shape.
 - Unknown or non-owned run resources return not found.

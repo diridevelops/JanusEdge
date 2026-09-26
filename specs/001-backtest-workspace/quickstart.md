@@ -9,6 +9,7 @@ This guide describes validation to run after implementation. It was not executed
 - Docker Compose for MongoDB and MinIO, or equivalent local services.
 - A configured JanusEdge environment and an authenticated user.
 - Network access for the pinned Dukascopy downloader dependency and selected historical downloads.
+- Network access to the supported-instrument catalog exposed by the pinned downloader.
 
 ## Start the application
 
@@ -26,7 +27,14 @@ uv sync
 uv run flask run --port 5000
 ~~~
 
-In another terminal, start the frontend:
+In a second terminal, start the durable preparation worker. It uses the same backend environment and MongoDB/MinIO services as the API:
+
+~~~powershell
+cd backend
+uv run python -m app.backtests.worker
+~~~
+
+In a third terminal, start the frontend:
 
 ~~~powershell
 cd frontend
@@ -34,21 +42,22 @@ npm ci
 npm run dev
 ~~~
 
-Alternatively, run the full stack with Docker Compose according to the repository README.
+Alternatively, run the full stack with Docker Compose according to the repository README; the `backtest-worker` service must start separately from the API service.
 
 ## End-to-end validation scenarios
 
 1. Sign in and switch to Backtest mode. Confirm Real trade, account, import, and report data do not appear in Backtest; return to Real mode and confirm the existing Real behavior remains available.
-2. Create a run with one supported instrument and an inclusive display-timezone date range within one calendar year. Confirm the run list shows a progress stage and a percentage when measurable (otherwise indeterminate progress), and that the generated Backtest account identifies the instrument and range. Check the February 29 boundary rule.
+2. Confirm the instrument selector is populated from `GET /api/backtest/instruments`. Create a run with one listed instrument and an inclusive display-timezone date range within one calendar year; confirm a code outside the current downloader catalog is rejected without creating a run or account. Confirm the run list shows a progress stage and a percentage when measurable (otherwise indeterminate progress), and that the generated Backtest account identifies the instrument and range. Check the February 29 boundary rule.
 3. Use ranges with fully empty dates, partial gaps, all-no-data, and provider failure. Confirm gap summaries do not introduce synthetic candles; no-data/failure results remain dismissible on the run-list page after the run/account are deleted and offer the specified next action.
 4. Use a range with available candles. Confirm the ready run has coverage and gap summaries, and its stored candle snapshot is run-specific. Refresh shared market data and reopen the run; the replay must still read its original snapshot.
-5. Open the ready run. Confirm the persisted chart tabs and selected intervals restore after reload, that invalid custom intervals leave the last valid interval selected, and that one shared replay cursor drives all tabs. At 5m or another higher interval, step through source candles and verify the active bar updates from only the candles already replayed. Step backward and confirm later candles disappear.
+5. Open the ready run. Confirm its saved cursor is index zero at the first available candle before replay starts, the persisted chart tabs and selected intervals restore after reload, invalid custom intervals leave the last valid interval selected, and one shared replay cursor drives all tabs. Confirm CandleKit ReplayControls provide transport; if its speed selector lacks 1x/5x/20x, confirm only that selector is supplied by the JanusEdge wrapper. At 5m or another higher interval, step through source candles and verify the active bar updates from only the candles already replayed. Step backward and confirm later candles disappear.
 6. Play at 1x, 5x, and 20x. Confirm each rate counts one-minute source candles per second regardless of chart interval. Seek to a gap and beyond the final candle; confirm the specified next-candle/completion behavior and that seeking pauses playback.
 7. Add tabs with different intervals. Confirm replay position is shared and cannot be disabled. Confirm crosshair, pan, and zoom sync start enabled; toggle each independently. When a target has no candle at the exact crosshair time, confirm it uses the nearest prior available candle (or no crosshair when none exists); verify pan/zoom ranges use the same UTC bounds rounded outward to target intervals.
 8. Create, move, edit, and delete drawings. Navigate away and reopen the run; confirm drawings restore for the same user, run, and interval. Rewind and confirm the pinned CandleKit artifact's replay-aware visibility behavior; if absent, confirm drawings with any future anchor are hidden until all anchors are reached again. Under the fallback, also confirm a later-created drawing anchored entirely in the past remains visible after rewind. Open the run as another user and confirm the saved drawings are not visible.
 9. Toggle JanusEdge light/dark mode. Confirm CandleKit canvas, drawing toolbar, replay controls, chart tabs, and sync controls use JanusEdge colors, borders, and button styles.
 10. Confirm the existing Real TradeDetail chart still shows its candlesticks, execution markers, average-entry/exit lines, interval selector, and light/dark colors after the Lightweight Charts 5.x compatibility update.
-11. Exercise interrupted preparation and retry. Confirm retry reuses the same run/account; failed/no-data run records are removed while the user-scoped preparation result remains dismissible.
+11. Exercise interrupted preparation and retry. Confirm retry reuses the same job/run/account and resumes after the latest completed UTC-date checkpoint; only an incomplete date may be fetched again. Restart the API backend while a run is preparing and confirm the separate worker continues. Restart the worker and confirm its expired lease is reclaimed from the last checkpoint. Failed/no-data run records and jobs are removed while the user-scoped preparation result remains dismissible.
+12. While a run is preparing, confirm the run list refreshes progress every five seconds; confirm polling stops after the list has no preparing runs.
 
 ## Automated checks
 
@@ -61,6 +70,7 @@ uv run pytest
 Run from the frontend directory:
 
 ~~~powershell
+npm test
 npm run lint
 npm run build
 ~~~

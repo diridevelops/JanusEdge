@@ -33,20 +33,42 @@ One user-owned replay request and the saved one-minute candle selection for that
 | status | enum | preparing or ready. Failed/no-data runs are reported and deleted per the feature requirements. |
 | progress | object | Current preparation stage and a percentage when measurable; otherwise indicates indeterminate progress. |
 | account_id | ObjectId | The single associated Backtest account. |
+| preparation_job_id | ObjectId/string | The durable worker job associated with this run. |
 | snapshot | object | Immutable snapshot metadata described below. Present when ready. |
 | coverage | object | First/last available candle, candle count, fully empty dates, and summaries of partial gaps. Present when ready. |
-| replay_cursor | object | Saved available-candle index and UTC timestamp. Defaults to the first candle when the run first becomes ready. |
+| replay_cursor | object | Saved available-candle index and UTC timestamp. Initialized to index zero and the first available candle timestamp in the same MongoDB update that marks the run ready. |
 | created_at / updated_at | UTC timestamps | Lifecycle timestamps. |
 
 Invariants:
 
 - Unique ownership and run identity. Every lookup and mutation filters by both user_id and run id.
 - One Backtest account per run, enforced by a unique user_id/run_id association.
+- One durable BacktestPreparationJob per active or ready run, enforced by a unique run_id association.
 - A ready run always references one complete immutable snapshot containing at least one candle.
 - The snapshot never changes after the run is ready; refreshes create a new run and snapshot.
-- A preparing run may be retried after interruption without creating a second run or account.
+- A preparing run may be retried or recovered after interruption without creating a second job, run, or account. Completed UTC-date checkpoints are durable; only an incomplete date may need to be fetched again.
+- The run's status-ready transition and initial cursor (source_candle_index zero, first available timestamp, revision zero) are persisted together in the run document.
 - Cursor position is an index into the immutable ordered list of available one-minute candles. It may not point to an unavailable or later-than-current candle.
 - The current position is persisted as the newest requested cursor, with server-side versioning or ordered writes preventing an older in-flight update from replacing a newer one.
+
+## BacktestPreparationJob
+
+Durable MongoDB job claimed by the separate preparation worker. MongoDB is both the job store and lease coordinator; v1 adds no external queue service. Public stage and percentage are stored on BacktestRun, while this record owns recovery state and date checkpoints.
+
+| Field | Type | Description |
+|---|---|---|
+| id | ObjectId/string | Job identity. |
+| user_id | ObjectId | Authenticated owner; matches the associated run. |
+| run_id | ObjectId/string | Unique associated run. |
+| state | enum | queued, running, or completed. |
+| lease_owner | string/null | Worker identity currently holding the claim. |
+| lease_expires_at | UTC timestamp/null | Expiry after which another worker may atomically reclaim the job. |
+| attempt_count | integer | Number of worker claims. |
+| completed_utc_dates | array | Ordered checkpoints; each item records a UTC date, empty/data outcome, and staged MinIO object key when data exists. |
+| staging_prefix | string | Run-scoped MinIO prefix containing completed per-date results until final snapshot assembly. |
+| created_at / updated_at | UTC timestamps | Job lifecycle and checkpoint update times. |
+
+The worker atomically claims queued jobs or jobs with expired leases, renews its lease while working, writes non-empty date candles to MinIO, then persists the date outcome (including empty) in `completed_utc_dates`. On recovery it skips committed dates and may repeat only the current incomplete date. A completed job remains associated with its ready run. No-data and terminal provider failure create a notice, delete the run/account/job, and remove staged data.
 
 ## BacktestCandleSnapshot
 
@@ -95,7 +117,7 @@ The shared playback position used by all chart tabs for one BacktestRun. Store d
 | revision | integer | Monotonic version to reject stale writes. |
 | updated_at | UTC timestamp | Last persisted cursor update. |
 
-Play/pause/speed are live transport state. On reload, restore the saved cursor and start paused. Every tab observes the same controller and cursor. Backward seek rebuilds the display from data no later than the selected cursor.
+Play/pause/speed are live transport state. When the run becomes ready, the persisted cursor is index zero at the first available candle; on reload, restore the saved cursor and start paused. Every tab observes the same CandleKit controller and cursor. Backward seek rebuilds the display from data no later than the selected cursor.
 
 ## ReplayChartTab
 
@@ -168,6 +190,7 @@ Notices are visible on the run-list page until dismissed and do not cause failed
 
 - One user owns many BacktestRuns.
 - Each BacktestRun has exactly one BacktestAccount and one immutable BacktestCandleSnapshot.
+- Each preparing or ready BacktestRun has exactly one durable BacktestPreparationJob; completed jobs remain for the lifetime of their ready run.
 - Each BacktestRun has one durable ReplayCursor shared by all active chart tabs.
 - Each BacktestRun has zero or more persisted ReplayChartTab configurations and may have zero or more BacktestPreparationNotices for completed failures/no-data outcomes.
 - Each BacktestRun may have zero or more ChartDrawingState documents, one per interval.
