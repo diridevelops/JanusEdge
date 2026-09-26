@@ -123,23 +123,51 @@ The shared playback position used by all chart tabs for one BacktestRun. Store d
 
 Play/pause/speed are live transport state. When the run becomes ready, the persisted cursor is index zero at the first available candle; on reload, restore the saved cursor and start paused. Every tab observes the same CandleKit controller and cursor. Backward seek rebuilds the display from data no later than the selected cursor.
 
-## ReplayChartTab
+## ReplayChartPanel
 
-Persisted chart-tab configuration for one BacktestRun. Tabs are user-owned, restored across navigation/reload, and have no fixed v1 maximum.
+Chart-panel metadata embedded in a `ChartWorkspaceLayout`. A panel is a chart tab that belongs to exactly one tab group in the layout tree. It has no independent replay cursor.
 
 | Field | Type | Description |
 |---|---|---|
-| id | UUID/string | Stable chart-tab identity within the run. |
-| user_id | ObjectId | Authenticated owner. |
-| run_id | ObjectId/string | Shared run. |
-| position | integer | Display order among the run's tabs. |
+| id | UUID/string | Stable chart id, retained when a tab moves or its group is split. |
+| type | enum | `backtest-chart` in v1. |
 | interval_minutes | integer | 1 through 1,440; includes the standard intervals listed in the feature specification. |
-| candle_grouping | enum | Fixed UTC-aligned, start-inclusive/end-exclusive. |
-| created_at / updated_at | UTC timestamps | Tab configuration lifecycle. |
+| title | string, optional | User-visible tab title; defaults to the chart label. |
+| chart_options | object, versioned | Supported chart-specific presentation options; must not contain user or run ownership. |
 
-Each tab derives bars from source candles already emitted through the replay cursor. A higher-timeframe bar uses the first revealed open, maximum revealed high, minimum revealed low, latest revealed close, and sum of available revealed volume. Gaps stay empty; no synthetic bars are produced. Timestamps remain UTC epoch milliseconds and are formatted for the configured display timezone.
+Each chart panel derives bars from source candles already emitted through the replay cursor. A higher-timeframe bar uses the first revealed open, maximum revealed high, minimum revealed low, latest revealed close, and sum of available revealed volume. Gaps stay empty; no synthetic bars are produced. Timestamps remain UTC epoch milliseconds and are formatted for the configured display timezone.
 
-The unique ownership key includes user_id/run_id/id. Interval changes update the existing tab configuration. All changes are scoped to the authenticated owner; tabs do not create independent replay cursors.
+Panel ids are unique in a workspace. Moving a tab changes its tree parent and may unmount/remount its component, but preserves its panel id, interval, drawing scope, and shared replay position.
+
+## ChartWorkspaceLayout
+
+The durable workspace document for one authenticated user and one ready BacktestRun. MongoDB stores one document in `backtest_chart_workspaces` per `(user_id, run_id)`; all API queries derive user_id from authentication.
+
+| Field | Type | Description |
+|---|---|---|
+| id | ObjectId/string | Workspace document identity. |
+| user_id | ObjectId | Authenticated owner. |
+| run_id | ObjectId/string | Owning ready BacktestRun. |
+| schema_version | integer | JanusEdge workspace serialization version; v1 is `1`. |
+| layout_engine | string | `flexlayout-react` adapter identifier for decoding the saved tree. |
+| name | string | Stable workspace name, `default` in v1. |
+| tree | object | Serializable dock tree containing split orientation/weights, tab groups, panel order, and each group's active panel. |
+| panels | ReplayChartPanel map | Chart-panel configurations indexed by stable chart id. |
+| revision | integer | Monotonic revision used for compare-and-swap writes. |
+| created_at / updated_at | UTC timestamps | Workspace lifecycle and last successful save. |
+
+Invariants:
+
+- The unique owner key is `(user_id, run_id)`; the run must be ready and owned by that user.
+- The tree contains at least one chart panel, references each panel id exactly once, and has no dangling panel metadata. Every panel map entry is present in the tree.
+- Panel ids are unique; panel type and schema versions are supported; intervals are whole minutes from 1 through 1,440.
+- Split weights are finite and positive, and each split has at least two children. Tab groups have a valid active chart tab. V1 has no fixed maximum tab count.
+- Layout edits never create a second chart/replay controller for the run. Every panel observes the run's shared replay cursor.
+- A write supplies the revision it read. A matching write persists the replacement and increments revision; a stale write is rejected with the latest revision and cannot silently discard newer layout changes.
+- A new run's first workspace has one 1m chart panel. Closing a chart is rejected if it would leave no chart panel.
+- The backend layout DTO is mapped by a CandleKit `LayoutPersistence` adapter to CandleKit's `WorkspaceLayout` (`id`, `name`, timestamps, tree, and panel instances); the FlexLayout tree and CandleKit runtime model remain isolated from API ownership and revision fields.
+
+Legacy migration: if no workspace exists and `backtest_chart_tabs` contains flat records, translate them in position order into visible sibling chart panes, retaining each id and interval. Flat records contain no prior split topology or active-tab state. If there are no legacy records, create one 1m chart using the single-chart layout. Persist the initialized workspace before enabling workspace edits; concurrent initializations use revision zero compare-and-swap and the loser reloads the saved document.
 
 ## ChartSyncSettings
 
@@ -196,7 +224,7 @@ Notices are visible on the run-list page until dismissed and do not cause failed
 - Each BacktestRun has exactly one BacktestAccount and one immutable BacktestCandleSnapshot.
 - Each preparing or ready BacktestRun has exactly one durable BacktestPreparationJob; completed jobs remain for the lifetime of their ready run.
 - Each BacktestRun has one durable ReplayCursor shared by all active chart tabs.
-- Each BacktestRun has zero or more persisted ReplayChartTab configurations and may have zero or more BacktestPreparationNotices for completed failures/no-data outcomes.
+- Each BacktestRun has zero or one ChartWorkspaceLayout before first open and exactly one after initialization, and may have zero or more BacktestPreparationNotices for completed failures/no-data outcomes.
 - Each BacktestRun may have zero or more ChartDrawingState documents, one per interval.
 - Real accounts and trades are excluded from Backtest queries; Backtest accounts are excluded from Real queries.
 

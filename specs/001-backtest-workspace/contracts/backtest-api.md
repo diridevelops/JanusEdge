@@ -66,7 +66,7 @@ Returns the authenticated user’s preparing and ready runs, newest first. Each 
 
 ### GET /api/backtest/runs/{run_id}
 
-Returns the owned run detail, account label, available candle coverage, empty dates and partial-gap summary, saved cursor, persisted chart-tab configurations, and status. A preparing run remains on the list page and has no chart detail data. A ready run has at least one chart tab; a newly ready run receives a default 1m tab if the user has not selected another interval. Its persisted cursor is already initialized to source index zero and the timestamp of its first available candle.
+Returns the owned run detail, account label, available candle coverage, empty dates and partial-gap summary, saved cursor, and status. A preparing run remains on the list page and has no chart detail data. Its persisted cursor is initialized to source index zero and the timestamp of its first available candle when the run becomes ready. Chart workspace state is loaded through the dedicated chart-workspace routes below.
 
 ## Preparation result notices
 
@@ -78,22 +78,89 @@ Returns the authenticated user's undismissed no-data and failure notices, newest
 
 Dismisses the owned notice. This does not restore or retain the deleted run or account.
 
-## Persist chart-tab configuration
+## Persist the dockable chart workspace
 
-### PUT /api/backtest/runs/{run_id}/chart-tabs
+### GET /api/backtest/runs/{run_id}/chart-workspace
 
-Replaces the owned run's persisted chart-tab configuration. The list has no fixed v1 maximum and MUST contain at least one tab. Each entry contains a stable tab id, display position, and selected interval in whole minutes from 1 through 1,440. Invalid intervals return the existing validation error shape; a rejected update leaves the last valid tab settings unchanged.
+Returns the owned run's saved workspace and revision. The MongoDB document is stored in `backtest_chart_workspaces`, unique by authenticated user and run. If no layout has been initialized yet, `workspace` is null, top-level `revision` is zero, and `legacy_tabs` contains the old flat `backtest_chart_tabs` records in position order. The frontend creates a visible sibling-pane layout from legacy records while preserving each chart id and interval. With no legacy records, it initializes a one-chart, 1m layout. Before mounting the editable workspace, the client saves that initialized layout through the PUT below. Concurrent initializers use `expected_revision: 0`; a loser receives 409 and reloads the saved workspace.
+
+Example, initialized run:
 
 ~~~json
 {
-  "tabs": [
-    {"id": "tab-1", "position": 0, "interval_minutes": 1},
-    {"id": "tab-2", "position": 1, "interval_minutes": 60}
-  ]
+  "workspace": {
+    "schema_version": 1,
+    "layout_engine": "flexlayout-react",
+    "id": "run-123",
+    "name": "default",
+    "created_at": "2026-09-26T10:00:00Z",
+    "updated_at": "2026-09-26T10:00:00Z",
+    "revision": 4,
+    "tree": {
+      "global": {},
+      "borders": [],
+      "layout": {
+        "type": "row",
+        "weight": 100,
+        "children": [{
+          "type": "tabset",
+          "weight": 100,
+          "children": [{
+            "type": "tab",
+            "id": "chart-1",
+            "name": "Chart 1",
+            "component": "backtest-chart",
+            "config": {"id": "chart-1", "kind": "backtest-chart", "config": {"interval_minutes": 1}}
+          }]
+        }]
+      }
+    },
+    "panels": {
+      "chart-1": {"id": "chart-1", "type": "backtest-chart", "interval_minutes": 1}
+    }
+  },
+  "revision": 4,
+  "legacy_tabs": []
 }
 ~~~
 
-The endpoint returns the saved tab list, which is included in the run detail response and restored after navigation or reload.
+The `tree` is the FlexLayout JSON blob serialized by CandleKit's workspace adapter. The `panels` map is JanusEdge chart metadata, mapped to CandleKit panel instances by the frontend `LayoutPersistence` adapter. Ownership fields are never accepted from the client.
+
+### PUT /api/backtest/runs/{run_id}/chart-workspace
+
+Creates or replaces the user's entire workspace for an owned, ready run. `id` is the stable run-scoped workspace id and `name` is `default`; the server sets timestamps and derives user ownership. Request:
+
+~~~json
+{
+  "expected_revision": 4,
+  "workspace": {
+    "schema_version": 1,
+    "layout_engine": "flexlayout-react",
+    "id": "run-123",
+    "name": "default",
+    "tree": {
+      "global": {},
+      "borders": [],
+      "layout": {
+        "type": "row",
+        "weight": 100,
+        "children": [
+          {"type": "tabset", "weight": 50, "children": [{"type": "tab", "id": "chart-1", "name": "Chart 1", "component": "backtest-chart", "config": {"id": "chart-1", "kind": "backtest-chart", "config": {"interval_minutes": 1}}}]},
+          {"type": "tabset", "weight": 50, "children": [{"type": "tab", "id": "chart-2", "name": "Chart 2", "component": "backtest-chart", "config": {"id": "chart-2", "kind": "backtest-chart", "config": {"interval_minutes": 60}}}]}
+        ]
+      }
+    },
+    "panels": {
+      "chart-1": {"id": "chart-1", "type": "backtest-chart", "interval_minutes": 1},
+      "chart-2": {"id": "chart-2", "type": "backtest-chart", "interval_minutes": 60}
+    }
+  }
+}
+~~~
+
+The server derives user_id, validates that the workspace id matches the run, and validates the workspace schema, supported layout engine, tree shape, unique chart ids, chart panel type, interval range (whole minutes 1 through 1,440), active tabs, split weights, and correspondence between tree nodes and panel metadata. A layout must contain at least one chart panel and no fixed v1 maximum applies. A valid matching revision is atomically saved and incremented; return the saved workspace and new revision. A stale `expected_revision` returns 409 with the current revision and does not change stored state. Invalid layout data uses the existing validation-error shape, and any rejected write leaves the last valid workspace unchanged.
+
+The frontend implements CandleKit's `LayoutPersistence` interface over this authenticated API. It debounces and coalesces layout events and serializes writes. If a bootstrap or migration write conflicts, it reloads the winner. If a user edit conflicts, the client preserves the local draft and offers either loading the remote layout or explicitly reapplying the draft against the latest revision; it never automatically retries a stale layout. Local browser storage is not authoritative. Legacy flat records are migrated through the same revision-zero write and may be deleted only after successful workspace persistence; the old records remain read-only migration input until that succeeds.
 
 ## Retry an interrupted run
 
