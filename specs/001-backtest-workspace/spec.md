@@ -6,7 +6,7 @@
 
 **Status**: Draft
 
-**Input**: User description: "Add a Backtest workspace in JanusEdge, separate from Real mode. For now, let users download one-minute historical candles for one instrument and replay them candle by candle. Create one Backtest account per run. Keep real trades and backtest activity separate; defer order entry and trade recording."
+**Input**: User description: "Add a Backtest workspace in JanusEdge, separate from Real mode. Download one-minute historical candles for one instrument; let the chart display a selected timeframe whose active bar updates as each underlying one-minute candle is replayed. Create one Backtest account per run. Keep real trades and backtest activity separate; defer order entry and trade recording."
 
 ## Clarifications
 
@@ -22,6 +22,16 @@
 - Q: If a request completes successfully but finds no candles in the selected date range, should that run be deleted like a failed run or kept as a “No data” entry? → A: Show no-data message, then remove run and account.
 - Q: Should replay controls include a one-candle step-back button as well as the existing forward-step button? → A: Add step-back; hide later candles again.
 - Q: What should happen when a user selects a run that is still preparing? → A: Keep it in the list with inline progress; do not open a detail.
+
+### Session 2026-09-26
+
+- Q: How should the selected chart timeframe advance from the one-minute replay feed? → A: Each replayed one-minute candle updates the active chart candle; a five-minute bar updates five times before closing, and playback speed is measured in one-minute candles per second.
+- Q: Which chart intervals should users be able to choose when replaying the fixed one-minute data? → A: 1m, 5m, 15m, 30m, 1h, 4h, 1d, and custom whole-minute intervals.
+- Q: What limit should custom whole-minute chart intervals have? → A: Cap custom intervals at 1,440 minutes (one day).
+- Q: Should chart bars be grouped on the configured display timezone's clock or on UTC clock boundaries? → A: Use the same deterministic candle grouping as JanusEdge's existing chart: UTC-aligned intervals that include their start and exclude their end; display timezone affects timestamp presentation, not candle membership.
+- Q: How should multiple chart tabs share one replay? → A: Tabs show the same run and instrument at their own timeframes and always share one replay position; replay synchronization cannot be disabled.
+- Q: How should crosshair, pan, and zoom behave across the chart tabs? → A: Replay is always synchronized; crosshair, pan, and zoom synchronization each have an independent on/off control.
+- Q: When a replay page first opens, which defaults should the crosshair, pan, and zoom synchronization controls use? → A: All three synchronization controls start enabled and can be turned off independently.
 
 ## User Scenarios & Testing
 
@@ -84,6 +94,13 @@ As a trader, I want to play, pause, step through, and seek across completed cand
 11. **Given** volume is available for a candle, **When** that candle is displayed, **Then** its volume is available for review.
 12. **Given** a candle has a UTC timestamp, **When** it is displayed, **Then** the user sees the same instant in their configured timezone.
 13. **Given** replay reaches the final available candle, **When** the user advances or continues playback, **Then** the run reports completion and does not advance beyond the selected data.
+14. **Given** the selected chart timeframe is longer than one minute, **When** another one-minute source candle is replayed within the active chart interval, **Then** the active chart candle updates from the source candles seen so far and closes only after its interval is complete.
+15. **Given** the same replay data and chart interval, **When** the user changes the configured display timezone, **Then** the source candles remain grouped into the same UTC-aligned chart bars and only their displayed timestamps change.
+16. **Given** a ready run is open, **When** the user adds chart tabs, **Then** each tab shows the same run's instrument and can use a different chart timeframe.
+17. **Given** a run has multiple chart tabs open, **When** the user plays, pauses, steps, seeks, or changes playback speed, **Then** every tab reflects the same one-minute replay position and replay synchronization cannot be disabled.
+18. **Given** a chart tab is open, **When** the user inspects or navigates its chart, **Then** crosshair inspection, panning, and zooming are available.
+19. **Given** multiple chart tabs are open, **When** the user enables crosshair, pan, or zoom synchronization, **Then** that behavior is shared across tabs; disabling one of these options leaves the other synchronization options and replay synchronization unchanged.
+20. **Given** a replay detail page opens, **When** its chart tabs and synchronization controls appear, **Then** crosshair, pan, and zoom synchronization are enabled by default.
 
 ### User Story 4 - Find a run through its Backtest account (Priority: P2)
 
@@ -130,19 +147,23 @@ As a trader, I want each replay run represented by an account in the Trades work
 - **FR-008**: Each run MUST retain the exact candle selection used for replay so later data refreshes do not change that run's history.
 - **FR-009**: Each run MUST have exactly one automatically created Backtest account, distinct from Real accounts, including when displayed names match. Its label MUST include the instrument and selected date range; runs with the same instrument and range MUST have a short unique suffix to distinguish them.
 - **FR-010**: The Backtest account selector in Trades MUST identify its associated run; a run with no recorded trades MUST display an appropriate empty state.
-- **FR-011**: A newly ready run MUST open at its first available candle. Users MUST be able to play, pause, resume, step forward or backward by one available candle, and seek to a historical timestamp. Stepping backward at the first candle MUST leave replay at that candle. Each run MUST retain its replay position across navigation and app reloads.
-- **FR-012**: Playback MUST support 1x, 5x, and 20x speeds, defined as one, five, and twenty candles per second respectively.
+- **FR-011**: A newly ready run MUST open at its first available one-minute source candle. Users MUST be able to play, pause, resume, step forward or backward by one available source candle, and seek to a historical timestamp. Stepping backward at the first source candle MUST leave replay at that candle. Each run MUST retain its replay position across navigation and app reloads.
+- **FR-012**: Playback MUST support 1x, 5x, and 20x speeds, defined as one, five, and twenty one-minute source candles per second respectively, regardless of the selected chart timeframe.
 - **FR-013**: Seeking MUST position replay at the first available candle at or after the requested timestamp and MUST pause playback. Seeking beyond available data MUST position the run at completion and leave playback paused.
-- **FR-014**: The replay MUST display only data through the current replay position and MUST NOT reveal later candles.
+- **FR-014**: The replay MUST display only source data through the current one-minute replay position and MUST NOT reveal later source candles. When stepping backward, later source candles MUST be hidden again.
 - **FR-015**: Candle timestamps MUST retain their original UTC meaning and be displayed using the user's configured timezone.
 - **FR-016**: Candle volume MUST be available for review when the data source provides it.
 - **FR-017**: No-data results and preparation failures MUST be reported with the affected instrument and range and a relevant next action, then the run and its Backtest account MUST be deleted. Interrupted preparation MUST remain in preparation, MUST NOT be shown as ready, and MUST offer a retry action.
 - **FR-018**: Retrying data preparation for an interrupted run MUST continue that run and MUST NOT create a duplicate run account.
 - **FR-019**: Trade import, manual trade creation, simulated order entry, and trade recording MUST be unavailable in Backtest mode in this version.
 - **FR-020**: Real mode MUST continue to show only real trade activity; Backtest activity MUST NOT enter Real trade-facing reports.
-- **FR-021**: Backtest mode MUST provide a run-list page and a separate replay detail page. Selecting a ready run MUST open its detail page, which identifies the run and presents its candle chart, replay controls, and current replay timestamp.
+- **FR-021**: Backtest mode MUST provide a run-list page and a separate replay detail page. Selecting a ready run MUST open its detail page, which identifies the run and presents one or more adjacent chart tabs, replay controls, and the current replay timestamp.
 - **FR-022**: The run-list page MUST show ready and preparing runs with each run's generated account label and preparation status. Preparing runs MUST show progress inline, and selecting one MUST leave the user on the run-list page. When preparation fails or returns no candles, the app MUST report the outcome and then immediately delete the run and its associated Backtest account; failed and no-data runs MUST NOT be retained in the list.
-- **FR-023**: The run-list page MUST provide a New Run action that opens a form requiring one supported instrument, a start date, and an end date. The form MUST prevent selecting or accepting a date range longer than one year and MUST prevent submission of an over-limit range. Dukascopy and the one-minute interval are fixed for this version; the account label is generated automatically.
+- **FR-023**: The run-list page MUST provide a New Run action that opens a form requiring one supported instrument, a start date, and an end date. The form MUST prevent selecting or accepting a date range longer than one year and MUST prevent submission of an over-limit range. Dukascopy and the one-minute source interval are fixed for this version; the account label is generated automatically. Each chart tab MUST offer 1m, 5m, 15m, 30m, 1h, 4h, and 1d chart intervals and MUST let users enter a custom whole-minute interval from 1 through 1,440 minutes.
+- **FR-024**: Chart bars MUST be aggregated from the one-minute source candles using the same fixed, UTC-aligned interval boundaries as JanusEdge's existing chart, independent of the configured display timezone. Each interval MUST include its start boundary and exclude its end boundary. Each bar MUST use the first source candle's open, the highest source high, the lowest source low, the last source candle's close, and the sum of source volume when available; its timestamp MUST identify the start of the interval. Each replayed source candle MUST update the active bar, which MUST remain in progress until its interval ends. Missing source candles MUST NOT be synthesized.
+- **FR-025**: A replay detail page MUST let users open multiple adjacent chart tabs for the same run and instrument, with a separately selected timeframe for each tab. All tabs MUST share the run's one-minute replay position and playback state for play, pause, step, seek, and speed changes. Replay synchronization MUST always be enabled and MUST NOT be user-disableable.
+- **FR-026**: Every chart tab MUST support crosshair inspection, panning, and zooming.
+- **FR-027**: The replay detail page MUST provide separate on/off controls to synchronize crosshair position, horizontal panning, and horizontal zoom across chart tabs. All three controls MUST default to enabled. When enabled, crosshair synchronization MUST align tabs to the same replay timestamp, and pan or zoom synchronization MUST keep their visible time range aligned even when their chart timeframes differ. Each option MUST operate independently; changing one MUST NOT alter another or the always-on replay synchronization.
 
 ### Key Entities
 
@@ -150,6 +171,7 @@ As a trader, I want each replay run represented by an account in the Trades work
 - **Backtest Run**: One replay for one instrument and historical date range, selectable from the Backtest run-list page and opened in its own replay detail page, including its data coverage and replay position.
 - **Backtest Account**: The automatically created account-like grouping for exactly one run, visible in the Trades account selector and labeled with the instrument and date range, with a unique suffix when needed.
 - **Candle Data Selection**: The one-minute OHLC candles and optional volume selected and retained for one run.
+- **Replay Chart Tab**: A chart view for a Backtest run's instrument with its own selected timeframe and the run's shared replay position.
 
 ## Success Criteria
 
@@ -157,19 +179,23 @@ As a trader, I want each replay run represented by an account in the Trades work
 
 - **SC-001**: Across trade-facing sections, 100% of activity shown in Real mode belongs to Real records and no Backtest run or account appears there.
 - **SC-002**: Every Backtest run has exactly one associated Backtest account, and its label lets users distinguish and select only that run, including when runs share an instrument and date range.
-- **SC-003**: Every forward or backward replay step moves by one available candle when possible, and no candle later than the current replay position is visible.
+- **SC-003**: Every forward or backward replay step moves by one available one-minute source candle when possible, and no later source candle is visible.
 - **SC-004**: For every ready run, users can step forward and backward, play, pause, select a supported playback speed, and seek within the available candle data; seeking leaves the replay paused, and returning to a run after navigation or reload restores its last saved position.
 - **SC-005**: No-data and failed requests are reported and removed with their Backtest accounts; interrupted runs remain in preparation with a retry action, and none are presented as ready.
 - **SC-006**: Replaying a ready run after a later data refresh continues to use the candle selection originally associated with that run.
 - **SC-007**: The run form prevents users from accepting or submitting a range longer than one year; every accepted run covers no more than one year, and no account is created for an invalid range.
 - **SC-008**: Every preparing run shows progress in the run-list row, and selecting it does not open a detail page.
-- **SC-009**: Every new run request is entered with one supported instrument and a date range no longer than one year; the data source and one-minute interval are fixed.
+- **SC-009**: Every new run request is entered with one supported instrument and a date range no longer than one year; the data source and one-minute source interval are fixed, and the replay detail offers the specified standard chart intervals and custom whole-minute intervals from 1 through 1,440 minutes.
+- **SC-010**: At each replayed one-minute source candle, the active higher-timeframe chart bar reflects only source candles seen so far and uses the same UTC-aligned interval boundaries as JanusEdge's existing chart; at 5x speed, five source candles are replayed per second regardless of the displayed timeframe.
+- **SC-011**: Each ready run can have multiple adjacent chart tabs for its instrument, each using its own timeframe; all tabs always reflect the same replay position and playback state, with no option to disable replay synchronization.
+- **SC-012**: Crosshair, horizontal pan, and horizontal zoom synchronization start enabled and can each be turned off independently; when enabled, the corresponding time position or visible time range remains aligned across chart tabs without changing replay synchronization.
 
 ## Assumptions
 
-- Version one is completed-candle replay for discretionary review, not developing-candle or tick replay.
+- Replay advances through completed one-minute source candles. A higher-timeframe chart bar may remain in progress and update as each source candle is revealed; tick replay and developing one-minute source candles are out of scope.
 - Each run contains one instrument and one-minute OHLC candles; volume is shown only when available.
 - Selected calendar dates use the user's configured display timezone, with day boundaries converted to UTC; candle timestamps retain their UTC meaning and are displayed in that timezone.
+- The configured display timezone changes how candle timestamps are presented but does not change which one-minute source candles belong to a higher-timeframe chart bar.
 - Market closures and other no-candle dates are gaps, not failed data requests; no artificial candles are generated.
 - Seeking into a gap selects the first available candle at or after the requested time; seeking beyond the data ends the run.
 - Each run automatically receives one Backtest account, even though trade recording is deferred.
@@ -178,6 +204,6 @@ As a trader, I want each replay run represented by an account in the Trades work
 
 - Simulated market, limit, or stop orders; order cancellation or modification; fills; positions; stop-loss or target management.
 - Recording simulated trades, trade P&L, fees, commissions, or slippage.
-- Tick replay, developing candles, synthetic intrabar price paths, or resolving same-candle order ambiguity.
+- Tick replay, developing one-minute source candles, synthetic intrabar paths within a source candle, or resolving same-candle order ambiguity.
 - Multiple instruments in one run.
 - Automated strategy execution or optimization.
