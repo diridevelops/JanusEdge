@@ -137,14 +137,22 @@ export function useBacktestReplay(
     snapshotsRef.current.get(tabId)?.bars ?? []
   ), []);
 
-  const registerTabChart = useCallback((tabId: string, chart: ChartController | null) => {
-    if (chart) {
-      chartControllersRef.current.set(tabId, chart);
-      const snapshot = snapshotsRef.current.get(tabId);
-      chart.setData(snapshot?.bars.map(toBar) ?? []);
-    } else {
+  const registerTabChart = useCallback((
+    tabId: string,
+    chart: ChartController | null
+  ): (() => void) | void => {
+    if (!chart) {
       chartControllersRef.current.delete(tabId);
+      return;
     }
+    chartControllersRef.current.set(tabId, chart);
+    const snapshot = snapshotsRef.current.get(tabId);
+    chart.setData(snapshot?.bars.map(toBar) ?? []);
+    return () => {
+      if (chartControllersRef.current.get(tabId) === chart) {
+        chartControllersRef.current.delete(tabId);
+      }
+    };
   }, []);
 
   const registerDrawingFlusher = useCallback((tabId: string, flush: () => Promise<void> | void) => {
@@ -283,7 +291,9 @@ export function useBacktestReplay(
         (previousReplayState.playing && !nextState.playing)
         || (!nextState.playing && previousReplayState.cursorTimeMs !== nextState.cursor.ts)
       )) {
-        for (const flush of drawingFlushersRef.current.values()) void flush();
+        for (const flush of drawingFlushersRef.current.values()) {
+          void Promise.resolve().then(flush).catch(() => undefined);
+        }
       }
       lastObservedReplayRef.current = {
         cursorTimeMs: nextState.cursor.ts,
@@ -407,7 +417,9 @@ export function useBacktestReplay(
       unsubscribeBar();
       controller.pause();
       void writer.flush();
-      for (const flush of drawingFlushers.values()) void flush();
+      for (const flush of drawingFlushers.values()) {
+        void Promise.resolve().then(flush).catch(() => undefined);
+      }
       drawingFlushers.clear();
       writerRef.current = null;
       for (const chart of chartControllers.values()) chart.setData([]);

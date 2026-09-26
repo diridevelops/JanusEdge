@@ -28,7 +28,9 @@ from app.backtests.schemas import (
     DRAWING_SCHEMA_VERSION,
     MAX_DRAWING_STATE_BYTES,
     create_backtest_run_doc,
+    serialize_chart_workspace,
     serialize_drawing_state,
+    validate_chart_workspace,
 )
 
 
@@ -288,16 +290,14 @@ class BacktestService:
         result = serialize_run(run, account)
         result["tabs"] = []
         if run["status"] == "ready":
-            tabs = self.repository.create_default_chart_tab(user_id, run["_id"])
-            if tabs:
-                result["tabs"] = [
-                    {
-                        "id": tab["id"],
-                        "position": tab["position"],
-                        "interval_minutes": tab["interval_minutes"],
-                    }
-                    for tab in self.repository.list_chart_tabs(user_id, run["_id"])
-                ]
+            result["tabs"] = [
+                {
+                    "id": tab["id"],
+                    "position": tab["position"],
+                    "interval_minutes": tab["interval_minutes"],
+                }
+                for tab in self.repository.list_chart_tabs(user_id, run["_id"])
+            ]
         return result
 
     def get_available_candle_dates(
@@ -436,60 +436,74 @@ class BacktestService:
             raise ConflictError("Backtest run is not ready for replay.")
         return run
 
-    def save_chart_tabs(self, user_id: str, run_id, tabs) -> list[dict]:
-        """Validate and replace the owner's complete ordered tab configuration."""
+    def get_chart_workspace(self, user_id: str, run_id) -> dict:
+        """Load the user's saved layout or read-only legacy tab records."""
         run = self._find_ready_run(user_id, run_id)
-        if not isinstance(tabs, list) or not tabs:
-            raise ValidationError("At least one chart tab is required.")
-
-        normalized = []
-        tab_ids = set()
-        positions = set()
-        for index, tab in enumerate(tabs):
-            if not isinstance(tab, dict):
-                raise ValidationError(f"tabs[{index}] must be an object.")
-            tab_id = tab.get("id")
-            if not isinstance(tab_id, str) or not tab_id.strip():
-                raise ValidationError(f"tabs[{index}].id must be a nonempty string.")
-            position = _require_nonnegative_int(
-                tab.get("position"), f"tabs[{index}].position"
-            )
-            interval = tab.get("interval_minutes")
-            if (
-                isinstance(interval, bool)
-                or not isinstance(interval, int)
-                or interval < 1
-                or interval > 1440
-            ):
-                raise ValidationError(
-                    f"tabs[{index}].interval_minutes must be a whole number "
-                    "from 1 to 1440."
-                )
-            if tab_id in tab_ids:
-                raise ValidationError("Chart tab ids must be unique.")
-            if position in positions:
-                raise ValidationError("Chart tab positions must be unique.")
-            tab_ids.add(tab_id)
-            positions.add(position)
-            normalized.append(
+        document = self.repository.find_chart_workspace(user_id, run["_id"])
+        if document is not None:
+            serialized = serialize_chart_workspace(document)
+            revision = int(document["revision"])
+            legacy_tabs = []
+        else:
+            serialized = None
+            revision = 0
+            legacy_tabs = [
                 {
-                    "id": tab_id,
-                    "position": position,
-                    "interval_minutes": interval,
+                    "id": tab["id"],
+                    "position": tab["position"],
+                    "interval_minutes": tab["interval_minutes"],
                 }
+                for tab in self.repository.list_chart_tabs(user_id, run["_id"])
+            ]
+        return {
+            "workspace": serialized,
+            "revision": revision,
+            "legacy_tabs": legacy_tabs,
+        }
+
+    def save_chart_workspace(
+        self,
+        user_id: str,
+        run_id,
+        *,
+        expected_revision,
+        workspace,
+    ) -> dict:
+        """Validate and CAS-save the complete workspace for an owned run."""
+        run = self._find_ready_run(user_id, run_id)
+        expected_revision = _require_nonnegative_int(
+            expected_revision, "expected_revision"
+        )
+        try:
+            normalized = validate_chart_workspace(workspace, str(run["_id"]))
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from exc
+
+        document = self.repository.compare_and_set_chart_workspace(
+            user_id,
+            run["_id"],
+            expected_revision=expected_revision,
+            workspace=normalized,
+            now=utc_now(),
+        )
+        if document is None:
+            current = self.repository.find_chart_workspace(user_id, run["_id"])
+            current_revision = int(current["revision"]) if current else 0
+            raise ConflictError(
+                "Chart workspace revision is stale.",
+                details=[{"current_revision": current_revision}],
             )
 
-        saved = self.repository.replace_chart_tabs(
-            user_id, run["_id"], normalized, now=utc_now()
-        )
-        return [
-            {
-                "id": tab["id"],
-                "position": tab["position"],
-                "interval_minutes": tab["interval_minutes"],
-            }
-            for tab in saved
-        ]
+        # The legacy records remain the migration source until this successful
+        # revision-zero write commits the replacement workspace.
+        if expected_revision == 0:
+            self.repository.delete_chart_tabs(user_id, run["_id"])
+
+        return {
+            "workspace": serialize_chart_workspace(document),
+            "revision": int(document["revision"]),
+            "legacy_tabs": [],
+        }
 
     def get_drawing_state(
         self, user_id: str, run_id, interval_minutes

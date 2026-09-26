@@ -190,6 +190,7 @@ export function createDrawingStateWriter(options: {
   let draining: Promise<void> | null = null;
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
   let conflicted = false;
+  let lastError: unknown | null = null;
   let flushRequested = false;
   const idleWaiters = new Set<() => void>();
   const debounceMs = Math.max(0, options.debounceMs ?? 400);
@@ -211,9 +212,11 @@ export function createDrawingStateWriter(options: {
           serialized_state: serializedState,
         });
         revision = saved.revision;
+        lastError = null;
         onSaved?.(saved);
       } catch (error: unknown) {
         pending = null;
+        lastError = error;
         if (isRevisionConflict(error)) {
           conflicted = true;
           onConflict?.(error);
@@ -248,9 +251,18 @@ export function createDrawingStateWriter(options: {
     return draining;
   }
 
+  function flush(): Promise<void> {
+    clearDebounce();
+    if (pending !== null && !draining && !conflicted) void startDrain();
+    if (pending === null && !draining) return Promise.resolve();
+    flushRequested = true;
+    return new Promise<void>((resolve) => idleWaiters.add(resolve));
+  }
+
   return {
     enqueue(serializedState: string): void {
       if (conflicted) return;
+      lastError = null;
       pending = serializedState;
       clearDebounce();
       if (flushRequested) {
@@ -262,12 +274,14 @@ export function createDrawingStateWriter(options: {
         void startDrain();
       }, debounceMs);
     },
-    flush(): Promise<void> {
-      clearDebounce();
-      if (pending !== null && !draining && !conflicted) void startDrain();
-      if (pending === null && !draining) return Promise.resolve();
-      flushRequested = true;
-      return new Promise<void>((resolve) => idleWaiters.add(resolve));
+    flush,
+    async flushAndConfirm(): Promise<void> {
+      await flush();
+      if (lastError !== null) {
+        throw lastError instanceof Error
+          ? lastError
+          : new Error('The drawing save was not confirmed.');
+      }
     },
     isConflicted(): boolean {
       return conflicted;

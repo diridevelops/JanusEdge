@@ -94,14 +94,25 @@ def save_replay_position(run_id: str):
     ), 200
 
 
-@backtest_bp.route("/runs/<run_id>/chart-tabs", methods=["PUT"])
+@backtest_bp.route("/runs/<run_id>/chart-workspace", methods=["GET"])
 @jwt_required()
-def save_chart_tabs(run_id: str):
+def get_chart_workspace(run_id: str):
+    return jsonify(
+        backtest_service.get_chart_workspace(get_jwt_identity(), run_id)
+    ), 200
+
+
+@backtest_bp.route("/runs/<run_id>/chart-workspace", methods=["PUT"])
+@jwt_required()
+def save_chart_workspace(run_id: str):
     payload = _request_json()
-    tabs = backtest_service.save_chart_tabs(
-        get_jwt_identity(), run_id, payload.get("tabs")
+    result = backtest_service.save_chart_workspace(
+        get_jwt_identity(),
+        run_id,
+        expected_revision=payload.get("expected_revision"),
+        workspace=payload.get("workspace"),
     )
-    return jsonify({"tabs": tabs}), 200
+    return jsonify(result), 200
 
 
 @backtest_bp.route("/runs/<run_id>/drawings", methods=["GET"])

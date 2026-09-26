@@ -181,4 +181,17 @@ describe('filterDrawingsAtReplayCursor', () => {
     expect(writer.isConflicted()).toBe(true);
     expect(writer.getRevision()).toBe(3);
   });
+
+  it('reports an unconfirmed save to a panel-remount flush gate', async () => {
+    const error = new Error('temporarily unavailable');
+    const writer = createDrawingStateWriter({
+      runId: 'run-1',
+      intervalMinutes: 5,
+      initialRevision: 0,
+      save: async () => { throw error; },
+    });
+    writer.enqueue('[{"id":"pending"}]');
+
+    await expect(writer.flushAndConfirm()).rejects.toBe(error);
+  });
 });

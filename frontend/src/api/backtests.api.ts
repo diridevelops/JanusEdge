@@ -1,7 +1,8 @@
 import apiClient from './client';
 import type {
   BacktestCandle,
-  BacktestChartTab,
+  BacktestChartWorkspaceResponse,
+  BacktestChartWorkspaceSaveRequest,
   BacktestDrawingState,
   BacktestInstrumentCatalog,
   BacktestPreparationNotice,
@@ -113,16 +114,26 @@ export async function saveBacktestReplayPosition(
   return response.data.replay_cursor;
 }
 
-/** Persist the run's full, nonempty ordered chart-tab list. */
-export async function saveBacktestChartTabs(
-  runId: string,
-  tabs: BacktestChartTab[]
-): Promise<BacktestChartTab[]> {
-  const response = await apiClient.put<{ tabs: BacktestChartTab[] }>(
-    `/backtest/runs/${encodeURIComponent(runId)}/chart-tabs`,
-    { tabs }
+/** Load the saved dock layout or read-only flat tabs awaiting migration. */
+export async function getBacktestChartWorkspace(
+  runId: string
+): Promise<BacktestChartWorkspaceResponse> {
+  const response = await apiClient.get<BacktestChartWorkspaceResponse>(
+    `/backtest/runs/${encodeURIComponent(runId)}/chart-workspace`
   );
-  return response.data.tabs;
+  return response.data;
+}
+
+/** Compare-and-swap the complete saved dock layout. */
+export async function saveBacktestChartWorkspace(
+  runId: string,
+  request: BacktestChartWorkspaceSaveRequest
+): Promise<BacktestChartWorkspaceResponse> {
+  const response = await apiClient.put<BacktestChartWorkspaceResponse>(
+    `/backtest/runs/${encodeURIComponent(runId)}/chart-workspace`,
+    request
+  );
+  return response.data;
 }
 
 /** Load authenticated drawing state for one run and interval. */

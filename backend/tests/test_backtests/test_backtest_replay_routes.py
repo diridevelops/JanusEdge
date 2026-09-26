@@ -348,73 +348,27 @@ def test_stale_revision_mismatched_pair_and_nonowner_writes_do_not_overwrite(
     }
 
 
-def test_chart_tabs_are_unbounded_ordered_owner_scoped_and_validated(
+def test_flat_chart_tab_write_api_is_retired_for_dockable_workspaces(
     app, client, monkeypatch
 ):
     _patch_catalog(monkeypatch)
     owner = _register(client, "replay-tabs-owner")
-    other_user = _register(client, "replay-tabs-other")
     run_id, _, _ = _create_ready_run(app, client, owner)
 
-    requested_tabs = [
-        {
-            "id": f"tab-{position:03d}",
-            "position": position,
-            "interval_minutes": (
-                1 if position == 0 else 1440 if position == 100 else 5
-            ),
-        }
-        for position in reversed(range(101))
-    ]
-    saved = client.put(
+    detail = client.get(f"/api/backtest/runs/{run_id}", headers=owner)
+    assert detail.status_code == 200
+    assert detail.json["run"]["tabs"] == []
+
+    workspace = client.get(
+        f"/api/backtest/runs/{run_id}/chart-workspace", headers=owner
+    )
+    assert workspace.status_code == 200
+    assert workspace.json["workspace"] is None
+    assert workspace.json["legacy_tabs"] == []
+
+    retired = client.put(
         f"/api/backtest/runs/{run_id}/chart-tabs",
-        json={"tabs": requested_tabs},
+        json={"tabs": [{"id": "chart-1", "position": 0, "interval_minutes": 1}]},
         headers=owner,
     )
-    expected_tabs = sorted(requested_tabs, key=lambda tab: tab["position"])
-    assert saved.status_code == 200
-    assert saved.json["tabs"] == expected_tabs
-    assert len(saved.json["tabs"]) == 101
-
-    restored = client.get(
-        f"/api/backtest/runs/{run_id}", headers=owner
-    )
-    assert restored.status_code == 200
-    assert restored.json["run"]["tabs"] == expected_tabs
-
-    invalid_tab_lists = [
-        [],
-        [
-            {"id": "duplicate", "position": 0, "interval_minutes": 1},
-            {"id": "duplicate", "position": 1, "interval_minutes": 5},
-        ],
-        [
-            {"id": "first", "position": 0, "interval_minutes": 1},
-            {"id": "second", "position": 0, "interval_minutes": 5},
-        ],
-        [{"id": "fractional", "position": 0, "interval_minutes": 1.5}],
-        [{"id": "too-small", "position": 0, "interval_minutes": 0}],
-        [{"id": "too-large", "position": 0, "interval_minutes": 1441}],
-    ]
-    for invalid_tabs in invalid_tab_lists:
-        rejected = client.put(
-            f"/api/backtest/runs/{run_id}/chart-tabs",
-            json={"tabs": invalid_tabs},
-            headers=owner,
-        )
-        assert rejected.status_code == 400
-        unchanged = client.get(
-            f"/api/backtest/runs/{run_id}", headers=owner
-        )
-        assert unchanged.json["run"]["tabs"] == expected_tabs
-
-    nonowner = client.put(
-        f"/api/backtest/runs/{run_id}/chart-tabs",
-        json={"tabs": [{"id": "other", "position": 0, "interval_minutes": 1}]},
-        headers=other_user,
-    )
-    assert nonowner.status_code == 404
-    still_unchanged = client.get(
-        f"/api/backtest/runs/{run_id}", headers=owner
-    )
-    assert still_unchanged.json["run"]["tabs"] == expected_tabs
+    assert retired.status_code == 404

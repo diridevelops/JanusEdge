@@ -92,7 +92,8 @@ def init_db(db: Database) -> None:
     )
     db.tag_categories.create_index(
         [("user_id", 1), ("system_key", 1)], unique=True,
-        partialFilterExpression={"system_key": {"$ne": None}},
+        # MongoDB partial indexes do not support $ne; system keys are strings.
+        partialFilterExpression={"system_key": {"$type": "string"}},
     )
 
     # Market data datasets
@@ -159,6 +160,9 @@ def init_db(db: Database) -> None:
     )
     db.backtest_chart_tabs.create_index(
         [("user_id", 1), ("run_id", 1), ("position", 1)]
+    )
+    db.backtest_chart_workspaces.create_index(
+        [("user_id", 1), ("run_id", 1)], unique=True
     )
     db.backtest_drawing_states.create_index(
         [

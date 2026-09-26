@@ -20,6 +20,12 @@ import {
   normalizeSerializedDrawingState,
   reconcileVisibleDrawingChanges,
 } from '../../utils/backtestDrawings';
+import {
+  discardPendingPanelFlush,
+  registerPendingPanelFlush,
+  retryPendingPanelFlush,
+  waitForPendingPanelFlush,
+} from '../../utils/backtestPanelLifecycle';
 
 const EMPTY_DATA: never[] = [];
 const CANDLEKIT_VERSION = '0.1.0';
@@ -52,8 +58,7 @@ interface CandleKitReplayChartProps {
     tabId: string,
     flush: () => Promise<void> | void
   ) => () => void;
-  onChartReady: (tabId: string, api: ChartViewApi) => void;
-  onChartDispose: (tabId: string) => void;
+  onChartReady: (tabId: string, api: ChartViewApi) => void | (() => void);
 }
 
 function canonicalDrawingArray(serializedState: string): string {
@@ -79,7 +84,6 @@ export function CandleKitReplayChart({
   cursorTimeMs,
   registerDrawingFlusher,
   onChartReady,
-  onChartDispose,
 }: CandleKitReplayChartProps) {
   const colors = useChartColors();
   const [generation, setGeneration] = useState(0);
@@ -117,6 +121,9 @@ export function CandleKitReplayChart({
   cursorTimeRef.current = cursorTimeMs;
   const isMountedRef = useRef(true);
   const chartLifecycleRef = useRef(0);
+  const chartUnregisterRef = useRef<(() => void) | null>(null);
+  const discardConflictedDraftOnUnmountRef = useRef(false);
+  const panelScopeKey = `${runId}:${tabId}`;
 
   const chartTheme = useMemo<ChartTheme>(() => {
     const preset = colors.isDark ? darkTheme : lightTheme;
@@ -197,6 +204,8 @@ export function CandleKitReplayChart({
 
     async function loadDrawings() {
       try {
+        await waitForPendingPanelFlush(panelScopeKey);
+        if (cancelled) return;
         const savedState: BacktestDrawingState = await getBacktestDrawingState(
           runId,
           intervalMinutes
@@ -250,7 +259,10 @@ export function CandleKitReplayChart({
           },
         });
         writerRef.current = activeWriter;
-        unregisterFlusher = registerDrawingFlusher(tabId, () => activeWriter?.flush());
+        unregisterFlusher = registerDrawingFlusher(
+          tabId,
+          () => activeWriter?.flushAndConfirm()
+        );
         isHydratedRef.current = true;
         setDrawingSession(session);
         setHydration({ key: sessionKey, status: 'ready', error: null });
@@ -271,11 +283,34 @@ export function CandleKitReplayChart({
       unsubscribeEngine?.();
       unregisterFlusher?.();
       if (writerRef.current === activeWriter) writerRef.current = null;
-      void activeWriter?.flush();
+      if (activeWriter) {
+        const outgoingWriter = activeWriter;
+        if (
+          outgoingWriter.isConflicted()
+          && discardConflictedDraftOnUnmountRef.current
+        ) {
+          discardConflictedDraftOnUnmountRef.current = false;
+          discardPendingPanelFlush(panelScopeKey);
+        } else {
+          void registerPendingPanelFlush(
+            panelScopeKey,
+            async () => {
+              try {
+                await outgoingWriter.flushAndConfirm();
+              } catch (error: unknown) {
+                if (outgoingWriter.isConflicted()) throw error;
+                outgoingWriter.enqueue(authoritativeStateRef.current);
+                await outgoingWriter.flushAndConfirm();
+              }
+            }
+          ).catch(() => undefined);
+        }
+      }
       sessionEngine.destroy();
     };
   }, [
     intervalMinutes,
+    panelScopeKey,
     registerDrawingFlusher,
     runId,
     sessionKey,
@@ -302,9 +337,10 @@ export function CandleKitReplayChart({
     return () => {
       isMountedRef.current = false;
       chartLifecycleRef.current += 1;
-      onChartDispose(tabId);
+      chartUnregisterRef.current?.();
+      chartUnregisterRef.current = null;
     };
-  }, [onChartDispose, tabId]);
+  }, []);
 
   function retrySave() {
     const writer = writerRef.current;
@@ -315,6 +351,22 @@ export function CandleKitReplayChart({
   }
 
   function reloadSavedDrawings() {
+    void retryPendingPanelFlush(panelScopeKey)
+      .then(() => setGeneration((current) => current + 1))
+      .catch((error: unknown) => {
+        setHydration({
+          key: sessionKey,
+          status: 'error',
+          error: `Could not save the moved chart's drawings: ${getLoadError(error)}`,
+        });
+      });
+  }
+
+  function discardLocalDrawingsAndReload() {
+    discardConflictedDraftOnUnmountRef.current = Boolean(
+      writerRef.current?.isConflicted()
+    );
+    discardPendingPanelFlush(panelScopeKey);
     setGeneration((current) => current + 1);
   }
 
@@ -331,12 +383,16 @@ export function CandleKitReplayChart({
         showVolume
         autoFit
         className="backtest-candlekit-chart-view"
-        style={{ minHeight: 310, height: '100%' }}
+        style={{ minHeight: 0, height: '100%' }}
         onReady={(api) => {
           const lifecycle = chartLifecycleRef.current;
           queueMicrotask(() => {
             if (isMountedRef.current && chartLifecycleRef.current === lifecycle) {
-              onChartReady(tabId, api);
+              chartUnregisterRef.current?.();
+              const unregister = onChartReady(tabId, api);
+              chartUnregisterRef.current = typeof unregister === 'function'
+                ? unregister
+                : null;
             }
           });
         }}
@@ -358,7 +414,10 @@ export function CandleKitReplayChart({
       {loadError && (
         <div className="backtest-drawing-status backtest-drawing-status-error">
           <span role="alert">{loadError}</span>
-          <button type="button" onClick={reloadSavedDrawings}>Retry loading drawings</button>
+          <button type="button" onClick={reloadSavedDrawings}>Retry save / load drawings</button>
+          <button type="button" onClick={discardLocalDrawingsAndReload}>
+            Discard local changes and reload saved drawings
+          </button>
         </div>
       )}
       {isHydrated && currentSaveState.status !== 'saved' && (
@@ -375,7 +434,7 @@ export function CandleKitReplayChart({
             <button type="button" onClick={retrySave}>Retry save</button>
           )}
           {currentSaveState.status === 'conflict' && (
-            <button type="button" onClick={reloadSavedDrawings}>
+            <button type="button" onClick={discardLocalDrawingsAndReload}>
               Reload saved drawings (discard local changes)
             </button>
           )}

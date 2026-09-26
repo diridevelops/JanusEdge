@@ -7,29 +7,25 @@ import { CandleKitReplayChart } from './CandleKitReplayChart';
 interface BacktestChartTabProps {
   runId: string;
   tab: BacktestChartTabConfig;
-  totalTabs: number;
+  title: string;
   cursorTimeMs: number;
   registerDrawingFlusher: (
     tabId: string,
     flush: () => Promise<void> | void
   ) => () => void;
   onIntervalChange: (tabId: string, intervalMinutes: number) => void;
-  onRemove: (tabId: string) => void;
-  onChartReady: (tabId: string, api: ChartViewApi) => void;
-  onChartDispose: (tabId: string) => void;
+  onChartReady: (tabId: string, api: ChartViewApi) => void | (() => void);
 }
 
 /** A persisted chart panel with controlled, whole-minute interval validation. */
 export function BacktestChartTab({
   runId,
   tab,
-  totalTabs,
+  title,
   cursorTimeMs,
   registerDrawingFlusher,
   onIntervalChange,
-  onRemove,
   onChartReady,
-  onChartDispose,
 }: BacktestChartTabProps) {
   const [rawInterval, setRawInterval] = useState(String(tab.interval_minutes));
   const [intervalError, setIntervalError] = useState<string | null>(null);
@@ -50,11 +46,11 @@ export function BacktestChartTab({
   }
 
   return (
-    <section className="backtest-chart-tab min-w-0 overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm dark:border-gray-700 dark:bg-gray-900">
-      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-200 px-4 py-3 dark:border-gray-700">
+    <section className="backtest-chart-tab flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-white dark:bg-gray-900">
+      <header className="flex shrink-0 flex-wrap items-start justify-between gap-3 border-b border-gray-200 px-3 py-2 dark:border-gray-700">
         <div>
           <h2 className="font-semibold text-gray-900 dark:text-gray-100">
-            Chart {tab.position + 1}
+            {title}
             <span className="ml-2 text-sm font-normal text-gray-500 dark:text-gray-400">
               {tab.interval_minutes}m
             </span>
@@ -63,7 +59,7 @@ export function BacktestChartTab({
             Volume shows quoted liquidity (bid + ask), not executed trades.
           </p>
         </div>
-        <div className="flex items-start gap-3">
+        <div>
           <div>
             <label
               htmlFor={`backtest-interval-${tab.id}`}
@@ -92,7 +88,7 @@ export function BacktestChartTab({
                   event.currentTarget.blur();
                 }
               }}
-              className="w-32 rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+              className="w-28 rounded-md border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
             />
             {intervalError && (
               <p
@@ -104,18 +100,9 @@ export function BacktestChartTab({
               </p>
             )}
           </div>
-          <button
-            type="button"
-            disabled={totalTabs <= 1}
-            onClick={() => onRemove(tab.id)}
-            aria-label={`Remove chart ${tab.position + 1}`}
-            className="mt-5 rounded-md px-2 py-1.5 text-sm text-gray-500 hover:bg-gray-100 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-40 dark:text-gray-400 dark:hover:bg-gray-800 dark:hover:text-gray-100"
-          >
-            Remove
-          </button>
         </div>
       </header>
-      <div className="h-[330px] p-2">
+      <div className="relative min-h-0 flex-1 p-1">
         <CandleKitReplayChart
           key={`${tab.id}:${tab.interval_minutes}`}
           tabId={tab.id}
@@ -124,7 +111,6 @@ export function BacktestChartTab({
           cursorTimeMs={cursorTimeMs}
           registerDrawingFlusher={registerDrawingFlusher}
           onChartReady={onChartReady}
-          onChartDispose={onChartDispose}
         />
       </div>
     </section>

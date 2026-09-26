@@ -16,6 +16,7 @@ import {
   roundUtcRangeOutward,
   utcRangeToLogicalRange,
 } from '../utils/backtestChartSync';
+import { registerPanelSubscription } from '../utils/backtestPanelLifecycle';
 import type { BacktestSyncOptions } from '../components/backtest/BacktestSyncControls';
 
 function toUtcMilliseconds(time: Time | null | undefined): number | null {
@@ -102,7 +103,6 @@ export function useBacktestChartSync(
   }, [engine, groupId, replayController]);
 
   const registerChart = useCallback((tabId: string, controller: ChartController) => {
-    detachRef.current.get(tabId)?.();
     const chart = controller.getChart();
     const timeScale = chart.timeScale();
     const lastRangeRef: { current: { from: number; to: number } | null } = { current: null };
@@ -239,14 +239,11 @@ export function useBacktestChartSync(
     chart.subscribeCrosshairMove(onCrosshairMove);
     timeScale.subscribeVisibleLogicalRangeChange(onVisibleRangeChange);
 
-    const detach = () => {
+    return registerPanelSubscription(detachRef.current, tabId, () => {
       chart.unsubscribeCrosshairMove(onCrosshairMove);
       timeScale.unsubscribeVisibleLogicalRangeChange(onVisibleRangeChange);
       detachMember();
-      if (detachRef.current.get(tabId) === detach) detachRef.current.delete(tabId);
-    };
-    detachRef.current.set(tabId, detach);
-    return detach;
+    });
   }, [engine, groupId, symbol]);
 
   const unregisterChart = useCallback((tabId: string) => {

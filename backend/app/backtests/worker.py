@@ -332,7 +332,6 @@ class BacktestWorker:
             current_run = self.repository.find_owned_run(user_id_text, run_id)
             if not current_run or current_run.get("status") != "ready":
                 raise LeaseLostError("Backtest run could not be committed by this worker.")
-        self.repository.create_default_chart_tab(user_id_text, run_id)
         if not self.job_repository.mark_completed(
             job["_id"], self.worker_id, now=_as_utc(self.clock())
         ):

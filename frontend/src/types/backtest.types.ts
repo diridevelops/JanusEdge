@@ -78,6 +78,39 @@ export interface BacktestChartTab {
   interval_minutes: number;
 }
 
+export interface BacktestChartWorkspacePanel {
+  id: string;
+  type: 'backtest-chart';
+  interval_minutes: number;
+}
+
+/** FlexLayout tree and chart metadata persisted for one owner/run pair. */
+export interface BacktestChartWorkspaceDefinition {
+  schema_version: 1;
+  layout_engine: 'flexlayout-react';
+  id: string;
+  name: 'default';
+  tree: unknown;
+  panels: Record<string, BacktestChartWorkspacePanel>;
+}
+
+export interface BacktestChartWorkspaceDocument extends BacktestChartWorkspaceDefinition {
+  revision: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface BacktestChartWorkspaceResponse {
+  workspace: BacktestChartWorkspaceDocument | null;
+  revision: number;
+  legacy_tabs: BacktestChartTab[];
+}
+
+export interface BacktestChartWorkspaceSaveRequest {
+  expected_revision: number;
+  workspace: BacktestChartWorkspaceDefinition;
+}
+
 export interface BacktestRunDetail extends BacktestRunSummary {
   start_utc_ms: number;
   end_utc_ms: number;

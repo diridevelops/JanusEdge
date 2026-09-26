@@ -33,6 +33,8 @@ def clean_backtest_collections(app):
             "users",
             "auth_refresh_sessions",
             "backtest_runs",
+            "backtest_chart_tabs",
+            "backtest_chart_workspaces",
             "backtest_preparation_jobs",
             "backtest_notices",
             "trade_accounts",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, time, timezone
+import math
 from typing import Any
 
 from bson import ObjectId
@@ -19,6 +20,9 @@ DRAWING_SCHEMA_VERSION = 1
 # A generous v1 limit for a chart drawing export that remains well below
 # MongoDB's 16 MiB document limit, leaving room for BSON metadata and indexes.
 MAX_DRAWING_STATE_BYTES = 1_048_576
+CHART_WORKSPACE_SCHEMA_VERSION = 1
+CHART_WORKSPACE_LAYOUT_ENGINE = "flexlayout-react"
+BACKTEST_CHART_PANEL_TYPE = "backtest-chart"
 
 
 def create_backtest_run_doc(
@@ -162,3 +166,214 @@ def serialize_drawing_state(document: dict | None, interval_minutes: int) -> dic
         "revision": document["revision"],
         "serialized_state": document["serialized_state"],
     }
+
+
+def _workspace_interval(value, field_name: str) -> int:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or value < 1
+        or value > 1440
+    ):
+        raise ValueError(
+            f"{field_name} must be a whole number from 1 to 1440."
+        )
+    return value
+
+
+def _validate_workspace_weight(node: dict) -> None:
+    if "weight" not in node:
+        return
+    weight = node["weight"]
+    if (
+        isinstance(weight, bool)
+        or not isinstance(weight, (int, float))
+        or weight <= 0
+        or weight > 100
+        or (isinstance(weight, float) and not math.isfinite(weight))
+    ):
+        raise ValueError("Workspace split weights must be from 0 to 100.")
+
+
+def validate_chart_workspace(workspace: Any, run_id: str) -> dict:
+    """Validate and normalize a FlexLayout workspace for one ready run."""
+    if not isinstance(workspace, dict):
+        raise ValueError("workspace must be an object.")
+    version = workspace.get("schema_version")
+    if (
+        isinstance(version, bool)
+        or not isinstance(version, int)
+        or version != CHART_WORKSPACE_SCHEMA_VERSION
+    ):
+        raise ValueError("workspace.schema_version is not supported.")
+    if workspace.get("layout_engine") != CHART_WORKSPACE_LAYOUT_ENGINE:
+        raise ValueError("workspace.layout_engine is not supported.")
+    if workspace.get("id") != run_id:
+        raise ValueError("workspace.id must match the Backtest run.")
+    if workspace.get("name") != "default":
+        raise ValueError("workspace.name must be default.")
+
+    tree = workspace.get("tree")
+    if not isinstance(tree, dict):
+        raise ValueError("workspace.tree must be an object.")
+    if not isinstance(tree.get("global"), dict):
+        raise ValueError("workspace.tree.global must be an object.")
+    if not isinstance(tree.get("borders"), list):
+        raise ValueError("workspace.tree.borders must be an array.")
+    if not isinstance(tree.get("layout"), dict):
+        raise ValueError("workspace.tree.layout must be an object.")
+
+    panel_map = workspace.get("panels")
+    if not isinstance(panel_map, dict):
+        raise ValueError("workspace.panels must be an object.")
+    normalized_panels = {}
+    for panel_id, panel in panel_map.items():
+        if not isinstance(panel_id, str) or not panel_id.strip():
+            raise ValueError("Workspace panel ids must be nonempty strings.")
+        if not isinstance(panel, dict) or panel.get("id") != panel_id:
+            raise ValueError("Workspace panel metadata must match its key.")
+        if panel.get("type") != BACKTEST_CHART_PANEL_TYPE:
+            raise ValueError("Only Backtest chart panels are supported.")
+        normalized_panels[panel_id] = {
+            "id": panel_id,
+            "type": BACKTEST_CHART_PANEL_TYPE,
+            "interval_minutes": _workspace_interval(
+                panel.get("interval_minutes"),
+                f"workspace.panels.{panel_id}.interval_minutes",
+            ),
+        }
+
+    tab_ids: set[str] = set()
+    node_ids: set[str] = set()
+
+    def validate_node(node: Any, field_name: str, *, is_root=False) -> None:
+        if not isinstance(node, dict):
+            raise ValueError(f"{field_name} must be an object.")
+        node_type = node.get("type")
+        if is_root and node_type != "row":
+            raise ValueError("workspace.tree.layout must be a FlexLayout row.")
+        _validate_workspace_weight(node)
+        node_id = node.get("id")
+        if node_id is not None:
+            if not isinstance(node_id, str) or not node_id.strip():
+                raise ValueError("FlexLayout node ids must be nonempty strings.")
+            if node_id in node_ids:
+                raise ValueError("FlexLayout node ids must be unique.")
+            node_ids.add(node_id)
+
+        if node_type in {"row", "tabset"}:
+            children = node.get("children")
+            if not isinstance(children, list) or not children:
+                raise ValueError(f"{field_name}.children must not be empty.")
+            if node_type == "row":
+                if any(
+                    not isinstance(child, dict)
+                    or child.get("type") not in {"row", "tabset"}
+                    for child in children
+                ):
+                    raise ValueError("FlexLayout rows may contain only rows or tabsets.")
+                for index, child in enumerate(children):
+                    validate_node(child, f"{field_name}.children[{index}]")
+                return
+
+            selected = node.get("selected", 0)
+            if (
+                isinstance(selected, bool)
+                or not isinstance(selected, int)
+                or selected < 0
+                or selected >= len(children)
+            ):
+                raise ValueError(f"{field_name}.selected is outside its tabset.")
+            for index, child in enumerate(children):
+                if not isinstance(child, dict) or child.get("type") != "tab":
+                    raise ValueError("FlexLayout tabsets may contain only tabs.")
+                validate_node(child, f"{field_name}.children[{index}]")
+            return
+
+        if node_type != "tab":
+            raise ValueError(f"{field_name}.type is not supported.")
+        tab_id = node.get("id")
+        title = node.get("name")
+        if not isinstance(tab_id, str) or not tab_id.strip():
+            raise ValueError("Chart tab ids must be nonempty strings.")
+        if tab_id in tab_ids:
+            raise ValueError("Chart tab ids must be unique.")
+        if not isinstance(title, str) or not title.strip():
+            raise ValueError("Chart tab names must be nonempty strings.")
+        if node.get("component") != BACKTEST_CHART_PANEL_TYPE:
+            raise ValueError("Only Backtest chart tabs are supported.")
+        config = node.get("config")
+        if (
+            not isinstance(config, dict)
+            or config.get("id") != tab_id
+            or config.get("kind") != BACKTEST_CHART_PANEL_TYPE
+            or not isinstance(config.get("config"), dict)
+        ):
+            raise ValueError("Chart tab config must identify its Backtest panel.")
+        interval = _workspace_interval(
+            config["config"].get("interval_minutes"),
+            f"workspace.tree panel {tab_id}.interval_minutes",
+        )
+        panel = normalized_panels.get(tab_id)
+        if panel is None or panel["interval_minutes"] != interval:
+            raise ValueError("Workspace tree and panel metadata must correspond.")
+        tab_ids.add(tab_id)
+
+    validate_node(tree["layout"], "workspace.tree.layout", is_root=True)
+
+    # FlexLayout can dock tabs into a border. Such tabs are still visible chart
+    # panels and must participate in the same identity and minimum-one checks.
+    for index, border in enumerate(tree["borders"]):
+        if not isinstance(border, dict) or border.get("type") != "border":
+            raise ValueError(f"workspace.tree.borders[{index}] is invalid.")
+        children = border.get("children", [])
+        if not isinstance(children, list):
+            raise ValueError(f"workspace.tree.borders[{index}].children must be an array.")
+        selected = border.get("selected", 0)
+        if children and (
+            isinstance(selected, bool)
+            or not isinstance(selected, int)
+            or selected < 0
+            or selected >= len(children)
+        ):
+            raise ValueError(f"workspace.tree.borders[{index}].selected is invalid.")
+        for child_index, child in enumerate(children):
+            if not isinstance(child, dict) or child.get("type") != "tab":
+                raise ValueError("Workspace borders may contain only chart tabs.")
+            validate_node(child, f"workspace.tree.borders[{index}].children[{child_index}]")
+
+    if not tab_ids:
+        raise ValueError("A chart workspace must contain at least one chart panel.")
+    if tab_ids != set(normalized_panels):
+        raise ValueError("Workspace tree and panel metadata must correspond.")
+
+    return {
+        "schema_version": CHART_WORKSPACE_SCHEMA_VERSION,
+        "layout_engine": CHART_WORKSPACE_LAYOUT_ENGINE,
+        "id": run_id,
+        "name": "default",
+        "tree": tree,
+        "panels": normalized_panels,
+    }
+
+
+def serialize_chart_workspace(document: dict | None) -> dict | None:
+    """Serialize only public workspace metadata, omitting Mongo ownership keys."""
+    if document is None:
+        return None
+    return serialize_backtest_value(
+        {
+            key: document[key]
+            for key in (
+                "schema_version",
+                "layout_engine",
+                "id",
+                "name",
+                "revision",
+                "created_at",
+                "updated_at",
+                "tree",
+                "panels",
+            )
+        }
+    )

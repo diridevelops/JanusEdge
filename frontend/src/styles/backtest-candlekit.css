@@ -33,13 +33,14 @@
 
 .backtest-candlekit .backtest-candlekit-chart {
   height: 100%;
-  min-height: 310px;
+  min-height: 0;
   overflow: hidden;
   border-radius: 0.5rem;
 }
 
 .backtest-candlekit .backtest-candlekit-chart-view {
-  min-height: 310px;
+  height: 100%;
+  min-height: 0;
 }
 
 .backtest-candlekit .backtest-drawing-toolbar {
@@ -110,4 +111,67 @@
   background: var(--ck-bg);
   font-size: 10px;
   pointer-events: none;
+}
+
+.backtest-flexlayout-theme,
+.backtest-flexlayout,
+.backtest-flexlayout-theme .flexlayout__layout {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.backtest-flexlayout-theme .flexlayout__layout {
+  --font-family: inherit;
+  --font-size: 12px;
+  --color-text: #111827;
+  --color-background: #ffffff;
+  --color-base: #ffffff;
+  --color-1: #f9fafb;
+  --color-2: #f3f4f6;
+  --color-3: #e5e7eb;
+  --color-4: #d1d5db;
+  --color-5: #9ca3af;
+  --color-6: #6b7280;
+  --color-tabset-background: var(--color-background);
+  --color-tabset-background-selected: var(--color-1);
+  --color-tabset-background-maximized: var(--color-2);
+  --color-tabset-divider-line: var(--color-3);
+  --color-border-background: var(--color-background);
+  --color-border-divider-line: var(--color-3);
+  --color-tab-content: var(--color-background);
+  --color-tab-selected: var(--color-text);
+  --color-tab-selected-background: var(--color-3);
+  --color-tab-unselected: #6b7280;
+  --color-tab-unselected-background: transparent;
+  --color-splitter: var(--color-2);
+  --color-splitter-hover: var(--color-4);
+  --color-splitter-drag: var(--color-4);
+}
+
+.backtest-flexlayout-theme[data-theme='dark'] .flexlayout__layout {
+  --color-text: #e5e7eb;
+  --color-background: #111827;
+  --color-base: #111827;
+  --color-1: #1f2937;
+  --color-2: #374151;
+  --color-3: #4b5563;
+  --color-4: #6b7280;
+  --color-5: #9ca3af;
+  --color-6: #d1d5db;
+  --color-tabset-background: var(--color-background);
+  --color-tabset-background-selected: var(--color-1);
+  --color-tabset-background-maximized: var(--color-2);
+  --color-tabset-divider-line: var(--color-3);
+  --color-border-background: var(--color-background);
+  --color-border-divider-line: var(--color-3);
+  --color-tab-content: var(--color-background);
+  --color-tab-selected: var(--color-text);
+  --color-tab-selected-background: var(--color-3);
+  --color-tab-unselected: #9ca3af;
+  --color-tab-unselected-background: transparent;
+  --color-splitter: var(--color-1);
+  --color-splitter-hover: var(--color-3);
+  --color-splitter-drag: var(--color-3);
 }

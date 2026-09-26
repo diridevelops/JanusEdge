@@ -123,6 +123,9 @@ class BacktestRepository(BaseRepository):
         mongo.db.backtest_chart_tabs.delete_many(
             {"user_id": user_oid, "run_id": run_oid}
         )
+        mongo.db.backtest_chart_workspaces.delete_many(
+            {"user_id": user_oid, "run_id": run_oid}
+        )
         mongo.db.backtest_drawing_states.delete_many(
             {"user_id": user_oid, "run_id": run_oid}
         )
@@ -274,6 +277,9 @@ class BacktestRepository(BaseRepository):
         mongo.db.backtest_chart_tabs.delete_many(
             {"user_id": user_oid, "run_id": run_oid}
         )
+        mongo.db.backtest_chart_workspaces.delete_many(
+            {"user_id": user_oid, "run_id": run_oid}
+        )
         mongo.db.backtest_drawing_states.delete_many(
             {"user_id": user_oid, "run_id": run_oid}
         )
@@ -295,44 +301,14 @@ class BacktestRepository(BaseRepository):
             mongo.db.backtest_chart_tabs.delete_many(
                 {"user_id": user_oid, "run_id": run_oid}
             )
+            mongo.db.backtest_chart_workspaces.delete_many(
+                {"user_id": user_oid, "run_id": run_oid}
+            )
             mongo.db.backtest_drawing_states.delete_many(
                 {"user_id": user_oid, "run_id": run_oid}
             )
             return True
         return False
-
-    def create_default_chart_tab(
-        self, user_id: str, run_id
-    ) -> dict:
-        """Insert a default 1-minute tab if this run has no saved tabs."""
-        run_oid = _object_id(run_id)
-        user_oid = ObjectId(user_id)
-        existing = mongo.db.backtest_chart_tabs.find_one(
-            {"user_id": user_oid, "run_id": run_oid}
-        )
-        if existing:
-            return existing
-        now = utc_now()
-        tab = {
-            "user_id": user_oid,
-            "run_id": run_oid,
-            "id": "default",
-            "position": 0,
-            "interval_minutes": 1,
-            "candle_grouping": "utc_start_inclusive_end_exclusive",
-            "created_at": now,
-            "updated_at": now,
-        }
-        try:
-            mongo.db.backtest_chart_tabs.insert_one(tab)
-            return tab
-        except Exception:
-            existing = mongo.db.backtest_chart_tabs.find_one(
-                {"user_id": user_oid, "run_id": run_oid}
-            )
-            if existing:
-                return existing
-            raise
 
     def list_chart_tabs(self, user_id: str, run_id) -> list[dict]:
         """Return the owned run's tabs in display order."""
@@ -345,41 +321,63 @@ class BacktestRepository(BaseRepository):
             ).sort([("position", 1), ("id", 1)])
         )
 
-    def replace_chart_tabs(
-        self, user_id: str, run_id, tabs: list[dict], *, now
-    ) -> list[dict]:
-        """Upsert the complete validated tab set and remove obsolete ids."""
+    def delete_chart_tabs(self, user_id: str, run_id) -> None:
+        """Remove legacy flat tabs after their layout has been persisted."""
         run_oid = _object_id(run_id)
         if run_oid is None:
-            return []
-        user_oid = ObjectId(user_id)
-        ids = [tab["id"] for tab in tabs]
-        for tab in tabs:
-            mongo.db.backtest_chart_tabs.update_one(
-                {
-                    "user_id": user_oid,
-                    "run_id": run_oid,
-                    "id": tab["id"],
-                },
-                {
-                    "$set": {
-                        "position": tab["position"],
-                        "interval_minutes": tab["interval_minutes"],
-                        "candle_grouping": "utc_start_inclusive_end_exclusive",
-                        "updated_at": now,
-                    },
-                    "$setOnInsert": {"created_at": now},
-                },
-                upsert=True,
-            )
+            return
         mongo.db.backtest_chart_tabs.delete_many(
-            {
-                "user_id": user_oid,
-                "run_id": run_oid,
-                "id": {"$nin": ids},
-            }
+            {"user_id": ObjectId(user_id), "run_id": run_oid}
         )
-        return self.list_chart_tabs(user_id, run_oid)
+
+    def find_chart_workspace(self, user_id: str, run_id) -> dict | None:
+        """Find the one persisted dock layout owned by the caller and run."""
+        run_oid = _object_id(run_id)
+        if run_oid is None:
+            return None
+        return mongo.db.backtest_chart_workspaces.find_one(
+            {"user_id": ObjectId(user_id), "run_id": run_oid}
+        )
+
+    def compare_and_set_chart_workspace(
+        self,
+        user_id: str,
+        run_id,
+        *,
+        expected_revision: int,
+        workspace: dict,
+        now,
+    ) -> dict | None:
+        """Atomically insert/update a workspace at its expected revision."""
+        from pymongo import ReturnDocument
+
+        run_oid = _object_id(run_id)
+        user_oid = _object_id(user_id)
+        if run_oid is None or user_oid is None:
+            return None
+        query = {
+            "user_id": user_oid,
+            "run_id": run_oid,
+            "revision": expected_revision,
+        }
+        update = {
+            "$set": {
+                **workspace,
+                "revision": expected_revision + 1,
+                "updated_at": now,
+            },
+            "$setOnInsert": {"created_at": now},
+        }
+        try:
+            return mongo.db.backtest_chart_workspaces.find_one_and_update(
+                query,
+                update,
+                upsert=expected_revision == 0,
+                return_document=ReturnDocument.AFTER,
+            )
+        except DuplicateKeyError:
+            # A competing revision-zero initializer can win the unique key.
+            return None
 
     def compare_and_set_replay_cursor(
         self,

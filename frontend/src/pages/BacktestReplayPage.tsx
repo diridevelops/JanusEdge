@@ -1,7 +1,7 @@
-import { type CSSProperties, useCallback, useEffect, useRef, useState } from 'react';
+import { type CSSProperties, useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { getBacktestRun, saveBacktestChartTabs } from '../api/backtests.api';
-import { BacktestChartTab } from '../components/backtest/BacktestChartTab';
+import { getBacktestChartWorkspace, getBacktestRun, saveBacktestChartWorkspace } from '../api/backtests.api';
+import { BacktestChartWorkspace } from '../components/backtest/BacktestChartWorkspace';
 import { BacktestReplayControls } from '../components/backtest/BacktestReplayControls';
 import {
   BacktestSyncControls,
@@ -11,14 +11,14 @@ import { Spinner } from '../components/ui/Spinner';
 import { useBacktestChartSync } from '../hooks/useBacktestChartSync';
 import { useBacktestReplay } from '../hooks/useBacktestReplay';
 import { useChartColors } from '../hooks/useChartColors';
-import type { BacktestChartTab as BacktestChartTabConfig, BacktestRunDetail } from '../types/backtest.types';
+import type { BacktestChartTab, BacktestRunDetail } from '../types/backtest.types';
+import {
+  extractBacktestWorkspaceTabs,
+  initializeBacktestWorkspace,
+  type BacktestWorkspaceApi,
+} from '../utils/backtestWorkspace';
+import type { WorkspaceLayout } from '@getcandlekit/charts/react/workspace';
 import '../styles/backtest-candlekit.css';
-
-function normalizeTabs(tabs: readonly BacktestChartTabConfig[]): BacktestChartTabConfig[] {
-  return [...tabs]
-    .sort((left, right) => left.position - right.position)
-    .map((tab, position) => ({ ...tab, position }));
-}
 
 function formatTimestamp(timeMs: number, timezone: string): string {
   try {
@@ -123,85 +123,102 @@ export function BacktestReplayPage() {
 }
 
 function BacktestReplayRunView({ run }: { run: BacktestRunDetail }) {
+  const api = useMemo<BacktestWorkspaceApi>(() => ({
+    get: getBacktestChartWorkspace,
+    save: saveBacktestChartWorkspace,
+  }), []);
+  const [workspace, setWorkspace] = useState<{
+    layout: WorkspaceLayout;
+    revision: number;
+  } | null>(null);
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setWorkspace(null);
+    setWorkspaceError(null);
+    void initializeBacktestWorkspace(run.id, api)
+      .then((initialized) => {
+        if (!cancelled) setWorkspace(initialized);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) setWorkspaceError(getErrorMessage(error));
+      });
+    return () => { cancelled = true; };
+  }, [api, loadAttempt, run.id]);
+
+  if (workspaceError) {
+    return (
+      <section className="mx-auto max-w-3xl rounded-xl border border-red-200 bg-white p-6 dark:border-red-900 dark:bg-gray-900">
+        <h1 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Chart workspace unavailable</h1>
+        <p className="mt-2 text-sm text-red-700 dark:text-red-300" role="alert">{workspaceError}</p>
+        <button
+          type="button"
+          onClick={() => setLoadAttempt((value) => value + 1)}
+          className="mt-4 rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
+        >
+          Retry workspace load
+        </button>
+      </section>
+    );
+  }
+
+  if (!workspace) {
+    return (
+      <div className="flex min-h-64 items-center justify-center gap-3 text-sm text-gray-600 dark:text-gray-300" aria-label="Loading chart workspace">
+        <Spinner />
+        Loading the saved chart workspace…
+      </div>
+    );
+  }
+
+  return (
+    <BacktestReplayWorkspaceRun
+      run={run}
+      initialLayout={workspace.layout}
+      revision={workspace.revision}
+    />
+  );
+}
+
+function BacktestReplayWorkspaceRun({
+  run,
+  initialLayout,
+  revision,
+}: {
+  run: BacktestRunDetail;
+  initialLayout: WorkspaceLayout;
+  revision: number;
+}) {
   const colors = useChartColors();
-  const [tabs, setTabs] = useState<BacktestChartTabConfig[]>(() => normalizeTabs(
-    run.tabs.length > 0
-      ? run.tabs
-      : [{ id: 'chart-1', position: 0, interval_minutes: 1 }]
+  const [tabs, setTabs] = useState<BacktestChartTab[]>(() => (
+    extractBacktestWorkspaceTabs(initialLayout)
   ));
-  const [tabSaveError, setTabSaveError] = useState<string | null>(null);
-  const savedTabsRef = useRef(tabs);
-  const pendingTabsRef = useRef<BacktestChartTabConfig[] | null>(null);
-  const tabSaveInProgressRef = useRef(false);
   const replay = useBacktestReplay(run, tabs);
   const chartSync = useBacktestChartSync(tabs, run.instrument, replay.controller);
 
-  const saveTabs = useCallback((nextTabs: BacktestChartTabConfig[]) => {
-    const normalized = normalizeTabs(nextTabs);
-    setTabs(normalized);
-    pendingTabsRef.current = normalized;
-
-    async function drainTabSaves() {
-      if (tabSaveInProgressRef.current) return;
-      tabSaveInProgressRef.current = true;
-      while (pendingTabsRef.current) {
-        const desired = pendingTabsRef.current;
-        pendingTabsRef.current = null;
-        try {
-          const saved = normalizeTabs(await saveBacktestChartTabs(run.id, desired));
-          savedTabsRef.current = saved;
-          setTabSaveError(null);
-          if (!pendingTabsRef.current) setTabs(saved);
-        } catch {
-          setTabSaveError('Could not save chart tabs. Your last saved configuration is still available.');
-          if (!pendingTabsRef.current) {
-            setTabs(savedTabsRef.current);
-            break;
-          }
-        }
-      }
-      tabSaveInProgressRef.current = false;
-      if (pendingTabsRef.current) void drainTabSaves();
-    }
-
-    void drainTabSaves();
-  }, [run.id]);
-
-  const handleIntervalChange = useCallback((tabId: string, intervalMinutes: number) => {
-    saveTabs(tabs.map((tab) => (
-      tab.id === tabId ? { ...tab, interval_minutes: intervalMinutes } : tab
-    )));
-  }, [saveTabs, tabs]);
-
-  const handleAddTab = useCallback(() => {
-    const id = typeof crypto !== 'undefined' && 'randomUUID' in crypto
-      ? crypto.randomUUID()
-      : `chart-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    saveTabs([...tabs, { id, position: tabs.length, interval_minutes: 1 }]);
-  }, [saveTabs, tabs]);
-
-  const handleRemoveTab = useCallback((tabId: string) => {
-    if (tabs.length <= 1) return;
-    saveTabs(tabs.filter((tab) => tab.id !== tabId));
-  }, [saveTabs, tabs]);
-
+  const handleWorkspaceTabsChange = useCallback((nextTabs: BacktestChartTab[]) => {
+    setTabs(nextTabs);
+  }, []);
   const setSyncOptions = chartSync.setOptions;
   const registerSyncChart = chartSync.registerChart;
-  const unregisterSyncChart = chartSync.unregisterChart;
   const registerReplayChart = replay.registerTabChart;
   const handleSyncChange = useCallback((options: BacktestSyncOptions) => {
     setSyncOptions(options);
   }, [setSyncOptions]);
 
-  const handleChartReady = useCallback((tabId: string, api: import('@getcandlekit/charts/react').ChartViewApi) => {
-    registerReplayChart(tabId, api.controller);
-    registerSyncChart(tabId, api.controller);
+  const handleChartReady = useCallback((
+    tabId: string,
+    api: import('@getcandlekit/charts/react').ChartViewApi
+  ) => {
+    const unregisterReplay = registerReplayChart(tabId, api.controller);
+    const unregisterSync = registerSyncChart(tabId, api.controller);
+    return () => {
+      unregisterSync();
+      if (unregisterReplay) unregisterReplay();
+    };
   }, [registerReplayChart, registerSyncChart]);
-
-  const handleChartDispose = useCallback((tabId: string) => {
-    registerReplayChart(tabId, null);
-    unregisterSyncChart(tabId);
-  }, [registerReplayChart, unregisterSyncChart]);
 
   const firstTimeMs = run.snapshot?.first_time_ms ?? run.coverage?.first_time_ms;
   const lastTimeMs = run.snapshot?.last_time_ms ?? run.coverage?.last_time_ms;
@@ -219,7 +236,7 @@ function BacktestReplayRunView({ run }: { run: BacktestRunDetail }) {
   } as CSSProperties;
 
   return (
-    <div className="backtest-candlekit mx-auto max-w-[1800px] space-y-5" style={chartOverlayStyle}>
+    <div className="backtest-candlekit mx-auto max-w-[1800px] space-y-4" style={chartOverlayStyle}>
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <Link to="/backtest/runs" className="text-sm font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400">
@@ -238,18 +255,10 @@ function BacktestReplayRunView({ run }: { run: BacktestRunDetail }) {
             )}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={handleAddTab}
-          disabled={replay.status !== 'ready'}
-          className="rounded-md border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
-        >
-          Add chart
-        </button>
       </header>
 
       {replay.status === 'loading' && (
-        <section className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-5 text-sm text-gray-600 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-300" role="status">
+        <section className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-5 text-sm text-gray-600 dark:border-gray-700 dark:bg-gray-900" role="status">
           <Spinner />
           Loading the immutable candle snapshot and restoring the saved replay cursor…
         </section>
@@ -276,12 +285,6 @@ function BacktestReplayRunView({ run }: { run: BacktestRunDetail }) {
         </p>
       )}
 
-      {tabSaveError && (
-        <p className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-200" role="alert">
-          {tabSaveError}
-        </p>
-      )}
-
       {replay.status === 'ready' && replay.controlsController && (
         <>
           <BacktestReplayControls
@@ -289,22 +292,15 @@ function BacktestReplayRunView({ run }: { run: BacktestRunDetail }) {
             displayTimezone={timezone}
           />
           <BacktestSyncControls options={chartSync.options} onChange={handleSyncChange} />
-          <div className="grid grid-cols-1 gap-4 2xl:grid-cols-2">
-            {tabs.map((tab) => (
-              <BacktestChartTab
-                key={tab.id}
-                runId={run.id}
-                tab={tab}
-                totalTabs={tabs.length}
-                cursorTimeMs={replay.cursorTimeMs ?? run.replay_cursor?.time_ms ?? firstTimeMs ?? 0}
-                registerDrawingFlusher={replay.registerDrawingFlusher}
-                onIntervalChange={handleIntervalChange}
-                onRemove={handleRemoveTab}
-                onChartReady={handleChartReady}
-                onChartDispose={handleChartDispose}
-              />
-            ))}
-          </div>
+          <BacktestChartWorkspace
+            run={run}
+            initialLayout={initialLayout}
+            revision={revision}
+            cursorTimeMs={replay.cursorTimeMs ?? run.replay_cursor?.time_ms ?? firstTimeMs ?? 0}
+            registerDrawingFlusher={replay.registerDrawingFlusher}
+            onChartReady={handleChartReady}
+            onTabsChange={handleWorkspaceTabsChange}
+          />
         </>
       )}
     </div>
