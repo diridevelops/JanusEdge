@@ -6,6 +6,7 @@ import pytest
 from bson import ObjectId
 
 from app.extensions import mongo
+from app.models.trade_account import create_trade_account_doc
 from app.utils.datetime_utils import utc_now
 
 
@@ -15,6 +16,8 @@ def clean_db(app):
     with app.app_context():
         mongo.db.users.delete_many({})
         mongo.db.trades.delete_many({})
+        mongo.db.trade_accounts.delete_many({})
+        mongo.db.workspace_modes.delete_many({})
         mongo.db.tags.delete_many({})
 
 
@@ -72,9 +75,10 @@ def _insert_trade(
     if entry_time is None:
         entry_time = exit_time - timedelta(minutes=30)
 
+    account_name = f"analytics-test-{ObjectId()}"
     trade_doc = {
         "user_id": user_id,
-        "trade_account_id": ObjectId(),
+        "trade_account_id": None,
         "import_batch_id": ObjectId(),
         "symbol": symbol,
         "raw_symbol": symbol,
@@ -105,6 +109,15 @@ def _insert_trade(
     }
 
     with app.app_context():
+        account_doc = create_trade_account_doc(
+            user_id=user_id,
+            account_name=account_name,
+            source_platform="manual",
+        )
+        account_id = mongo.db.trade_accounts.insert_one(
+            account_doc
+        ).inserted_id
+        trade_doc["trade_account_id"] = account_id
         mongo.db.trades.insert_one(trade_doc)
     return trade_doc
 
