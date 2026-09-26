@@ -7,6 +7,7 @@ WORKDIR /app
 # Install system dependencies required by some Python packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy dependency metadata first for Docker layer caching
