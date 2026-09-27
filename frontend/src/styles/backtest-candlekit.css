@@ -34,9 +34,9 @@
   box-shadow: none;
 }
 
-.backtest-workspace-replay-bar {
-  flex: 0 0 auto;
-  border-bottom: 1px solid var(--ck-border);
+.backtest-candlekit .backtest-replay-controls {
+  border: 1px solid var(--ck-border);
+  border-radius: 8px;
   padding: 5px 8px 6px;
   background: var(--ck-bg);
 }

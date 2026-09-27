@@ -2,6 +2,7 @@ import { type CSSProperties, useCallback, useEffect, useMemo, useState } from 'r
 import { Link, useParams } from 'react-router-dom';
 import { getBacktestChartWorkspace, getBacktestRun, saveBacktestChartWorkspace } from '../api/backtests.api';
 import { BacktestChartWorkspace } from '../components/backtest/BacktestChartWorkspace';
+import { BacktestReplayControls } from '../components/backtest/BacktestReplayControls';
 import { Spinner } from '../components/ui/Spinner';
 import { useBacktestChartSync } from '../hooks/useBacktestChartSync';
 import { useBacktestReplay } from '../hooks/useBacktestReplay';
@@ -254,18 +255,23 @@ function BacktestReplayWorkspaceRun({
       )}
 
       {replay.status === 'ready' && replay.controlsController && (
-        <BacktestChartWorkspace
-          run={run}
-          replayController={replay.controlsController}
-          displayTimezone={timezone}
-          initialLayout={initialLayout}
-          revision={revision}
-          cursorTimeMs={replay.cursorTimeMs ?? run.replay_cursor?.time_ms ?? firstTimeMs ?? 0}
-          registerDrawingFlusher={replay.registerDrawingFlusher}
-          onChartReady={handleChartReady}
-          snapToLive={chartSync.snapToLive}
-          onTabsChange={handleWorkspaceTabsChange}
-        />
+        <>
+          <BacktestChartWorkspace
+            run={run}
+            displayTimezone={timezone}
+            initialLayout={initialLayout}
+            revision={revision}
+            cursorTimeMs={replay.cursorTimeMs ?? run.replay_cursor?.time_ms ?? firstTimeMs ?? 0}
+            registerDrawingFlusher={replay.registerDrawingFlusher}
+            onChartReady={handleChartReady}
+            snapToLive={chartSync.snapToLive}
+            onTabsChange={handleWorkspaceTabsChange}
+          />
+          <BacktestReplayControls
+            controller={replay.controlsController}
+            displayTimezone={timezone}
+          />
+        </>
       )}
     </div>
   );
