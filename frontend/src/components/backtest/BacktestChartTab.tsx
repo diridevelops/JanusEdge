@@ -15,7 +15,12 @@ interface BacktestChartTabProps {
     flush: () => Promise<void> | void
   ) => () => void;
   onIntervalChange: (tabId: string, intervalMinutes: number) => void;
-  onChartReady: (tabId: string, api: ChartViewApi) => void | (() => void);
+  onChartReady: (
+    tabId: string,
+    api: ChartViewApi,
+    onFollowStateChange: (isFollowing: boolean) => void
+  ) => void | (() => void);
+  snapToLive: (tabId: string) => void;
 }
 
 /** A persisted chart panel with controlled, whole-minute interval validation. */
@@ -28,6 +33,7 @@ export function BacktestChartTab({
   registerDrawingFlusher,
   onIntervalChange,
   onChartReady,
+  snapToLive,
 }: BacktestChartTabProps) {
   const [rawInterval, setRawInterval] = useState(String(tab.interval_minutes));
   const [intervalError, setIntervalError] = useState<string | null>(null);
@@ -114,6 +120,7 @@ export function BacktestChartTab({
           cursorTimeMs={cursorTimeMs}
           registerDrawingFlusher={registerDrawingFlusher}
           onChartReady={onChartReady}
+          snapToLive={snapToLive}
         />
       </div>
     </section>

@@ -6,7 +6,7 @@
 
 **Status**: Draft
 
-**Input**: User description: "Add a Backtest workspace in JanusEdge, separate from Real mode. Download one-minute historical candles for one instrument; let the chart display a selected timeframe whose active bar updates as each underlying one-minute candle is replayed. Create one Backtest account per run. Keep real trades and backtest activity separate; defer order entry and trade recording." Follow-up direction: use a dockable chart-tab workspace like the supplied screenshots and CandleKit workspace example, with tabs that can be created, moved, reordered, and split.
+**Input**: User description: "Add a Backtest workspace in JanusEdge, separate from Real mode. Download one-minute historical candles for one instrument; let the chart display a selected timeframe whose active bar updates as each underlying one-minute candle is replayed. Create one Backtest account per run. Keep real trades and backtest activity separate; defer order entry and trade recording." Follow-up direction: use a dockable chart-tab workspace like the supplied screenshots and CandleKit workspace example, with tabs that can be created, moved, reordered, and split. Add a chart follow mode that keeps replaying panes on the latest revealed candle, with a return-to-latest control when a pane is panned away.
 
 ## Clarifications
 
@@ -120,6 +120,13 @@ As a trader, I want to play, pause, step through, and seek across completed cand
 22. **Given** a run has chart tabs with selected intervals, **When** the user navigates away or reloads and reopens that run, **Then** the tabs and their selected intervals are restored.
 23. **Given** crosshair synchronization is enabled and the target timeframe has no candle at the source timestamp, **When** the crosshair is synchronized, **Then** the target uses the nearest available candle at or before that UTC timestamp, or shows no synchronized crosshair if no such candle exists.
 24. **Given** pan or zoom synchronization is enabled across different timeframes, **When** the visible time range is synchronized, **Then** each target range uses the same UTC bounds rounded outward to its chart interval boundaries.
+25. **Given** a chart pane is first opened or remounted, **When** its replay-bounded data is ready, **Then** it is snapped to the latest candle revealed at the run's current replay position and follow mode is active.
+26. **Given** a chart pane is following, **When** playback advances or the user steps or seeks forward or backward, **Then** the newest candle available at the selected replay position remains at the chart's real-time edge with its normal right-side spacing.
+27. **Given** the user pans a pane earlier or later so the latest revealed candle is no longer at the real-time edge, **When** replay advances, **Then** that pane's selected time range is preserved, follow mode is inactive, and a return-to-latest button appears at the lower right of that pane.
+28. **Given** a pane is away from the latest candle, **When** the user selects its return-to-latest button, double-clicks the time axis, or manually pans back to the real-time edge, **Then** that pane snaps to its latest revealed candle, follow mode becomes active, and the button is hidden.
+29. **Given** visual pan synchronization is enabled, **When** a user pan or return-to-latest action changes multiple panes, **Then** each affected pane's follow state reflects its resulting viewport; when pan synchronization is disabled, each pane can follow or browse independently.
+30. **Given** a higher-timeframe candle is updated by another source candle within the same interval, **When** the pane is following, **Then** its horizontal viewport does not jump or change scale solely because the active candle's values changed.
+31. **Given** a pane is panned forward into space beyond the current replay cursor, **When** replay advances until the latest revealed candle reaches that pane's normal real-time edge, **Then** follow mode is considered active again and subsequent cursor advances keep it there.
 
 ### User Story 4 - Find a run through its Backtest account (Priority: P2)
 
@@ -165,6 +172,10 @@ As a trader, I want to annotate a replay chart so that I can retain observations
 - The user steps backward at the first available candle; replay remains at the first candle.
 - Seeking while playback is running pauses the replay at the selected position.
 - Playback reaches the last candle.
+- A chart pane is panned earlier or into future whitespace while playback continues; the detached viewport must not be pulled back by replay updates.
+- The user steps backward or seeks while following; the visible latest candle is the latest one at the new cursor, with later data still hidden.
+- Pan synchronization moves another pane away from its latest candle, or return-to-latest synchronizes multiple panes; each pane's follow state must match its resulting range.
+- A source candle updates an existing higher-timeframe active bar; follow mode must not introduce horizontal jitter when no chart bar is added.
 - A Real account and Backtest account share the same displayed name.
 - Two Backtest runs use the same instrument and date range and need distinct account labels.
 - The user changes workspace while data is downloading or replay is paused.
@@ -204,6 +215,8 @@ As a trader, I want to annotate a replay chart so that I can retain observations
 - **FR-029**: Drawing state MUST be scoped to the authenticated user, run, and chart timeframe. Changes and removals MUST be saved and restored when the user navigates away from or reloads that run and timeframe.
 - **FR-030**: Drawing visibility during replay MUST preserve any replay-aware visibility behavior provided by the pinned CandleKit artifact. If it provides no such behavior, a drawing MUST be hidden whenever any time anchor is later than the current replay cursor and MUST become visible again when the cursor reaches or passes all anchors. This fallback MUST NOT use drawing creation or edit time and MUST NOT change the saved drawing state.
 - **FR-031**: The docked chart workspace MUST be stored per authenticated user and run through a versioned, revision-checked layout contract. Layout writes MUST retain at least one chart tab and MUST validate unique chart ids, supported chart panel types, and valid intervals. If a run has legacy flat chart-tab records but no saved layout, the first workspace load MUST preserve their ids and intervals in a visible dock layout; if no legacy tabs exist, it MUST create the single 1m pane defined in FR-025.
+- **FR-032**: Each replay chart pane MUST begin at the latest candle revealed by the run's current replay cursor with follow mode active. While following, playback, forward/backward stepping, and seeking MUST keep that latest revealed candle at the pane's real-time edge while preserving the chart's normal right-side spacing. This behavior MUST use only cursor-bounded chart data and MUST NOT reveal a later candle.
+- **FR-033**: Follow mode MUST be determined independently for each pane from its current horizontal viewport relative to the latest revealed candle. If horizontal navigation moves that candle away from the real-time edge, that pane MUST stop auto-scrolling and preserve its chosen range as replay advances. Follow MUST become active again as soon as the pane returns to or naturally catches up with its normal real-time offset. A lower-right return-to-latest button MUST be visible only while the pane is away from the latest candle; selecting it or double-clicking the time axis MUST snap the pane to the latest revealed candle, re-enable follow, and hide the button. With pan synchronization enabled, affected panes MUST reflect their resulting synchronized range; with it disabled, panes MUST be able to follow or browse independently.
 
 ### Key Entities
 
@@ -237,6 +250,7 @@ As a trader, I want to annotate a replay chart so that I can retain observations
 - **SC-015**: The run form lists instrument codes from the current catalog exposed by the pinned Dukascopy downloader, and the backend rejects codes not present in that catalog before creating a run or account.
 - **SC-016**: Restarting the API backend or preparation worker during a run does not lose the job, duplicate its run/account, or repeat completed UTC-date work; after lease recovery, preparation resumes from the latest persisted checkpoint.
 - **SC-017**: Existing flat chart-tab configurations migrate to a visible dock layout without losing chart ids or intervals; workspace changes persist with revision checks and a stale write cannot silently replace a newer layout.
+- **SC-018**: Every newly opened chart pane starts following the latest candle revealed at the saved replay cursor. While following, automatic playback and manual cursor changes keep that candle at the real-time edge without revealing future data; horizontal navigation away from it preserves the chosen pane range and displays a return-to-latest button until the latest candle reaches the edge again. The button and the existing double-click time-axis gesture both restore following. Follow state reflects each pane independently and remains consistent with the existing pan synchronization setting.
 
 ## Assumptions
 

@@ -47,7 +47,12 @@ interface ChartPanelRuntime {
     tabId: string,
     flush: () => Promise<void> | void
   ) => () => void;
-  onChartReady: (tabId: string, api: ChartViewApi) => void | (() => void);
+  onChartReady: (
+    tabId: string,
+    api: ChartViewApi,
+    onFollowStateChange: (isFollowing: boolean) => void
+  ) => void | (() => void);
+  snapToLive: (tabId: string) => void;
 }
 
 function createChartPanelComponent(
@@ -76,6 +81,7 @@ function createChartPanelComponent(
           updateConfig({ interval_minutes: intervalMinutes });
         }}
         onChartReady={runtime.onChartReady}
+        snapToLive={runtime.snapToLive}
       />
     );
   };
@@ -102,6 +108,7 @@ interface BacktestChartWorkspaceProps {
   cursorTimeMs: number;
   registerDrawingFlusher: ChartPanelRuntime['registerDrawingFlusher'];
   onChartReady: ChartPanelRuntime['onChartReady'];
+  snapToLive: ChartPanelRuntime['snapToLive'];
   onTabsChange: (tabs: BacktestChartTab[]) => void;
 }
 
@@ -114,6 +121,7 @@ export function BacktestChartWorkspace({
   cursorTimeMs,
   registerDrawingFlusher,
   onChartReady,
+  snapToLive,
   onTabsChange,
 }: BacktestChartWorkspaceProps) {
   const colors = useChartColors();
@@ -131,6 +139,7 @@ export function BacktestChartWorkspace({
     cursorTimeMs,
     registerDrawingFlusher,
     onChartReady,
+    snapToLive,
   });
   runtimeRef.current = {
     runId: run.id,
@@ -138,6 +147,7 @@ export function BacktestChartWorkspace({
     cursorTimeMs,
     registerDrawingFlusher,
     onChartReady,
+    snapToLive,
   };
 
   const workspace = useMemo(() => {

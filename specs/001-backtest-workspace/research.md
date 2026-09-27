@@ -114,6 +114,16 @@ Layout operations only manage panel placement and chart identity. All panels rem
 
 Sources: [CandleKit workspace example](https://github.com/rohanbeingsocial/candlekit-charts/blob/main/examples/workspace/main.tsx), [CandleKit workspace declarations in the pinned 0.1.0 artifact](https://registry.npmjs.org/@getcandlekit/charts/-/charts-0.1.0.tgz), [CandleKit npm metadata](https://www.npmjs.com/package/%40getcandlekit/charts).
 
+### 10. Derive replay follow mode from each chart pane's viewport
+
+**Decision**: Initialize each pane at the latest chart bar exposed by the saved replay cursor. Track follow independently per pane by comparing its `scrollPosition()` with the pane's normal real-time offset. While it is snapped to the latest bar, keep it at that offset as the cursor changes; when it is horizontally navigated away, retain that range until the user returns to latest. Provide a lower-right return-to-latest action and keep the existing time-axis double-click gesture. Do not add a backend endpoint or persisted follow flag.
+
+**Rationale**: The frontend already routes visible logical range changes through `useBacktestChartSync`. The Lightweight Charts 5.2 `ITimeScaleApi` exposes `scrollPosition()`, `scrollToPosition(position, animated)`, `scrollToRealTime()`, and visible-logical-range change subscriptions, which support detecting a pane's position and restoring its live edge. `scrollToRealTime()` is always animated, so use it for one-time initialization and user snap actions; coalesce continuous replay updates and reposition without animation so 20x playback does not keep restarting animations. Deriving follow from each pane's effective viewport handles panning with sync enabled or disabled without keeping a second boolean that can disagree with the actual chart. Follow must use the newest bar exposed by the replay cursor, not the run's full snapshot, to preserve the no-look-ahead contract.
+
+**Alternatives considered**: Always scroll every pane to the newest bar. Rejected because it prevents inspection of earlier or future-empty ranges. Use one run-wide follow toggle. Rejected because panes can be panned independently when pan synchronization is off. Persist a follow boolean separately from the viewport. Rejected because sync operations and chart remounts can make that value stale; follow is a property of the actual time scale position.
+
+Source: [Lightweight Charts 5.2 ITimeScaleApi](https://tradingview.github.io/lightweight-charts/docs/api/interfaces/ITimeScaleApi) (`scrollPosition`, `scrollToRealTime`, and visible logical range notifications).
+
 ## Implementation-Time Validations
 
 - The requested CandleKit 0.1.1 version is not published. The 0.1.0 tarball's declarations confirm ChartView, ReplayControls, DrawingToolbar, ReplayDataSource, SyncEngine, DrawingEngine export/import, and configurable speed choices; no replay-aware drawing visibility API is present.

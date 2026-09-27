@@ -58,6 +58,7 @@ Alternatively, run the full stack with Docker Compose according to the repositor
 10. Confirm the existing Real TradeDetail chart still shows its candlesticks, execution markers, average-entry/exit lines, interval selector, and light/dark colors after the Lightweight Charts 5.x compatibility update.
 11. Exercise interrupted preparation and retry. Confirm retry reuses the same job/run/account and resumes after the latest completed UTC-date checkpoint; only an incomplete date may be fetched again. Restart the API backend while a run is preparing and confirm the separate worker continues. Restart the worker and confirm its expired lease is reclaimed from the last checkpoint. Failed/no-data run records and jobs are removed while the user-scoped preparation result remains dismissible.
 12. While a run is preparing, confirm the run list refreshes progress every five seconds; confirm polling stops after the list has no preparing runs.
+13. Confirm each chart pane initially snaps to the latest candle available at the saved replay cursor. Play and step forward/backward while following; verify the latest revealed candle stays at the right edge, including after a backward seek. Pan one pane backward and forward away from the latest candle; verify replay updates do not move its viewport and a lower-right return button appears. Select the button, double-click the time axis, or manually pan back to the latest edge; each action must restore follow and hide the button. Pan forward into future space and confirm follow reactivates when replay naturally catches up to the live edge. Repeat with pan synchronization enabled and disabled, confirming each affected pane's follow state matches its resulting range. On a higher-timeframe chart, update the active bar with another source candle and confirm the horizontal range does not jump when no new chart bar is added.
 
 ## Automated checks
 
@@ -75,5 +76,5 @@ npm run lint
 npm run build
 ~~~
 
-The frontend build confirms the locked CandleKit and Lightweight Charts types resolve together. Browser validation is still needed for drawing persistence, cursor-bounded replay, multi-interval synchronization, and visual styling.
+The frontend build confirms the locked CandleKit and Lightweight Charts types resolve together. Browser validation is still needed for drawing persistence, cursor-bounded replay, multi-interval synchronization, follow/detach behavior, and visual styling.
 

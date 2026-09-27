@@ -139,6 +139,30 @@ Each chart panel derives bars from source candles already emitted through the re
 
 Panel ids are unique in a workspace. Moving a tab changes its tree parent and may unmount/remount its component, but preserves its panel id, interval, drawing scope, and shared replay position.
 
+Follow state is not part of the persisted panel configuration. A newly mounted pane initializes at the latest bar visible through the run's saved replay cursor. Its live follow status is derived from the pane's time-scale scroll position relative to that pane's normal real-time offset; see `ReplayChartFollowState` below.
+
+## ReplayChartFollowState (runtime only)
+
+Transient state for one mounted chart pane. It is derived from that pane's actual chart time scale and cursor-bounded bars and is not written to MongoDB or the chart-workspace API.
+
+| Field | Type | Description |
+|---|---|---|
+| panel_id | string | Stable id of the chart pane this runtime state belongs to. |
+| follows_latest | boolean | Whether the latest revealed chart bar is at the pane's real-time edge. |
+| latest_revealed_bar_index | integer/null | Rightmost bar index available from the current replay cursor and selected chart interval. |
+| current_scroll_position | number | Time-scale distance from the visible right edge to the latest chart bar. |
+| real_time_scroll_position | number | Pane's normal right-edge offset captured when it is snapped to real time. |
+
+Invariants:
+
+- Each mounted pane determines follow status independently; there is no run-level follow toggle or second replay cursor.
+- After chart data is ready on first open or remount, the pane scrolls to the latest bar revealed at the current cursor, captures its normal real-time offset, and begins following.
+- Follow status is derived by comparing the current scroll position with the captured real-time offset. While following, a replay cursor update keeps the latest currently revealed bar at that offset. A user horizontal navigation that places it away from that offset leaves the pane's selected range unchanged as replay advances; if replay naturally catches up to that offset, the pane is following again.
+- Continuous replay updates use coalesced, non-animated repositioning; the initial and user-requested snap may use the chart's animated real-time scroll. A same-interval update to the active higher-timeframe bar does not change the pane's horizontal range or scale.
+- The lower-right return-to-latest action and the existing double-click time-axis gesture scroll the pane to its latest revealed bar and restore follow. The action is hidden while the pane is snapped to that bar. Manual navigation back to the real-time offset also restores follow.
+- A synchronized pan or return-to-latest operation is evaluated against each affected pane's resulting range. Existing pan-sync settings continue to determine which panes receive the range.
+- Rewind and seek use only bars revealed at the new replay cursor.
+
 ## ChartWorkspaceLayout
 
 The durable workspace document for one authenticated user and one ready BacktestRun. MongoDB stores one document in `backtest_chart_workspaces` per `(user_id, run_id)`; all API queries derive user_id from authentication.

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { ChevronsRight } from 'lucide-react';
 import {
   darkTheme,
   DrawingController,
@@ -60,7 +61,36 @@ interface CandleKitReplayChartProps {
     tabId: string,
     flush: () => Promise<void> | void
   ) => () => void;
-  onChartReady: (tabId: string, api: ChartViewApi) => void | (() => void);
+  onChartReady: (
+    tabId: string,
+    api: ChartViewApi,
+    onFollowStateChange: (isFollowing: boolean) => void
+  ) => void | (() => void);
+  snapToLive: (tabId: string) => void;
+}
+
+interface CandleKitReplayFollowButtonProps {
+  isFollowing: boolean;
+  onSnapToLive: () => void;
+}
+
+export function CandleKitReplayFollowButton({
+  isFollowing,
+  onSnapToLive,
+}: CandleKitReplayFollowButtonProps) {
+  if (isFollowing) return null;
+  return (
+    <button
+      type="button"
+      className="backtest-follow-live"
+      aria-label="Snap chart to latest candle"
+      title="Snap chart to latest candle"
+      onClick={onSnapToLive}
+    >
+      <ChevronsRight className="h-4 w-4" aria-hidden="true" />
+      <span className="sr-only">Snap chart to latest candle</span>
+    </button>
+  );
 }
 
 function canonicalDrawingArray(serializedState: string): string {
@@ -87,8 +117,10 @@ export function CandleKitReplayChart({
   cursorTimeMs,
   registerDrawingFlusher,
   onChartReady,
+  snapToLive,
 }: CandleKitReplayChartProps) {
   const colors = useChartColors();
+  const [isFollowing, setIsFollowing] = useState(true);
   const [generation, setGeneration] = useState(0);
   const sessionKey = `${runId}:${intervalMinutes}:${generation}`;
   const [drawingSession, setDrawingSession] = useState<DrawingSession | null>(null);
@@ -402,7 +434,7 @@ export function CandleKitReplayChart({
           queueMicrotask(() => {
             if (isMountedRef.current && chartLifecycleRef.current === lifecycle) {
               chartUnregisterRef.current?.();
-              const unregister = onChartReady(tabId, api);
+              const unregister = onChartReady(tabId, api, setIsFollowing);
               chartUnregisterRef.current = typeof unregister === 'function'
                 ? unregister
                 : null;
@@ -419,6 +451,10 @@ export function CandleKitReplayChart({
           </>
         )}
       </ChartView>
+      <CandleKitReplayFollowButton
+        isFollowing={isFollowing}
+        onSnapToLive={() => snapToLive(tabId)}
+      />
       {!isHydrated && !loadError && (
         <div className="backtest-drawing-status" role="status">
           Loading saved drawings before enabling editing…

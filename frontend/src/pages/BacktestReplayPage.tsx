@@ -212,10 +212,11 @@ function BacktestReplayWorkspaceRun({
 
   const handleChartReady = useCallback((
     tabId: string,
-    api: import('@getcandlekit/charts/react').ChartViewApi
+    api: import('@getcandlekit/charts/react').ChartViewApi,
+    onFollowStateChange: (isFollowing: boolean) => void
   ) => {
     const unregisterReplay = registerReplayChart(tabId, api.controller);
-    const unregisterSync = registerSyncChart(tabId, api.controller);
+    const unregisterSync = registerSyncChart(tabId, api.controller, onFollowStateChange);
     return () => {
       unregisterSync();
       if (unregisterReplay) unregisterReplay();
@@ -305,6 +306,7 @@ function BacktestReplayWorkspaceRun({
             cursorTimeMs={replay.cursorTimeMs ?? run.replay_cursor?.time_ms ?? firstTimeMs ?? 0}
             registerDrawingFlusher={replay.registerDrawingFlusher}
             onChartReady={handleChartReady}
+            snapToLive={chartSync.snapToLive}
             onTabsChange={handleWorkspaceTabsChange}
           />
         </>

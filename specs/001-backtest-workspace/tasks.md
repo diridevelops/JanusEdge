@@ -8,11 +8,11 @@ description: "Implementation backlog for the dockable Backtest chart workspace"
 
 **Prerequisites**: `plan.md` and `spec.md` are available. The project constitution remains an unratified Spec Kit placeholder and defines no project gates.
 
-**Scope**: This regenerated backlog carries forward implementation already recorded as complete in the previous task list. It does not repeat the Real/Backtest separation, run preparation, core replay transport, account integration, or initial drawing integration tasks. The old flat chart-tabs task is superseded by the dockable workspace work in User Story 3. These carry-forward notes reflect the prior task ledger, not a new code audit.
+**Scope**: This regenerated backlog carries forward implementation already recorded as complete in the previous task list and adds the replay chart follow-mode enhancement. It does not repeat the Real/Backtest separation, run preparation, core replay transport, account integration, or initial drawing integration tasks. The old flat chart-tabs task is superseded by the dockable workspace work in User Story 3. These carry-forward notes reflect the prior task ledger, not a new code audit.
 
 **Tests**: Include focused backend and frontend tests for the new versioned workspace contract, migration, and panel lifecycle. UI/browser scenarios remain deferred under the user's current instruction; no tests were run while generating this backlog.
 
-**Organization**: One phase per feature user story, in priority order. User Stories 1, 2, and 4 have no new tasks in this plan delta because their work is recorded as complete in the prior task list.
+**Organization**: Preserve existing story phases and task statuses, then add the follow-mode enhancement as a sequential phase after the carried-forward backlog. User Stories 1, 2, and 4 have no new tasks in this plan delta because their work is recorded as complete in the prior task list.
 
 **Format**: `- [ ] T### [P?] [US#?] Description with file path`
 
@@ -56,9 +56,9 @@ No new tasks in this plan delta; the prior task list records this story's implem
 
 ## Phase 5: User Story 3 - Replay candles interactively (Priority: P1)
 
-**Goal**: Replace the flat chart grid with a persistent dockable workspace while retaining the run's single replay cursor and cursor-bounded chart data.
+**Goal**: Replace the flat chart grid with a persistent dockable workspace while retaining the run's single replay cursor and cursor-bounded chart data. Keep each pane following its latest revealed candle until the user navigates away, then provide a return-to-latest action.
 
-**Independent Test**: A new run opens with one 1m chart. Add and reorder tabs, move one between groups, split by dropping it at a pane edge, resize panes, and close tabs while retaining one chart. Reload and confirm layout, active tabs, stable ids, intervals, and the shared replay position are restored. Migrate legacy flat tabs without losing their ids or intervals.
+**Independent Test**: A new run opens with one 1m chart snapped to the latest candle. Add and reorder tabs, move one between groups, split by dropping it at a pane edge, resize panes, and close tabs while retaining one chart. Reload and confirm layout, active tabs, stable ids, intervals, and the shared replay position are restored. Migrate legacy flat tabs without losing their ids or intervals. Confirm follow mode moves the latest revealed candle with playback and manual cursor changes; pan away in either direction, confirm the viewport remains detached, then use the return button or existing time-axis double-click gesture to snap back.
 
 ### Tests for User Story 3
 
@@ -111,7 +111,24 @@ No new tasks in this plan delta; the prior task list records this story's implem
 **Purpose**: Validate the new layout against the existing application and documented acceptance scenarios.
 
 - [X] T013 Run backend pytest, frontend Vitest, lint, and production build after workspace integration; resolve regressions and the previously recorded standard Vite build-loader access error using `backend/pyproject.toml`, `frontend/package.json`, and `frontend/vite.config.ts`.
-- [ ] T014 After UI validation is resumed, execute the chart-workspace migration, docking, persistence, concurrency, and panel-move scenarios in `specs/001-backtest-workspace/quickstart.md`.
+- [ ] T014 After UI validation is resumed, execute the chart-workspace migration, docking, persistence, concurrency, panel-move, replay-follow, and return-to-latest scenarios in `specs/001-backtest-workspace/quickstart.md`.
+
+---
+
+## Phase 9: User Story 3 follow-mode enhancement (Priority: P1)
+
+**Purpose**: Add follow behavior to the already-integrated replay chart workspace. Browser validation in T014 is not a prerequisite for implementing these tasks.
+
+### Tests
+
+- [X] T015 [US3] Add frontend tests for pane-local follow transitions (initial snap, playback/step/seek updates, pan backward and forward, detached-range preservation, synchronized-range changes, latest catch-up, and no horizontal jump on an in-place higher-timeframe bar update) in `frontend/src/utils/backtestChartFollow.test.ts` and `frontend/src/components/backtest/CandleKitReplayChart.test.tsx`.
+
+### Implementation
+
+- [X] T016 [US3] Implement pane-local follow tracking from the time-scale position and latest cursor-bounded chart bar; snap new/remounted panes to latest, follow replay cursor changes only while snapped, preserve detached ranges, and handle synchronized range updates without feedback loops in `frontend/src/hooks/useBacktestChartSync.ts` and `frontend/src/utils/backtestChartFollow.ts`. Coalesce replay-driven scroll updates and use non-animated positioning at 20x; do not scroll horizontally for in-place updates to an active higher-timeframe bar.
+- [X] T017 [US3] Add an accessible lower-right return-to-latest button that appears only when the pane is away from the latest revealed candle, restores follow when selected, and preserves the existing double-click time-axis snap behavior in `frontend/src/components/backtest/BacktestChartTab.tsx`, `frontend/src/components/backtest/CandleKitReplayChart.tsx`, and `frontend/src/styles/backtest-candlekit.css`.
+
+**Checkpoint**: Playback and manual cursor changes move each following pane to the latest revealed candle. Panned panes remain detached until brought back to the real-time edge; the button is available only while detached.
 
 ---
 
@@ -122,16 +139,18 @@ No new tasks in this plan delta; the prior task list records this story's implem
 - **Setup (Phase 1)**: No dependency; completes the exact layout peer pin.
 - **Foundational (Phase 2)**: Depends on Setup and blocks workspace API persistence.
 - **User Stories 1 and 2 (Phases 3 and 4)**: Previously delivered; US3 relies on the ready-run behavior from US2.
-- **User Story 3 (Phase 5)**: Depends on Setup and Foundational; the replay/run API it extends is recorded as delivered in US2/US3 work from the previous backlog.
+- **User Story 3 (Phase 5)**: Depends on Setup and Foundational; the replay/run API and dock workspace it extends are recorded as delivered in US2/US3 work from the previous backlog. Add follow tests in T015 before implementing T016-T017; follow logic depends on the shared replay controller and existing chart panel lifecycle.
 - **User Story 4 (Phase 6)**: Previously delivered; independent of the dock-layout change.
 - **User Story 5 (Phase 7)**: Depends on US3's docked chart panel and move behavior.
 - **Polish (Phase 8)**: T013 depends on implementation completion; T014 remains deferred until UI validation resumes.
+- **US3 follow-mode enhancement (Phase 9)**: Depends on the existing chart workspace and shared replay controller from Phase 5. Add tests in T015 before implementing T016-T017; T017 depends on follow-state and snap APIs from T016. T014 is not a prerequisite and remains deferred until UI validation resumes.
 
 ### User Story Dependencies
 
 - **US1 (P1)**: Previously delivered; no new tasks.
 - **US2 (P1)**: Previously delivered; supplies ready runs for US3.
 - **US3 (P1)**: Starts after T001-T002 and the existing ready-run/replay foundation.
+- **US3 follow-mode delta (P1)**: Extends the delivered replay chart panes; T015 precedes T016, and T017 uses the state/action interfaces implemented by T016.
 - **US4 (P2)**: Previously delivered; no new tasks.
 - **US5 (P2)**: Starts after US3 panel moves are implemented.
 
@@ -155,7 +174,8 @@ Task: T004 frontend workspace bootstrap and legacy conversion tests in frontend/
 1. Complete Setup and Foundational.
 2. Complete User Story 3 so a run has one default chart and its dockable layout persists.
 3. Complete User Story 5 lifecycle handling before release so moving a panel cannot lose drawings or leak subscriptions.
-4. Run headless automated checks after implementation. Keep T014 open until the user resumes UI validation.
+4. Complete the US3 follow-mode tasks so each pane can track or inspect replay history independently.
+5. Run headless automated checks after implementation. Keep T014 open until the user resumes UI validation.
 
 ## Notes
 

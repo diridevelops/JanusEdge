@@ -113,6 +113,33 @@
   pointer-events: none;
 }
 
+.backtest-candlekit .backtest-follow-live {
+  position: absolute;
+  z-index: 12;
+  right: 10px;
+  bottom: 42px;
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid var(--ck-border);
+  border-radius: 9999px;
+  color: var(--ck-fg);
+  background: var(--ck-bg);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.18);
+  cursor: pointer;
+}
+
+.backtest-candlekit .backtest-follow-live:hover {
+  border-color: var(--ck-accent);
+  color: var(--ck-accent);
+}
+
+.backtest-candlekit .backtest-follow-live:focus-visible {
+  outline: 2px solid var(--ck-accent);
+  outline-offset: 2px;
+}
+
 .backtest-flexlayout-theme,
 .backtest-flexlayout,
 .backtest-flexlayout-theme .flexlayout__layout {

@@ -1,14 +1,16 @@
 # Implementation Plan: Backtest Candle Replay
 
-**Branch**: feature/backtester (Spec Kit feature slug: 001-backtest-workspace) | **Date**: 2026-09-26 | **Spec**: [spec.md](spec.md)
+**Branch**: feature/backtester (Spec Kit feature slug: 001-backtest-workspace) | **Date**: 2026-09-27 | **Spec**: [spec.md](spec.md)
 
-**Input**: Feature specification plus the user’s planning direction: use CandleKit for Backtest charting, replay, synchronization, and drawing state; use CandleKit’s React components and style them to match JanusEdge. Use a durable preparation worker, the pinned downloader’s supported-instrument catalog, five-second run-list polling, a persisted first-candle cursor at readiness, and CandleKit ReplayControls with only a speed-selector wrapper if needed.
+**Input**: Feature specification plus the user’s planning direction: use CandleKit for Backtest charting, replay, synchronization, and drawing state; use CandleKit’s React components and style them to match JanusEdge. Use a durable preparation worker, the pinned downloader’s supported-instrument catalog, five-second run-list polling, a persisted first-candle cursor at readiness, and CandleKit ReplayControls with only a speed-selector wrapper if needed. Add per-pane follow mode that keeps the chart at the latest replay-revealed candle until the user navigates away, with a return-to-latest control.
 
 ## Summary
 
 Add the Backtest workspace described in the feature specification, with one immutable Dukascopy one-minute candle snapshot per run, one shared replay cursor, and a persisted dockable chart workspace per run. New runs start with one 1m chart pane. CandleKit is the required chart and interaction layer: its React ChartView, ReplayControls, DrawingToolbar, and workspace adapter host the charts and controls; its replay and sync engines provide the replay and chart-interaction mechanisms. JanusEdge remains authoritative for run data, saved replay position, workspace layout and chart-panel configuration, and user-scoped drawing persistence.
 
 The integration must preserve the no-look-ahead rule. CandleKit’s replay source reads the run’s one-minute snapshot, and a JanusEdge adapter aggregates only the source candles exposed through the current replay cursor into each chart panel’s selected interval. Users can create, reorder, move, split, resize, and close chart tabs. Crosshair and visible-range synchronization pass through CandleKit’s SyncEngine, with an adapter that translates between logical bar indexes and UTC timestamps so panels at different timeframes remain aligned. Layout topology and chart configurations are saved per authenticated user and run through a revision-checked API contract.
+
+Each chart pane follows its latest cursor-bounded candle by default. Horizontal navigation away from that candle detaches only the affected pane from follow, preserving its visible range while replay continues; a lower-right return-to-latest control and the existing time-axis double-click gesture restore follow. Follow state is derived from the pane's scroll position relative to its normal real-time offset and is not a second persisted workspace setting or replay cursor. It becomes active again if replay naturally catches the viewport up to that offset.
 
 ## Technical Context
 
@@ -42,8 +44,9 @@ The integration must preserve the no-look-ahead rule. CandleKit’s replay sourc
 - Time correctness: source instants stay UTC; interval membership uses fixed UTC boundaries; display timezone affects formatting only.
 - CandleKit boundary: the React/chart adapter isolates version-specific library APIs and style overrides.
 - Workspace integrity: one versioned layout per authenticated user and run, unique stable chart ids, valid intervals and split dimensions, and at least one chart panel after every accepted write.
+- Follow integrity: a following pane tracks only its latest replay-revealed chart candle; a pane navigated away from that edge retains its range, with state evaluated independently after synchronized viewport changes.
 
-**Post-design check**: The proposed model and contracts preserve each feature gate. Implementation must verify package compatibility and the chart adapter against the locked dependency artifacts before building feature flows. The user resolved the drawing-visibility and capacity questions: preserve replay-aware drawing behavior if present in the pinned CandleKit artifact; otherwise use anchor-only visibility, with no creation/edit-time history, and impose no additional tab cap or performance SLA (checklist CHK006 and CHK020). Anchor-only visibility means a drawing created later but anchored entirely in the past may remain visible after rewind; this is an accepted v1 trade-off.
+**Post-design check**: The proposed model and contracts preserve each feature gate. Follow remains a per-pane view concern and moves only within cursor-bounded data, so it does not change the replay cursor or workspace API. Implementation must verify package compatibility and the chart adapter against the locked dependency artifacts before building feature flows. The user resolved the drawing-visibility and capacity questions: preserve replay-aware drawing behavior if present in the pinned CandleKit artifact; otherwise use anchor-only visibility, with no creation/edit-time history, and impose no additional tab cap or performance SLA (checklist CHK006 and CHK020). Anchor-only visibility means a drawing created later but anchored entirely in the past may remain visible after rewind; this is an accepted v1 trade-off.
 
 ## Architecture and Data Flow
 
@@ -56,6 +59,7 @@ The integration must preserve the no-look-ahead rule. CandleKit’s replay sourc
 7. CandleKit’s SyncEngine routes chart interaction synchronization. A JanusEdge adapter maps source ranges and crosshair positions through UTC time before applying them to charts with different interval widths. A crosshair with no exact target candle snaps to the nearest available candle at or before the source time; synchronized visible ranges preserve UTC bounds and round outward to each target interval.
 8. Each chart panel’s CandleKit DrawingController owns its live drawing model and exposes the standard drawing tools for create, select, reposition, edit, and remove. The app loads and saves DrawingEngine export/import payloads through authenticated, run- and timeframe-scoped API routes. Inspect the pinned CandleKit artifact for replay-aware drawing visibility and preserve that behavior if present; otherwise hide a drawing while any time anchor is beyond the replay cursor and show it again once all anchors are at or before the cursor. The fallback does not use creation/edit time or alter the saved drawing state; consequently, a later-created drawing anchored in the past may remain visible after rewind. Edits and removals are persisted. A panel move may unmount its component: flush pending drawing writes and unregister replay/sync listeners before registering the same stable chart id in its new location.
 9. ThemeContext selects CandleKit’s light/dark theme. Scoped CSS overrides and the chart theme palette map CandleKit controls and overlays to JanusEdge’s Tailwind gray, brand, profit, and loss colors.
+10. Each chart pane starts at the latest candle exposed by its replay cursor. A panel-scoped follow coordinator observes the pane's scroll position relative to its normal real-time offset and the latest revealed chart bar. While that pane is snapped to the real-time edge, replay data updates keep it there; time-axis pan away from that edge suspends auto-scroll for that pane. Use a non-animated, coalesced reposition for continuous replay updates so 20x playback does not repeatedly restart `scrollToRealTime()` animations; use the animated real-time scroll for initial snap, the return button, and the existing equivalent double-click gesture. Follow state is recomputed from resulting ranges, including ranges received through optional pan synchronization, so independently panned panes remain independent and synchronized panes reflect the shared viewport. In-place updates to a higher-timeframe active candle do not change its horizontal scale or range.
 
 ## Project Structure
 
@@ -78,6 +82,7 @@ frontend/src/
 ├── pages/BacktestReplayPage.tsx
 ├── hooks/useBacktestReplay.ts
 ├── hooks/useBacktestChartSync.ts
+├── utils/backtestChartFollow.ts
 ├── components/backtest/
 │   ├── BacktestChartWorkspace.tsx
 │   ├── BacktestRunForm.tsx
@@ -118,6 +123,7 @@ The repository-root `docker-compose.yml` adds an independent `backtest-worker` s
 - Use DrawingController and DrawingEngine as the source of live drawing geometry and the standard v1 drawing tool set. Persist exported state through the JanusEdge API keyed by user, run, and interval. Hydrate before enabling drawing edits, then debounce writes and flush on seek, pause, and route exit. Preserve replay-aware drawing visibility if present in the pinned artifact; otherwise filter by anchor time only. Do not add creation/edit-time visibility history in v1. Edits and deletions must persist. This gives authenticated state that survives reloads without treating CandleKit’s synchronous local KVStore as a backend adapter.
 - Apply the app’s ThemeContext and theme colors to CandleKit, import its stylesheet once, and scope CSS overrides to the Backtest chart subtree. Keep chart toolbars and controls visually consistent with JanusEdge cards, buttons, borders, and dark mode.
 - Integrate the existing dukascopy-market-data Python package through its importable API, pinned to a Git revision in uv.lock. Stage its result, then copy the exact one-minute selection to a run-owned immutable MinIO snapshot. Resolve the package’s PyArrow minimum against the backend’s current PyArrow 18.1.0 pin during dependency integration.
+- Keep follow state local to each chart pane and derive it from that pane's scroll position relative to its normal real-time offset and latest cursor-bounded bar. Use Lightweight Charts' visible-range notifications through the existing chart adapter; do not add a run-level follow toggle, API endpoint, or persisted follow boolean. Coalesce continuous replay-driven repositioning and use a non-animated scroll update, preserving the chart's right margin; reserve animated `scrollToRealTime()` for initial snap and a user snap action. Show an accessible return-to-latest button at the lower-right plot edge only when the pane is not snapped; both it and the existing time-axis double-click action restore the latest-candle view. Honor synchronized pan results per pane and suppress feedback loops from programmatic range changes.
 
 ## Complexity Tracking
 
