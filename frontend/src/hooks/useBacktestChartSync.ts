@@ -206,8 +206,8 @@ export function useBacktestChartSync(
     timeScale.scrollToPosition(realtimeOffset, false);
     onFollowStateChange(followState.isFollowing);
 
-    function setCrosshairAtTime(ts: number | null, y?: number | null) {
-      if (ts === null) {
+    function setCrosshairAtTime(ts: number | null, price?: number | null) {
+      if (ts === null || typeof price !== 'number' || !Number.isFinite(price)) {
         chart.clearCrosshairPosition();
         return;
       }
@@ -219,7 +219,6 @@ export function useBacktestChartSync(
         chart.clearCrosshairPosition();
         return;
       }
-      const price = typeof y === 'number' && Number.isFinite(y) ? y : targetBar.close;
       chart.setCrosshairPosition(
         price,
         Math.floor(targetBar.ts / 1_000) as Time,
@@ -255,16 +254,19 @@ export function useBacktestChartSync(
 
     const onCrosshairMove = (param: MouseEventParams<Time>) => {
       const ts = toUtcMilliseconds(param.time ?? null);
-      let y: number | null = null;
-      const seriesValue = param.seriesData.get(controller.getSeries()) as
-        | { close?: number; value?: number }
-        | undefined;
-      if (typeof seriesValue?.close === 'number') y = seriesValue.close;
-      else if (typeof seriesValue?.value === 'number') y = seriesValue.value;
+      const pointY = param.point?.y;
+      // The replay sync group's y value is a price, not a screen coordinate;
+      // each pane has its own size and price scale.
+      const coordinatePrice = typeof pointY === 'number' && Number.isFinite(pointY)
+        ? controller.getSeries().coordinateToPrice(pointY)
+        : null;
+      const price = typeof coordinatePrice === 'number' && Number.isFinite(coordinatePrice)
+        ? coordinatePrice
+        : null;
       engine.broadcast(groupId, {
         kind: 'crosshair',
         ts,
-        y,
+        y: price,
         sourcePanelId: tabId,
       });
     };
