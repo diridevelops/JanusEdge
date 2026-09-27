@@ -41,6 +41,11 @@
   background: var(--ck-bg);
 }
 
+.backtest-replay-maximized .backtest-replay-controls {
+  flex: 0 0 auto;
+  border-radius: 0;
+}
+
 .backtest-candlekit .backtest-candlekit-replay .ck-replay-head {
   display: none;
 }

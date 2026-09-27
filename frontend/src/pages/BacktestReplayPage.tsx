@@ -1,5 +1,6 @@
 import { type CSSProperties, useCallback, useEffect, useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Maximize2 } from 'lucide-react';
+import { Link, useOutletContext, useParams } from 'react-router-dom';
 import { getBacktestChartWorkspace, getBacktestRun, saveBacktestChartWorkspace } from '../api/backtests.api';
 import { BacktestChartWorkspace } from '../components/backtest/BacktestChartWorkspace';
 import { BacktestReplayControls } from '../components/backtest/BacktestReplayControls';
@@ -16,6 +17,7 @@ import {
 } from '../utils/backtestWorkspace';
 import type { WorkspaceLayout } from '@getcandlekit/charts/react/workspace';
 import '../styles/backtest-candlekit.css';
+import type { AppLayoutOutletContext } from '../components/layout/AppLayout';
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim()) return error.message;
@@ -171,6 +173,7 @@ function BacktestReplayWorkspaceRun({
   initialLayout: WorkspaceLayout;
   revision: number;
 }) {
+  const { isReplayMaximized, setReplayMaximized } = useOutletContext<AppLayoutOutletContext>();
   const colors = useChartColors();
   const { user } = useAuth();
   const [tabs, setTabs] = useState<BacktestChartTab[]>(() => (
@@ -178,6 +181,8 @@ function BacktestReplayWorkspaceRun({
   ));
   const replay = useBacktestReplay(run, tabs);
   const chartSync = useBacktestChartSync(tabs, run.instrument, replay.controller);
+
+  useEffect(() => () => setReplayMaximized(false), [setReplayMaximized]);
 
   const handleWorkspaceTabsChange = useCallback((nextTabs: BacktestChartTab[]) => {
     setTabs(nextTabs);
@@ -216,15 +221,31 @@ function BacktestReplayWorkspaceRun({
   } as CSSProperties;
 
   return (
-    <div className="backtest-candlekit mx-auto max-w-[1800px] space-y-4" style={chartOverlayStyle}>
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="sr-only">{run.instrument} replay</h1>
-          <Link to="/backtest/runs" className="text-sm font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400">
-            ← Backtest runs
-          </Link>
-        </div>
-      </header>
+    <div
+      className={isReplayMaximized
+        ? 'backtest-candlekit backtest-replay-maximized flex h-full min-h-0 w-full max-w-none flex-col overflow-hidden'
+        : 'backtest-candlekit mx-auto max-w-[1800px] space-y-4'}
+      style={chartOverlayStyle}
+    >
+      {!isReplayMaximized && (
+        <header className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h1 className="sr-only">{run.instrument} replay</h1>
+            <Link to="/backtest/runs" className="text-sm font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400">
+              ← Backtest runs
+            </Link>
+          </div>
+          <button
+            type="button"
+            onClick={() => setReplayMaximized(true)}
+            aria-label="Maximize replay chart"
+            title="Maximize replay chart"
+            className="rounded-md p-2 text-gray-500 hover:bg-gray-100 hover:text-gray-700 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-200"
+          >
+            <Maximize2 className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </header>
+      )}
 
       {replay.status === 'loading' && (
         <section className="flex items-center gap-3 rounded-xl border border-gray-200 bg-white p-5 text-sm text-gray-600 dark:border-gray-700 dark:bg-gray-900" role="status">
@@ -258,6 +279,7 @@ function BacktestReplayWorkspaceRun({
         <>
           <BacktestChartWorkspace
             run={run}
+            maximized={isReplayMaximized}
             displayTimezone={timezone}
             initialLayout={initialLayout}
             revision={revision}

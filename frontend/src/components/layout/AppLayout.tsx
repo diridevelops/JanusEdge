@@ -1,8 +1,14 @@
+import { useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import { useWorkspaceMode } from '../../contexts/WorkspaceModeContext';
 import { Header } from './Header';
 import { Sidebar } from './Sidebar';
 import { Spinner } from '../ui/Spinner';
+
+export interface AppLayoutOutletContext {
+  isReplayMaximized: boolean;
+  setReplayMaximized: (maximized: boolean) => void;
+}
 
 /**
  * Main application layout with sidebar and header.
@@ -10,6 +16,7 @@ import { Spinner } from '../ui/Spinner';
  */
 export function AppLayout() {
   const { isLoading, loadError, reloadWorkspaceMode } = useWorkspaceMode();
+  const [isReplayMaximized, setReplayMaximized] = useState(false);
 
   if (isLoading) {
     return (
@@ -37,12 +44,15 @@ export function AppLayout() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      <Header />
-      <Sidebar />
-      <div className="ml-60">
-        <main className="p-6 pt-4">
-          <Outlet />
+    <div className={`${isReplayMaximized ? 'h-dvh overflow-hidden' : 'min-h-screen'} bg-gray-50 dark:bg-gray-900`}>
+      <Header
+        compact={isReplayMaximized}
+        onRestoreReplay={isReplayMaximized ? () => setReplayMaximized(false) : undefined}
+      />
+      {!isReplayMaximized && <Sidebar />}
+      <div className={isReplayMaximized ? 'h-[calc(100dvh-3rem)] w-full' : 'ml-60'}>
+        <main className={isReplayMaximized ? 'h-full min-h-0 overflow-hidden p-0' : 'p-6 pt-4'}>
+          <Outlet context={{ isReplayMaximized, setReplayMaximized } satisfies AppLayoutOutletContext} />
         </main>
       </div>
     </div>
