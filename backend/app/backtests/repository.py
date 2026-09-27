@@ -312,6 +312,8 @@ class BacktestRepository(BaseRepository):
         *,
         snapshot: dict,
         coverage: dict,
+        warmup_coverage: dict,
+        replay_start_source_index: int,
         first_time_ms: int,
         worker_id: str,
         now,
@@ -333,10 +335,11 @@ class BacktestRepository(BaseRepository):
                 "$set": {
                     "snapshot": snapshot,
                     "coverage": coverage,
+                    "warmup_coverage": warmup_coverage,
                     "status": "ready",
                     "progress": {"stage": "complete", "percent": 100},
                     "replay_cursor": {
-                        "source_candle_index": 0,
+                        "source_candle_index": replay_start_source_index,
                         "time_ms": first_time_ms,
                         "revision": 0,
                         "updated_at": now,

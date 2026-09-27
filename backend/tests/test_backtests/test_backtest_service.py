@@ -1,6 +1,7 @@
 """Backtest run validation and account-creation contract tests."""
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -89,6 +90,41 @@ def test_create_run_converts_inclusive_display_dates_to_utc_day_bounds(
     assert datetime.fromtimestamp(
         run["end_utc_ms"] / 1000, tz=timezone.utc
     ) == datetime(2026, 3, 29, 22, 0, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize(
+    ("start", "expected_context_date"),
+    [
+        (date(2026, 3, 31), date(2026, 2, 28)),
+        (date(2024, 3, 31), date(2024, 2, 29)),
+        (date(2026, 3, 29), date(2026, 2, 28)),
+    ],
+)
+def test_create_run_stores_preceding_calendar_month_context_boundary(
+    app, backtest_service, start, expected_context_date
+):
+    """Warm-up subtracts a clamped local calendar month before UTC conversion."""
+    with app.app_context():
+        result = _new_run(
+            backtest_service,
+            start_date=start.isoformat(),
+            end_date=start.isoformat(),
+            display_timezone="Europe/Rome",
+        )
+        run = mongo.db.backtest_runs.find_one({"_id": result["id"]})
+        job = mongo.db.backtest_preparation_jobs.find_one(
+            {"run_id": result["id"]}
+        )
+
+    expected_context = datetime(
+        expected_context_date.year,
+        expected_context_date.month,
+        expected_context_date.day,
+        tzinfo=ZoneInfo("Europe/Rome"),
+    ).astimezone(timezone.utc)
+    assert run["requested_start_date"] == start.isoformat()
+    assert run["context_start_utc_ms"] == int(expected_context.timestamp() * 1000)
+    assert job["next_utc_date"].date() == expected_context.date()
 
 
 def test_inclusive_one_calendar_year_limit_and_february_29_rule(

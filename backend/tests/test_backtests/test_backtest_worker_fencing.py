@@ -21,7 +21,7 @@ def test_retry_does_not_steal_a_live_worker_lease(app):
         instrument="EUR-USD",
         requested_start_date=date(2026, 1, 5),
         requested_end_date=date(2026, 1, 5),
-        start_utc_date=date(2026, 1, 5),
+        context_start_utc_date=date(2026, 1, 5),
         end_utc_date=date(2026, 1, 5),
         staging_prefix=f"backtests/{user_id}/{run_id}/staging/",
     )
@@ -153,7 +153,7 @@ def test_provider_error_after_expiry_cannot_delete_run_or_job(
         ready_run = mongo.db.backtest_runs.find_one({"_id": run["id"]})
 
     assert ready_run["status"] == "ready"
-    assert len(provider.calls) == 1
+    assert len(provider.calls) == 32
 
 
 def test_expired_assembly_cannot_publish_ready_snapshot(app, monkeypatch):
@@ -189,7 +189,7 @@ def test_expired_assembly_cannot_publish_ready_snapshot(app, monkeypatch):
         )
         assert preparing["status"] == "preparing"
         assert preparing["snapshot"] is None
-        assert len(checkpointed_job["completed_utc_dates"]) == 1
+        assert len(checkpointed_job["completed_utc_dates"]) == 32
 
         replacement_store = ExpiringSnapshotStore()
         replacement_store.expire_during_assembly = False
@@ -203,4 +203,7 @@ def test_expired_assembly_cannot_publish_ready_snapshot(app, monkeypatch):
         ready = mongo.db.backtest_runs.find_one({"_id": run["id"]})
 
     assert ready["status"] == "ready"
-    assert ready["snapshot"]["candle_count"] == 1
+    assert ready["snapshot"]["candle_count"] == 32
+    assert ready["coverage"]["candle_count"] == 1
+    assert ready["warmup_coverage"]["candle_count"] == 31
+    assert ready["snapshot"]["replay_start_source_index"] == 31

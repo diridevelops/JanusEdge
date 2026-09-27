@@ -25,7 +25,7 @@ class PreparationJobService:
         instrument: str,
         requested_start_date: date,
         requested_end_date: date,
-        start_utc_date: date,
+        context_start_utc_date: date,
         end_utc_date: date,
         staging_prefix: str,
     ) -> dict:
@@ -37,7 +37,7 @@ class PreparationJobService:
             instrument=instrument,
             requested_start_date=requested_start_date,
             requested_end_date=requested_end_date,
-            start_utc_date=start_utc_date,
+            context_start_utc_date=context_start_utc_date,
             end_utc_date=end_utc_date,
             staging_prefix=staging_prefix,
         )

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from functools import lru_cache
 from io import BytesIO
 
@@ -18,6 +18,14 @@ _CANDLE_COLUMNS = ("time_ms", "open", "high", "low", "close", "volume")
 
 def _utc_midnight(value: date) -> datetime:
     return datetime.combine(value, time.min, tzinfo=timezone.utc)
+
+
+def _utc_day_start_ms(value: date) -> int:
+    return int(_utc_midnight(value).timestamp() * 1000)
+
+
+def _utc_day_end_ms(value: date) -> int:
+    return _utc_day_start_ms(value + timedelta(days=1))
 
 
 class SnapshotStore:
@@ -83,7 +91,7 @@ class SnapshotStore:
         frame = frame.drop_duplicates(subset=["time_ms"], keep="first")
         frame = frame.sort_values("time_ms", kind="stable")
         frame = frame[
-            (frame["time_ms"] >= int(run["start_utc_ms"]))
+            (frame["time_ms"] >= int(run.get("context_start_utc_ms", run["start_utc_ms"])))
             & (frame["time_ms"] < int(run["end_utc_ms"]))
         ].reset_index(drop=True)
         if frame.empty:
@@ -116,6 +124,13 @@ class SnapshotStore:
         if after_publish is not None:
             after_publish(object_key)
 
+        replay_start_ms = int(run["start_utc_ms"])
+        replay_frame = frame[frame["time_ms"] >= replay_start_ms].reset_index(drop=True)
+        warmup_frame = frame[frame["time_ms"] < replay_start_ms].reset_index(drop=True)
+        replay_start_source_index = len(warmup_frame.index)
+        replay_start_time_ms = (
+            int(replay_frame.iloc[0]["time_ms"]) if not replay_frame.empty else None
+        )
         available_dates = sorted(
             {
                 datetime.fromtimestamp(value / 1000, tz=timezone.utc).date()
@@ -130,7 +145,24 @@ class SnapshotStore:
                 and _as_date(item["utc_date"]) not in set(available_dates)
             }
         )
-        gap_summary = self._partial_gaps(frame)
+        selected_empty_dates = [
+            value for value in empty_dates
+            if (_utc_day_end_ms(value) > replay_start_ms)
+            and (_utc_day_start_ms(value) < int(run["end_utc_ms"]))
+        ]
+        warmup_end_ms = replay_start_ms
+        context_start_ms = int(run.get("context_start_utc_ms", replay_start_ms))
+        warmup_empty_dates = [
+            value for value in empty_dates
+            if (_utc_day_end_ms(value) > context_start_ms)
+            and (_utc_day_start_ms(value) < warmup_end_ms)
+        ]
+        gap_summary = self._partial_gaps(replay_frame)
+        warmup_gap_summary = self._partial_gaps(warmup_frame)
+        coverage = self._coverage(replay_frame, selected_empty_dates, gap_summary)
+        warmup_coverage = self._coverage(
+            warmup_frame, warmup_empty_dates, warmup_gap_summary
+        )
         fetched_at = utc_now()
         snapshot = {
             "object_key": object_key,
@@ -143,23 +175,23 @@ class SnapshotStore:
             ),
             "interval_minutes": 1,
             "candle_count": len(frame.index),
+            "context_start_utc_ms": context_start_ms,
+            "replay_start_source_index": replay_start_source_index,
+            "replay_start_time_ms": replay_start_time_ms,
+            "replay_period_candle_count": len(replay_frame.index),
+            "warmup_coverage": warmup_coverage,
             "first_time_ms": time_values[0],
             "last_time_ms": time_values[-1],
             "available_utc_dates": [_utc_midnight(value) for value in available_dates],
             # Internal range index maps global source-candle indexes to one
             # immutable UTC-day Parquet partition. It stays out of API JSON.
             "_day_candle_indexes": day_indexes,
-            "gap_dates": [_utc_midnight(value) for value in empty_dates],
+            "gap_dates": [_utc_midnight(value) for value in selected_empty_dates],
+            "warmup_gap_dates": [
+                _utc_midnight(value) for value in warmup_empty_dates
+            ],
             "partial_gap_summary": gap_summary,
             "fetched_at": fetched_at,
-        }
-        coverage = {
-            "first_time_ms": time_values[0],
-            "last_time_ms": time_values[-1],
-            "candle_count": len(frame.index),
-            "available_utc_dates": [_utc_midnight(value) for value in available_dates],
-            "empty_utc_dates": [_utc_midnight(value) for value in empty_dates],
-            "partial_gaps": gap_summary,
         }
         return snapshot, coverage
 
@@ -336,6 +368,23 @@ class SnapshotStore:
         return (
             {
                 "gap_dates": gap_dates,
+                "candle_count": 0,
+                "replay_period_candle_count": 0,
+                "replay_start_source_index": 0,
+                "replay_start_time_ms": None,
+                "warmup_coverage": {
+                    "first_time_ms": None,
+                    "last_time_ms": None,
+                    "candle_count": 0,
+                    "available_utc_dates": [],
+                    "empty_utc_dates": gap_dates,
+                    "partial_gaps": {
+                        "gap_count": 0,
+                        "missing_minutes": 0,
+                        "longest_gap_minutes": None,
+                        "examples": [],
+                    },
+                },
                 "partial_gap_summary": {
                     "gap_count": 0,
                     "missing_minutes": 0,
@@ -344,6 +393,10 @@ class SnapshotStore:
                 },
             },
             {
+                "first_time_ms": None,
+                "last_time_ms": None,
+                "candle_count": 0,
+                "available_utc_dates": [],
                 "empty_utc_dates": gap_dates,
                 "partial_gaps": {
                     "gap_count": 0,
@@ -353,6 +406,24 @@ class SnapshotStore:
                 },
             },
         )
+
+    @staticmethod
+    def _coverage(frame: pd.DataFrame, empty_dates: list[date], gaps: dict) -> dict:
+        times = [int(value) for value in frame["time_ms"].tolist()]
+        available_dates = sorted(
+            {
+                datetime.fromtimestamp(value / 1000, tz=timezone.utc).date()
+                for value in times
+            }
+        )
+        return {
+            "first_time_ms": times[0] if times else None,
+            "last_time_ms": times[-1] if times else None,
+            "candle_count": len(times),
+            "available_utc_dates": [_utc_midnight(value) for value in available_dates],
+            "empty_utc_dates": [_utc_midnight(value) for value in empty_dates],
+            "partial_gaps": gaps,
+        }
 
     @staticmethod
     def _partial_gaps(frame: pd.DataFrame) -> dict:

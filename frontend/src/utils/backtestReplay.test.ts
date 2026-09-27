@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ReplayController } from '@getcandlekit/charts';
 import type { BacktestCandle, BacktestReplayPosition } from '../types/backtest.types';
+import { aggregateRevealedCandles } from './backtestCandles';
 import {
   createBacktestReplayDataSource,
   createCandleKitControlsAdapter,
@@ -66,6 +67,34 @@ describe('createBacktestReplayDataSource', () => {
 });
 
 describe('createCandleKitControlsAdapter', () => {
+  it('keeps prior-month source candles visible as context at the first replay candle', () => {
+    const source = [candle(0), candle(minute), candle(2 * minute)];
+    const visible = aggregateRevealedCandles(source, 1, 1);
+
+    expect(visible.map((bar) => bar.ts)).toEqual([0, minute]);
+  });
+
+  it('excludes warm-up history from the replay progress window', () => {
+    const getState = () => ({
+      status: 'ready' as const,
+      cursor: { ts: minute, seq: 1 },
+      speed: 1,
+      playing: false,
+      window: { from: 0, to: 3 * minute },
+      activeSeries: [],
+      dataVersion: 1,
+    });
+    const controls = createCandleKitControlsAdapter(
+      { getState } as unknown as ReplayController,
+      [minute, 2 * minute, 3 * minute]
+    );
+
+    expect(controls.getState()).toMatchObject({
+      status: 'ready',
+      window: { from: minute, to: 3 * minute },
+    });
+  });
+
   it('pauses and snaps a slider timestamp forward to the next available candle', () => {
     const pause = vi.fn();
     const seek = vi.fn();
@@ -88,6 +117,41 @@ describe('createCandleKitControlsAdapter', () => {
     controls.seek(6 * minute);
 
     expect(seek).toHaveBeenCalledWith(5 * minute);
+  });
+
+  it('clamps pre-start seeks and backward steps at the first replay candle', () => {
+    const seek = vi.fn();
+    const step = vi.fn();
+    const pause = vi.fn();
+    const controller = {
+      pause,
+      seek,
+      step,
+      getState: () => ({ status: 'ready', cursor: { ts: minute }, playing: false }),
+    } as unknown as ReplayController;
+    const controls = createCandleKitControlsAdapter(controller, [minute, 2 * minute]);
+
+    controls.seek(0);
+    controls.step(-1);
+
+    expect(seek).toHaveBeenCalledWith(minute);
+    expect(pause).toHaveBeenCalledTimes(2);
+    expect(step).not.toHaveBeenCalled();
+  });
+
+  it('allows backward stepping after the selected replay has advanced', () => {
+    const step = vi.fn();
+    const controller = {
+      pause: vi.fn(),
+      seek: vi.fn(),
+      step,
+      getState: () => ({ status: 'ready', cursor: { ts: 2 * minute }, playing: false }),
+    } as unknown as ReplayController;
+    const controls = createCandleKitControlsAdapter(controller, [minute, 2 * minute]);
+
+    controls.step(-1);
+
+    expect(step).toHaveBeenCalledWith(-1);
   });
 });
 

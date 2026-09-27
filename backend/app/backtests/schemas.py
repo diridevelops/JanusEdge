@@ -37,6 +37,7 @@ def create_backtest_run_doc(
     display_timezone: str,
     start_utc_ms: int,
     end_utc_ms: int,
+    context_start_utc_ms: int,
 ) -> dict[str, Any]:
     """Build a preparing run document with stable source semantics."""
     now = utc_now()
@@ -49,6 +50,7 @@ def create_backtest_run_doc(
         "display_timezone": display_timezone,
         "start_utc_ms": start_utc_ms,
         "end_utc_ms": end_utc_ms,
+        "context_start_utc_ms": context_start_utc_ms,
         "source": "dukascopy",
         "source_interval_minutes": 1,
         "source_side": SOURCE_SIDE,
@@ -60,6 +62,7 @@ def create_backtest_run_doc(
         "preparation_job_id": preparation_job_id,
         "snapshot": None,
         "coverage": None,
+        "warmup_coverage": None,
         "replay_cursor": None,
         "created_at": now,
         "updated_at": now,
@@ -74,7 +77,7 @@ def create_preparation_job_doc(
     instrument: str,
     requested_start_date: date,
     requested_end_date: date,
-    start_utc_date: date,
+    context_start_utc_date: date,
     end_utc_date: date,
     staging_prefix: str,
 ) -> dict[str, Any]:
@@ -92,8 +95,11 @@ def create_preparation_job_doc(
         "lease_expires_at": None,
         "attempt_count": 0,
         "completed_utc_dates": [],
+        "context_start_utc_date": datetime.combine(
+            context_start_utc_date, time.min, tzinfo=timezone.utc
+        ),
         "next_utc_date": datetime.combine(
-            start_utc_date, time.min, tzinfo=timezone.utc
+            context_start_utc_date, time.min, tzinfo=timezone.utc
         ),
         "end_utc_date": datetime.combine(
             end_utc_date, time.min, tzinfo=timezone.utc

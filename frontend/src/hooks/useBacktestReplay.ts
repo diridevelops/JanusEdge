@@ -388,9 +388,16 @@ export function useBacktestReplay(
         }
 
         allCandleTimesRef.current = completeSource.map((bar) => bar.ts);
+        const replayStartSourceIndex = Math.max(
+          0,
+          Math.min(
+            readySnapshot.replay_start_source_index ?? 0,
+            allCandleTimesRef.current.length - 1
+          )
+        );
         const adapter = createCandleKitControlsAdapter(
           controller,
-          allCandleTimesRef.current
+          allCandleTimesRef.current.slice(replayStartSourceIndex)
         );
 
         if (loadedState.cursor.ts !== readyCursor.time_ms) {

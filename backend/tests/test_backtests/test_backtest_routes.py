@@ -76,7 +76,7 @@ class _FakeProvider:
         self.calls.append(utc_date)
         if self.on_fetch is not None:
             self.on_fetch(instrument, utc_date)
-        outcome = self.outcomes[utc_date]
+        outcome = self.outcomes.get(utc_date, _day_result(utc_date, []))
         if callable(outcome):
             outcome = outcome()
         return outcome
@@ -189,8 +189,12 @@ def test_worker_reports_partial_and_empty_dates_and_keeps_ready_snapshot_immutab
             )
         observed_progress.append(current["progress"])
 
+    warmup_date = date(2025, 12, 5)
     provider = _FakeProvider(
         {
+            warmup_date: _day_result(
+                warmup_date, [_candle(warmup_date, price=0.9)]
+            ),
             date(2026, 1, 5): _day_result(
                 date(2026, 1, 5),
                 [_candle(date(2026, 1, 5)), _candle(date(2026, 1, 5), 2)],
@@ -213,7 +217,10 @@ def test_worker_reports_partial_and_empty_dates_and_keeps_ready_snapshot_immutab
         for progress in observed_progress
     )
     snapshot = ready["snapshot"]
-    assert snapshot["candle_count"] == 2
+    assert snapshot["candle_count"] == 3
+    assert snapshot["replay_period_candle_count"] == 2
+    assert snapshot["replay_start_source_index"] == 1
+    assert ready["warmup_coverage"]["candle_count"] == 1
     assert snapshot["source_side"] == "COMB"
     assert snapshot["price_mode"] == "combined_midpoint"
     assert snapshot["volume_semantics"] == "two_sided_quote_liquidity"
@@ -239,6 +246,29 @@ def test_worker_reports_partial_and_empty_dates_and_keeps_ready_snapshot_immutab
 
     assert refreshed.calls == []
     assert after_refresh["snapshot"] == original_snapshot
+
+
+def test_warmup_only_candles_do_not_make_a_run_ready(
+    app, client, monkeypatch
+):
+    from app.backtests.worker import BacktestWorker
+
+    _patch_catalog(monkeypatch)
+    headers = _register(client, "backtest-warmup-only")
+    run = _create_run(client, headers)
+    run_id = ObjectId(run["id"])
+    warmup_date = date(2025, 12, 5)
+    provider = _FakeProvider(
+        {warmup_date: _day_result(warmup_date, [_candle(warmup_date)])}
+    )
+
+    with app.app_context():
+        BacktestWorker(provider=provider, clock=_Clock()).process_one()
+        assert mongo.db.backtest_runs.count_documents({"_id": run_id}) == 0
+
+    notices = client.get("/api/backtest/notices", headers=headers)
+    assert notices.status_code == 200
+    assert notices.json["notices"][0]["outcome"] == "no_data"
 
 
 @pytest.mark.parametrize(
@@ -317,10 +347,11 @@ def test_expired_lease_resumes_after_completed_utc_date_checkpoint(
     )
     run_object_id = ObjectId(run["id"])
     first_day, interrupted_day, last_day = (
-        date(2026, 1, 5),
-        date(2026, 1, 6),
+        date(2025, 12, 5),
+        date(2025, 12, 6),
         date(2026, 1, 7),
     )
+    replay_day = date(2026, 1, 5)
     calls_for_interrupted_day = 0
 
     def interrupted_once():
@@ -338,6 +369,9 @@ def test_expired_lease_resumes_after_completed_utc_date_checkpoint(
             first_day: _day_result(first_day, [_candle(first_day)]),
             interrupted_day: interrupted_once,
             last_day: _day_result(last_day, []),
+            replay_day: _day_result(
+                replay_day, [_candle(replay_day, price=1.3)]
+            ),
         }
     )
     clock = _Clock()
@@ -373,14 +407,20 @@ def test_expired_lease_resumes_after_completed_utc_date_checkpoint(
         first_day,
         interrupted_day,
         interrupted_day,
-        last_day,
+        *[date(2025, 12, day) for day in range(7, 32)],
+        *[date(2026, 1, day) for day in range(1, 8)],
     ]
     assert ready["status"] == "ready"
     assert completed_job["state"] == "completed"
     assert [
         _stored_date(item["utc_date"])
         for item in completed_job["completed_utc_dates"]
-    ] == [first_day, interrupted_day, last_day]
+    ] == [
+        first_day,
+        interrupted_day,
+        *[date(2025, 12, day) for day in range(7, 32)],
+        *[date(2026, 1, day) for day in range(1, 8)],
+    ]
     with app.app_context():
         assert mongo.db.trade_accounts.count_documents(
             {"backtest_run_id": run_object_id}

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import calendar
 import json
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -78,6 +79,15 @@ def _one_year_anniversary(start_date: date) -> date:
     except ValueError:
         # For a Feb 29 start, permit through Feb 28 of the following year.
         return date(start_date.year + 1, 3, 1)
+
+
+def _one_calendar_month_before(start_date: date) -> date:
+    """Subtract one calendar month, clamping to the prior month's last day."""
+    month_index = start_date.year * 12 + start_date.month - 2
+    year, month_zero = divmod(month_index, 12)
+    month = month_zero + 1
+    last_day = calendar.monthrange(year, month)[1]
+    return date(year, month, min(start_date.day, last_day))
 
 
 def _as_utc_ms(local_date: date, timezone_info: ZoneInfo) -> int:
@@ -173,9 +183,11 @@ class BacktestService:
             ) from exc
 
         start_utc_ms = _as_utc_ms(start, timezone_info)
+        context_start_date = _one_calendar_month_before(start)
+        context_start_utc_ms = _as_utc_ms(context_start_date, timezone_info)
         end_utc_ms = _as_utc_ms(end + timedelta(days=1), timezone_info)
-        utc_start_date = datetime.fromtimestamp(
-            start_utc_ms / 1000, tz=timezone.utc
+        utc_context_start_date = datetime.fromtimestamp(
+            context_start_utc_ms / 1000, tz=timezone.utc
         ).date()
         utc_end_date = datetime.fromtimestamp(
             (end_utc_ms - 1) / 1000, tz=timezone.utc
@@ -213,6 +225,7 @@ class BacktestService:
             display_timezone=display_timezone,
             start_utc_ms=start_utc_ms,
             end_utc_ms=end_utc_ms,
+            context_start_utc_ms=context_start_utc_ms,
         )
         staging_prefix = f"backtests/{user_oid}/{run_id}/staging/"
         job = self.preparation_jobs.build_for_run(
@@ -222,7 +235,7 @@ class BacktestService:
             instrument=instrument,
             requested_start_date=start,
             requested_end_date=end,
-            start_utc_date=utc_start_date,
+            context_start_utc_date=utc_context_start_date,
             end_utc_date=utc_end_date,
             staging_prefix=staging_prefix,
         )
@@ -260,6 +273,7 @@ class BacktestService:
             "progress": run["progress"],
             "created_at": run["created_at"],
             "start_utc_ms": start_utc_ms,
+            "context_start_utc_ms": context_start_utc_ms,
             "end_utc_ms": end_utc_ms,
         }
 
@@ -386,7 +400,7 @@ class BacktestService:
         day_start_ms = int(day_start.timestamp() * 1000)
         day_end_ms = int(day_end.timestamp() * 1000)
         if (
-            day_end_ms <= int(run["start_utc_ms"])
+            day_end_ms <= int(run.get("context_start_utc_ms", run["start_utc_ms"]))
             or day_start_ms >= int(run["end_utc_ms"])
         ):
             raise ValidationError(
@@ -433,6 +447,14 @@ class BacktestService:
         cursor = run.get("replay_cursor") or {}
         if cursor.get("revision") != expected_revision:
             raise ConflictError("Replay position revision is stale.")
+
+        replay_start_index = int(
+            run.get("snapshot", {}).get("replay_start_source_index", 0)
+        )
+        if source_candle_index < replay_start_index:
+            raise ValidationError(
+                "Replay position cannot precede the selected replay start."
+            )
 
         snapshot_time = self.snapshot_store.read_snapshot_candle_time(
             run["snapshot"], source_candle_index

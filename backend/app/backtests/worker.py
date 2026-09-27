@@ -340,9 +340,9 @@ class BacktestWorker:
         run_id = run["_id"]
         user_id = run["user_id"]
         user_id_text = str(user_id)
-        first_requested_date = datetime.fromtimestamp(
-            int(run["start_utc_ms"]) / 1000, tz=timezone.utc
-        ).date()
+        first_requested_date = _as_date(
+            job.get("context_start_utc_date", job["next_utc_date"])
+        )
         last_requested_date = _as_date(job["end_utc_date"])
         all_dates = self._date_range(
             _as_date(job["next_utc_date"]), last_requested_date
@@ -447,7 +447,7 @@ class BacktestWorker:
                 job, run, heartbeat, key
             ),
         )
-        if not snapshot.get("candle_count"):
+        if not snapshot.get("replay_period_candle_count"):
             self._renew_or_lose(job, run, heartbeat)
             terminal_job = self.job_repository.mark_terminal(
                 job["_id"],
@@ -468,7 +468,9 @@ class BacktestWorker:
             run_id,
             snapshot=snapshot,
             coverage=coverage,
-            first_time_ms=snapshot["first_time_ms"],
+            warmup_coverage=snapshot["warmup_coverage"],
+            replay_start_source_index=snapshot["replay_start_source_index"],
+            first_time_ms=snapshot["replay_start_time_ms"],
             worker_id=self.worker_id,
             now=_as_utc(self.clock()),
         )
@@ -612,7 +614,7 @@ class BacktestWorker:
             raise ValueError("Downloader returned an invalid candle list.")
         normalized = []
         seen = set()
-        start_ms = int(run["start_utc_ms"])
+        start_ms = int(run.get("context_start_utc_ms", run["start_utc_ms"]))
         end_ms = int(run["end_utc_ms"])
         for candle in candles:
             if not isinstance(candle, dict):

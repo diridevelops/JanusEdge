@@ -8,11 +8,11 @@ description: "Implementation backlog for the dockable Backtest chart workspace"
 
 **Prerequisites**: `plan.md` and `spec.md` are available. The project constitution remains an unratified Spec Kit placeholder and defines no project gates.
 
-**Scope**: This backlog carries forward implementation already recorded as complete and includes the replay chart follow-mode, chart-workspace UI refinements, and the new run-deletion feature. It does not repeat the Real/Backtest separation, run preparation, core replay transport, account integration, or initial drawing integration tasks. The old flat chart-tabs task is superseded by the dockable workspace work in User Story 3. These carry-forward notes reflect the prior task ledger, not a new code audit.
+**Scope**: This backlog carries forward implementation already recorded as complete and includes the replay chart follow-mode, chart-workspace UI refinements, run deletion, and the new one-month warm-up-history delta. It does not repeat the Real/Backtest separation, original run preparation, core replay transport, account integration, or initial drawing integration tasks. The old flat chart-tabs task is superseded by the dockable workspace work in User Story 3. These carry-forward notes reflect the prior task ledger, not a new code audit.
 
-**Tests**: Focused backend and frontend tests for the versioned workspace contract, migration, and panel lifecycle are recorded above. The full quickstart UI/browser scenario task remains open; no tests or browser checks were run for the current UI refinement.
+**Tests**: Focused backend and frontend tests for the versioned workspace contract, migration, panel lifecycle, and run deletion are recorded above. Warm-up-history backend and frontend tests are added below as implementation prerequisites. The full quickstart UI/browser scenario task remains open; no tests or browser checks were run for the current UI refinement.
 
-**Organization**: Preserve existing story phases and task statuses, then add the follow-mode enhancement, chart UI refinement, and run-deletion story after the carried-forward backlog. User Stories 1, 2, and 4 have no new tasks for their original scope because their work is recorded as complete in the prior task list.
+**Organization**: Preserve existing story phases and task statuses, then add the follow-mode enhancement, chart UI refinement, run-deletion story, and warm-up-history delta after the carried-forward backlog. User Stories 1, 2, and 4 have no new tasks for their original scope because their work is recorded as complete in the prior task list.
 
 **Format**: `- [ ] T### [P?] [US#?] Description with file path`
 
@@ -111,7 +111,7 @@ No new tasks in this plan delta; the prior task list records this story's implem
 **Purpose**: Validate the new layout against the existing application and documented acceptance scenarios.
 
 - [X] T013 Run backend pytest, frontend Vitest, lint, and production build after workspace integration; resolve regressions and the previously recorded standard Vite build-loader access error using `backend/pyproject.toml`, `frontend/package.json`, and `frontend/vite.config.ts`.
-- [ ] T014 After UI validation is resumed, execute the chart-workspace migration, docking, persistence, concurrency, panel-move, replay-follow, and return-to-latest scenarios in `specs/001-backtest-workspace/quickstart.md`.
+- [ ] T014 After UI validation is resumed, execute the chart-workspace migration, docking, persistence, concurrency, warm-up-history and selected-replay-boundary, panel-move, replay-follow, and return-to-latest scenarios in `specs/001-backtest-workspace/quickstart.md`.
 
 ---
 
@@ -167,6 +167,39 @@ No new tasks in this plan delta; the prior task list records this story's implem
 
 ---
 
+## Phase 12: User Story 2 - Prepare chart warm-up history (Priority: P1)
+
+**Goal**: Include whatever one-minute history is available in the calendar month before the selected replay start without changing the user-selected replay period or its one-year limit.
+
+**Independent Test**: Prepare runs with complete, partial, and unavailable warm-up history. Confirm available pre-start candles are retained, selected-period data alone determines readiness and coverage, and a run with no selected-period candles remains no-data even if earlier candles exist.
+
+### Tests for User Story 2
+
+- [X] T026 [P] [US2] Add backend tests for preceding-calendar-month calculation (including end-of-month and daylight-saving boundaries), best-effort warm-up availability, and selected-period-only no-data/readiness behavior in `backend/tests/test_backtests/test_backtest_service.py`.
+### Implementation for User Story 2
+
+- [X] T027 [US2] Calculate the warm-up boundary from the selected local start date, prepare and recover the extended UTC-date range, retain available context through selected replay data in the immutable snapshot, and keep readiness and reported replay coverage based only on the selected period in `backend/app/backtests/service.py`, `backend/app/backtests/preparation_jobs.py`, `backend/app/backtests/worker.py`, and `backend/app/backtests/snapshot_store.py`.
+
+**Checkpoint**: The immutable snapshot retains available warm-up and selected-period candles; missing warm-up does not block a run with selected-period data, and warm-up-only data remains a no-data result.
+
+---
+
+## Phase 13: User Story 3 - Start replay after chart-context history (Priority: P1)
+
+**Goal**: Show available warm-up candles before the initial replay cursor as historical chart context while keeping every replay action inside the user-selected period.
+
+**Independent Test**: Open a ready run with prior-month history. Verify the earlier chart bars are visible, the saved cursor points at the first selected-period candle, stepping backward at that point cannot enter context, and seeking before the selected start clamps to that candle.
+
+### Tests for User Story 3
+
+- [X] T028 [P] [US3] Add replay API tests proving the initial cursor uses `replay_start_source_index`, warm-up indexes cannot be persisted as replay positions, and seeks before the replay start clamp to its first eligible candle in `backend/tests/test_backtests/test_backtest_replay_routes.py`.
+- [X] T029 [P] [US3] Add frontend tests for showing pre-start candles as historical context at initial open, starting replay at the selected period, and clamping backward steps and pre-start seeks in `frontend/src/utils/backtestReplay.test.ts` and `frontend/src/components/backtest/CandleKitReplayChart.test.tsx`.
+
+### Implementation for User Story 3
+
+- [X] T030 [US3] Persist and return the first eligible replay-source index with the ready run, initialize the saved cursor there, and reject cursor writes outside the selected replay interval while allowing candle reads from the full immutable context snapshot in `backend/app/backtests/schemas.py`, `backend/app/backtests/repository.py`, `backend/app/backtests/service.py`, and `backend/app/backtests/routes.py`.
+- [X] T031 [US3] Load pre-start candles as chart context while initializing the shared replay controller at the returned replay-start index; keep playback, step, seek, progress, and completion inside the selected replay period in `frontend/src/types/backtest.types.ts`, `frontend/src/api/backtests.api.ts`, `frontend/src/hooks/useBacktestReplay.ts`, and `frontend/src/components/backtest/CandleKitReplayChart.tsx`.
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -181,6 +214,8 @@ No new tasks in this plan delta; the prior task list records this story's implem
 - **US3 follow-mode enhancement (Phase 9)**: Depends on the existing chart workspace and shared replay controller from Phase 5. Add tests in T015 before implementing T016-T017; T017 depends on follow-state and snap APIs from T016. T014 is not a prerequisite and remains deferred until UI validation resumes.
 - **US3 chart UI refinement (Phase 10)**: Depends on the existing chart workspace from Phase 5. T018-T020 are implemented as a refinement of that workspace; full UI validation remains tracked separately by T014.
 - **US6 deletion (Phase 11)**: Depends on the existing run/account lifecycle from US2 and account association from US4. T021-T022 can be authored in parallel; T023 establishes the deletion fence and endpoint, after which T024 and T025 can proceed in parallel on backend cleanup/query filtering and frontend controls.
+- **Warm-up preparation (Phase 12)**: T026 validates date-window and selected-period readiness behavior before T027 implements it.
+- **Warm-up replay (Phase 13)**: T028 and T029 tests can be authored in parallel. T030 depends on the replay-start index produced by T027 and validated by T028. T031 depends on the backend response/cursor contract in T030 and the frontend behavior tests in T029.
 
 ### User Story Dependencies
 
@@ -191,12 +226,15 @@ No new tasks in this plan delta; the prior task list records this story's implem
 - **US4 (P2)**: Previously delivered; no new tasks.
 - **US5 (P2)**: Starts after US3 panel moves are implemented.
 - **US6 (P1)**: Extends the existing US2 run and US4 account relationship; independent of chart layout and drawing behavior. It does not add trade creation or order entry.
+- **US2 warm-up delta (Phase 12)**: Extends the delivered run preparation; T026 precedes T027.
+- **US3 warm-up delta (Phase 13)**: Extends the delivered replay controller; T028-T029 precede T030-T031, with the frontend implementation consuming the persisted cursor boundary from the backend contract.
 
 ### Parallel Opportunities
 
 - T003 and T004 can be authored in parallel because they target separate backend and frontend test files.
 - After those tests are in place, T005 and T007 can proceed in parallel on separate backend and frontend files against the already documented contract.
 - Within US5, complete T011 before T012; backend tests and frontend tests from US3 can run independently.
+- T026, T028, and T029 target separate backend or frontend test files and can be authored in parallel; implementation must wait for its corresponding tests.
 
 ## Parallel Example: User Story 3
 
@@ -215,6 +253,7 @@ Task: T004 frontend workspace bootstrap and legacy conversion tests in frontend/
 4. Complete the US3 follow-mode tasks so each pane can track or inspect replay history independently.
 5. Run headless automated checks after implementation. Keep T014 open until the remaining quickstart UI scenarios are completed.
 6. Complete User Story 6 before enabling any future Backtest trade-recording flow, so a run's dedicated account cannot outlive its run.
+7. Implement the warm-up history extension after tests define its calendar-date boundary, partial-availability behavior, and separation from replay-eligible candles.
 
 ## Notes
 

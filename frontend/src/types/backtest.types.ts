@@ -62,6 +62,10 @@ export interface BacktestSnapshotMetadata {
   candle_count: number;
   first_time_ms: number;
   last_time_ms: number;
+  context_start_utc_ms: number;
+  replay_start_source_index: number;
+  replay_start_time_ms: number | null;
+  replay_period_candle_count: number;
   available_utc_dates: string[];
   fetched_at: string;
 }
@@ -114,7 +118,9 @@ export interface BacktestChartWorkspaceSaveRequest {
 export interface BacktestRunDetail extends BacktestRunSummary {
   start_utc_ms: number;
   end_utc_ms: number;
+  context_start_utc_ms: number;
   coverage: BacktestRunCoverage | null;
+  warmup_coverage: BacktestRunCoverage | null;
   snapshot: BacktestSnapshotMetadata | null;
   replay_cursor: BacktestReplayPosition | null;
   tabs: BacktestChartTab[];

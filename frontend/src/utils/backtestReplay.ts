@@ -131,8 +131,29 @@ export function createCandleKitControlsAdapter(
   controller: ReplayController,
   sortedCandleTimes: readonly number[]
 ): ReplayController {
+  const firstEligibleTime = sortedCandleTimes[0];
+  function boundState(state: ReturnType<ReplayController['getState']>) {
+    if (
+      state.status !== 'ready'
+      || firstEligibleTime === undefined
+      || state.window.from >= firstEligibleTime
+    ) return state;
+    return {
+      ...state,
+      window: { ...state.window, from: firstEligibleTime },
+    };
+  }
+
   return new Proxy(controller, {
     get(target, property, receiver) {
+      if (property === 'getState') {
+        return () => boundState(target.getState());
+      }
+      if (property === 'subscribe') {
+        return (callback: Parameters<ReplayController['subscribe']>[0]) => (
+          target.subscribe((state) => callback(boundState(state)))
+        );
+      }
       if (property === 'seek') {
         return (timeMs: number) => {
           const nextTime = findFirstCandleTimeAtOrAfter(sortedCandleTimes, timeMs);
@@ -140,6 +161,22 @@ export function createCandleKitControlsAdapter(
           if (snapped === undefined) return;
           target.pause();
           target.seek(snapped);
+        };
+      }
+      if (property === 'step') {
+        return (direction: 1 | -1) => {
+          if (direction === -1) {
+            const state = target.getState();
+            if (
+              firstEligibleTime !== undefined
+              && state.status === 'ready'
+              && state.cursor.ts <= firstEligibleTime
+            ) {
+              target.pause();
+              return;
+            }
+          }
+          target.step(direction);
         };
       }
 

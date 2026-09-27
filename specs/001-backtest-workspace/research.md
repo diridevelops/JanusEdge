@@ -134,13 +134,21 @@ Source: [Lightweight Charts 5.2 ITimeScaleApi](https://tradingview.github.io/lig
 
 Sources: [`BacktestRun` ownership and worker cleanup](../../backend/app/backtests/repository.py), [preparation-worker terminal cleanup](../../backend/app/backtests/worker.py), [trade deletion cascade](../../backend/app/trades/service.py).
 
+### 11. Keep one calendar month of chart context outside the replay window
+
+**Decision**: Calculate the context boundary as one calendar month before the user-selected local start date in the configured display timezone, clamping to the final valid day of the preceding month, then convert the context and selected replay boundaries to UTC. Fetch and retain every available one-minute source candle from that context boundary through the selected end in the run's immutable snapshot. Store the first snapshot index at or after the selected replay start separately. Use only selected-period candles for readiness, replay cursor movement, progress, gap reporting, and completion; show available earlier candles as chart history at the initial cursor. Missing or partial context is valid, but context-only data does not make a run ready.
+
+**Rationale**: The user's requested date range remains the period being replayed and continues to define the inclusive one-year limit, account label, and run-list coverage. Prior candles supply visual context without shifting the replay clock or making earlier candles playable. Calendar-month subtraction follows the selected local date and has deterministic end-of-month behavior; UTC conversion then preserves the existing instant and candle-boundary contracts. Because the source data can begin later than the requested context boundary, warm-up availability is best-effort and must not be a new preparation-success condition.
+
+**Alternatives considered**: Treat the preceding 30 days as warm-up. Rejected because it does not consistently mean one calendar month and can misalign on month boundaries. Move the replay cursor to the earliest candle in the expanded snapshot. Rejected because it starts playback before the date the user selected. Fail preparation unless a full month is available. Rejected because the user explicitly requested that available partial history be used.
+
 ## Implementation-Time Validations
 
 - The requested CandleKit 0.1.1 version is not published. The 0.1.0 tarball's declarations confirm ChartView, ReplayControls, DrawingToolbar, ReplayDataSource, SyncEngine, DrawingEngine export/import, and configurable speed choices; no replay-aware drawing visibility API is present.
 - Lock a single Lightweight Charts 5.x version and confirm the existing TradeDetail chart still builds and retains its marker, price-line, and theme behavior.
 - Resolve PyArrow >=25 from the Dukascopy package against the backend’s other locked dependencies.
 - Pin the sibling downloader at Git revision `e8dd0b7fc01631e5d519b92b6eea34ed2f156957`. Its `fetch_instrument_codes` catalog API and per-UTC-date `run_downloads(instrument, "COMB", date, 1, ...)` API are present. This revision requires PyArrow >=25.0, so the backend's 18.1.0 pin must be raised and locked consistently.
-- Exercise worker lease expiry and recovery after API and worker restarts; verify completed UTC-date staging is reused and the ready transition writes the first-candle cursor with the ready status.
+- Exercise worker lease expiry and recovery after API and worker restarts; verify completed UTC-date staging across the extended context-plus-replay range is reused and the ready transition writes the first replay-period candle cursor with the ready status.
 - Verify the run-list polling stops when no run is preparing or deleting and makes no more than five seconds elapse between refreshes while either state continues.
 - Verify confirmed deletion fences an in-flight preparation lease, resumes after API/worker restart, and treats pending hiding/202 responses as incomplete. On completion, assert that only the target run's trades and trade-owned data, account, run-owned MongoDB records, and every object in its MinIO prefix (including unreferenced objects) are physically removed, that the prefix is empty, and that no deletion marker remains.
 - Verify sync mapping on tabs with different chart intervals and empty/gap dates.
@@ -148,6 +156,7 @@ Sources: [`BacktestRun` ownership and worker cleanup](../../backend/app/backtest
 - Verify one-pane 1m initialization, legacy flat-tab migration into visible sibling panes, and revision-conflict handling on concurrent layout saves. The current upstream example's `ReplayPanel` import must not be assumed available in 0.1.0.
 - Verify drawing load completes before edits are accepted; save and restore state by authenticated user, run, and timeframe.
 - Inspect the pinned drawing implementation for replay-aware visibility; if absent, verify the anchor-only filter hides drawings with future anchors and restores them when all anchors are reached, without creation/edit-time filtering.
+- Verify one-calendar-month warm-up boundary calculation in the selected timezone, end-of-month clamping, partial/empty context handling, selected-period-only readiness and replay-cursor bounds, and chart rendering of available pre-start candles without allowing them to be replayed.
 - Check CandleKit MIT and Lightweight Charts attribution requirements against the repository’s existing notices before release.
 
 

@@ -37,7 +37,7 @@ Request:
 }
 ~~~
 
-The backend validates the submitted instrument against the current catalog from the pinned downloader, along with the date range, timezone, and inclusive one-calendar-year limit. For a February 29 start, February 28 of the following year is the latest permitted end date. It converts the selected local date boundaries to the equivalent UTC selection, then creates the run, exactly one associated Backtest account, and one durable MongoDB preparation job. Preparation is handled by a separate worker process; the HTTP request does not run the download.
+The backend validates the submitted instrument against the current catalog from the pinned downloader, along with the selected replay date range, timezone, and inclusive one-calendar-year limit. For a February 29 start, February 28 of the following year is the latest permitted end date. The selected local-day boundaries define the replay window. The backend also calculates a warm-up start one calendar month before the selected local start date, clamping to the final valid day of the preceding month, then converts the warm-up and selected replay boundaries to UTC. The user's dates and one-year limit are unchanged by this extra source interval. The API then creates the run, exactly one associated Backtest account, and one durable MongoDB preparation job. Preparation is handled by a separate worker process; the HTTP request does not run the download.
 
 Accepted response:
 
@@ -66,7 +66,7 @@ Returns the authenticated user’s preparing, ready, and deleting runs, newest f
 
 ### GET /api/backtest/runs/{run_id}
 
-Returns the owned run detail, account label, available candle coverage, empty dates and partial-gap summary, saved cursor, and status. A preparing or deleting run remains on the list page and has no playable chart detail. Its persisted cursor is initialized to source index zero and the timestamp of its first available candle when the run becomes ready. Chart workspace state is loaded through the dedicated chart-workspace routes below.
+Returns the owned run detail, account label, selected replay-period coverage, warm-up coverage, saved cursor, and status. A preparing or deleting run remains on the list page and has no playable chart detail. When the run becomes ready, its persisted cursor is initialized to the snapshot index and timestamp of the first available candle at or after the selected replay start; this index can be greater than zero because the snapshot includes warm-up candles. Readiness requires at least one candle in the selected replay period. Chart workspace state is loaded through the dedicated chart-workspace routes below.
 
 ### DELETE /api/backtest/runs/{run_id}
 
@@ -193,7 +193,7 @@ The frontend adapter exposes the following CandleKit source operations through t
 
 ### GET /api/backtest/runs/{run_id}/candle-dates?before={utc_date}&after={utc_date}
 
-Returns the sorted UTC dates that contain one or more candles in the immutable snapshot. This supports CandleKit’s day-oriented listDatesBefore/listDatesAfter behavior. Dates with no data are omitted and are not replaced by synthetic candles.
+Returns the sorted UTC dates that contain one or more candles in the immutable snapshot, including the preceding warm-up period. This supports CandleKit’s day-oriented listDatesBefore/listDatesAfter behavior. Dates with no data are omitted and are not replaced by synthetic candles. The snapshot's selected replay start remains separately identified by the run detail and replay-start index.
 
 Example response:
 
@@ -205,7 +205,7 @@ Example response:
 
 ### GET /api/backtest/runs/{run_id}/candles?date={utc_date}
 
-Returns one UTC day of the run’s one-minute snapshot. An empty array is valid for a requested date with no candles. A date outside the run’s data selection returns validation/not-found according to the existing API error convention.
+Returns one UTC day of the run’s one-minute snapshot. An empty array is valid for a requested date with no candles. A date outside `[context_start_utc_ms, end_utc_ms)` returns validation/not-found according to the existing API error convention. This source data includes warm-up candles; the frontend may display candles before the replay cursor as historical context, but MUST filter replay-period candles after the current cursor.
 
 Example response:
 
@@ -242,9 +242,9 @@ Request:
 }
 ~~~
 
-The server validates that the run is ready and the index/time pair matches the immutable snapshot. When expected_revision matches, it accepts any valid selected cursor, including an intentional step-back, and increments the revision. A stale revision returns 409. The client serializes/coalesces writes so an older in-flight request cannot overwrite a later selection, and flushes on pause, seek, and route exit.
+The server validates that the run is ready and the index/time pair matches the immutable snapshot. A valid replay cursor MUST be at or after `snapshot.replay_start_source_index` and no later than the last candle in the selected replay period; warm-up indexes are not valid cursor positions. When expected_revision matches, it accepts any valid replay cursor, including an intentional step-back, and increments the revision. A stale revision returns 409. The client clamps a seek before the selected replay start to the first eligible replay candle, serializes/coalesces writes so an older in-flight request cannot overwrite a later selection, and flushes on pause, seek, and route exit.
 
-When a run first becomes ready, the server persists `source_candle_index: 0`, the first available candle’s `time_ms`, and revision zero in the same run-document update that changes status to ready. The frontend uses this stored cursor and starts playback paused.
+When a run first becomes ready, the server persists `source_candle_index: replay_start_source_index`, the first eligible replay candle’s `time_ms`, and revision zero in the same run-document update that changes status to ready. The frontend uses this stored cursor and starts playback paused. All snapshot candles before this index are loaded as historical chart context but do not contribute to replay progress, forward/backward stepping, seeking, or completion.
 
 ## Persist drawing state
 

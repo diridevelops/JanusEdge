@@ -60,7 +60,12 @@ class _Provider:
 
     def fetch_day(self, instrument, utc_date):
         assert instrument == "EUR-USD"
-        assert utc_date == self.utc_date
+        if utc_date != self.utc_date:
+            return {
+                "utc_date": utc_date,
+                "outcome": "empty",
+                "candles": [],
+            }
         return {
             "utc_date": utc_date,
             "outcome": "data",

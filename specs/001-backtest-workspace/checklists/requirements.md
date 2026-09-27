@@ -22,6 +22,7 @@
 - [x] Scope is clearly bounded
 - [x] Dependencies and assumptions are identified
 - [x] Run deletion confirmation, cascade scope, cancellation, and interrupted-cleanup cases are defined
+- [x] Warm-up history is separated from replay eligibility, including partial/unavailable context and context-only no-data behavior
 
 ## Feature Readiness
 
@@ -37,4 +38,5 @@
 - Each run creates one Backtest account; simulated orders and trade recording are deferred.
 - Run deletion is permanent, confirmed, available during preparation or after readiness, and physically removes only that run's dedicated account, linked trades and dependents, run data, and every object under its MinIO prefix.
 - A `deleting` run is only a temporary non-playable cleanup marker; interim hiding or a 202 response is not completion. Completion requires an empty run MinIO prefix and no run/account/trade/deletion-marker records.
+- Each run requests one calendar month of available pre-start chart history, but the selected dates alone define replay start/end, readiness, and playback bounds; missing warm-up data is allowed.
 - Real and Backtest activity remain separated; trade imports and manual trade creation are available only in Real mode.

@@ -25,9 +25,11 @@ One user-owned replay request and the saved one-minute candle selection for that
 | instrument | string | Exact supported Dukascopy instrument code. |
 | requested_start_date | local date | Inclusive user-selected calendar date; part of the one-year maximum in the configured display timezone. |
 | requested_end_date | local date | Inclusive user-selected calendar date; must precede the start date's one-year anniversary. |
-| display_timezone | IANA timezone | Timezone used to convert selected date boundaries to UTC. |
-| start_utc_ms | integer | Inclusive UTC start instant. |
-| end_utc_ms | integer | Exclusive UTC end instant. |
+| display_timezone | IANA timezone | Timezone used to calculate the warm-up date and convert selected date boundaries to UTC. |
+| warmup_start_date | local date | Calendar date one month before `requested_start_date`, clamped to the final valid day of that preceding month. |
+| context_start_utc_ms | integer | Inclusive UTC instant at the start of `warmup_start_date`; earliest requested snapshot boundary. |
+| start_utc_ms | integer | Inclusive UTC start instant of the user-selected replay period. |
+| end_utc_ms | integer | Exclusive UTC end instant of the user-selected replay period. |
 | source | enum | dukascopy. |
 | source_side | enum | COMB, represented as component-wise midpoint OHLC. |
 | source_interval_minutes | integer | Fixed at 1. |
@@ -36,8 +38,9 @@ One user-owned replay request and the saved one-minute candle selection for that
 | account_id | ObjectId | The single associated Backtest account. |
 | preparation_job_id | ObjectId/string | The durable worker job associated with this run. |
 | snapshot | object | Immutable snapshot metadata described below. Present when ready. |
-| coverage | object | First/last available candle, candle count, fully empty dates, and summaries of partial gaps. Present when ready. |
-| replay_cursor | object | Saved available-candle index and UTC timestamp. Initialized to index zero and the first available candle timestamp in the same MongoDB update that marks the run ready. |
+| coverage | object | Available candles, fully empty dates, and partial-gap summaries for the selected replay period only. Present when ready. |
+| warmup_coverage | object | Available context candles and any empty dates or partial gaps in the preceding month; may be empty and does not affect readiness. Present when ready. |
+| replay_cursor | object | Saved available-candle index and UTC timestamp into the immutable snapshot. Initialized to `snapshot.replay_start_source_index` and the first eligible replay candle in the same MongoDB update that marks the run ready. |
 | deletion_requested_at | UTC timestamp/null | Set when the owner confirms permanent deletion; the deleting state is the durable cleanup marker until associated resources are purged. |
 | deletion_requested_by | ObjectId/null | Authenticated owner who confirmed deletion. |
 | created_at / updated_at | UTC timestamps | Lifecycle timestamps. |
@@ -47,14 +50,15 @@ Invariants:
 - Unique ownership and run identity. Every lookup and mutation filters by both user_id and run id.
 - One Backtest account per run, enforced by a unique user_id/run_id association.
 - One durable BacktestPreparationJob per preparing or ready run, enforced by a unique run_id association. Deletion removes the job during cleanup; after that, the run's `deleting` status remains the durable marker until the rest of the purge completes and the run record is removed last.
-- A ready run always references one complete immutable snapshot containing at least one candle.
+- A ready run always references one complete immutable snapshot spanning the requested context and replay boundaries and containing at least one candle in the selected replay period. Warm-up candles alone do not satisfy readiness.
+- `context_start_utc_ms` is calculated from the local calendar date one month before `requested_start_date`, with end-of-month clamping, before conversion to UTC. The selected replay date range and one-year validation do not include this extra month.
 - The snapshot never changes after the run is ready; refreshes create a new run and snapshot.
 - A preparing run may be retried or recovered after interruption without creating a second job, run, or account. Completed UTC-date checkpoints are durable; only an incomplete date may need to be fetched again.
 - A deleting run is non-playable and cannot transition to ready. Its status is a temporary durable cleanup marker, not a soft-delete outcome; the run record is removed only after all run-owned resources have been physically purged.
 - Once deletion is requested, its account and trades may be excluded from Backtest views while cleanup is pending. This interim hiding is not completion. Cleanup is limited to the account identified by this run and the trades linked to that account.
 - Completed deletion leaves no run, account, preparation/replay/workspace/drawing records, linked trades or trade-owned dependent data, or objects under the run's MinIO prefix. The worker verifies the run prefix is empty before removing the run record and its deletion marker.
-- The run's status-ready transition and initial cursor (source_candle_index zero, first available timestamp, revision zero) are persisted together in the run document.
-- Cursor position is an index into the immutable ordered list of available one-minute candles. It may not point to an unavailable or later-than-current candle.
+- The run's status-ready transition, `snapshot.replay_start_source_index`, and initial cursor (index of the first available source candle at or after `start_utc_ms`, its timestamp, revision zero) are persisted together in the run document.
+- Cursor position is an index into the immutable ordered list of available one-minute candles, including warm-up candles. It may not point before `snapshot.replay_start_source_index`, at an unavailable candle, or later than the current replay position.
 - The current position is persisted as the newest requested cursor, with server-side versioning or ordered writes preventing an older in-flight update from replacing a newer one.
 
 ## BacktestPreparationJob
@@ -74,7 +78,7 @@ Durable MongoDB job claimed by the separate preparation worker. MongoDB is both 
 | staging_prefix | string | Run-scoped MinIO prefix containing completed per-date results until final snapshot assembly. |
 | created_at / updated_at | UTC timestamps | Job lifecycle and checkpoint update times. |
 
-The worker atomically claims queued jobs or jobs with expired leases, renews its lease while working, writes non-empty date candles to MinIO, then persists the date outcome (including empty) in `completed_utc_dates`. On recovery it skips committed dates and may repeat only the current incomplete date. A completed job remains associated with its ready run. No-data and terminal provider failure create a notice, delete the run/account/job, and remove staged data. If the run enters `deleting`, the worker must stop preparation and resume idempotent deletion cleanup instead of publishing a snapshot or ready state.
+The worker atomically claims queued jobs or jobs with expired leases, renews its lease while working, writes non-empty date candles to MinIO, then persists the date outcome (including empty) in `completed_utc_dates`. Checkpoints cover UTC dates intersecting `[context_start_utc_ms, end_utc_ms)`; empty or partial warm-up dates are completed normally. On recovery it skips committed dates and may repeat only the current incomplete date. A completed job remains associated with its ready run. No-data and terminal provider failure create a notice, delete the run/account/job, and remove staged data. No-data is determined only by the selected replay period, so warm-up candles alone do not make a run ready. If the run enters `deleting`, the worker must stop preparation and resume idempotent deletion cleanup instead of publishing a snapshot or ready state.
 
 ## BacktestCandleSnapshot
 
@@ -91,13 +95,16 @@ Immutable one-minute OHLCV selection for one run, stored as Parquet in MinIO.
 | volume_semantics | enum | two_sided_quote_liquidity, not executed trade volume. |
 | interval_minutes | integer | Fixed at 1. |
 | first_time_ms / last_time_ms | integers | UTC epoch-millisecond timestamps of available candles. |
+| context_start_utc_ms | integer | Inclusive lower UTC boundary requested for warm-up history. |
+| replay_start_source_index | integer | Index of the first available candle whose timestamp is at or after the selected replay start; required for a ready snapshot. |
 | candle_count | integer | Number of available source candles. |
-| available_utc_dates | date array/index | UTC dates containing one or more source candles for CandleKit’s day-oriented data source. |
-| gap_dates | date array | Requested dates with no candles; no rows are synthesized. |
-| partial_gap_summary | object | Summaries of missing one-minute source intervals between available candles within populated dates. |
+| available_utc_dates | date array/index | UTC dates containing one or more source candles across the warm-up and replay periods for CandleKit’s day-oriented data source. |
+| gap_dates | date array | Selected replay-period dates with no candles; no rows are synthesized. |
+| warmup_gap_dates | date array | Warm-up dates with no candles; these are valid partial or absent context, not a preparation failure. |
+| partial_gap_summary | object | Summaries of missing one-minute source intervals, partitioned between replay-period coverage and warm-up coverage. |
 | fetched_at | UTC timestamp | Source acquisition completion time. |
 
-Each candle has a UTC timestamp in epoch milliseconds, open, high, low, close, and optional volume. For COMB, each midpoint OHLC field is the arithmetic mean of the corresponding BID and ASK field. The source does not synchronize the intraminute extrema, so midpoint high/low are estimates. Volume is the sum of bid and ask quoted liquidity and is not executed trade volume. Time rows are sorted, unique, and constrained to the requested UTC range. MinIO objects are addressed by user and run; shared market-data refresh operations never overwrite them.
+Each candle has a UTC timestamp in epoch milliseconds, open, high, low, close, and optional volume. For COMB, each midpoint OHLC field is the arithmetic mean of the corresponding BID and ASK field. The source does not synchronize the intraminute extrema, so midpoint high/low are estimates. Volume is the sum of bid and ask quoted liquidity and is not executed trade volume. Time rows are sorted, unique, and constrained to `[context_start_utc_ms, end_utc_ms)`. Warm-up rows before `start_utc_ms` are chart history only; they are visible as context at the initial cursor but cannot be selected as replay positions or counted as replayed candles. MinIO objects are addressed by user and run; shared market-data refresh operations never overwrite them.
 
 ## BacktestAccount
 
@@ -121,12 +128,12 @@ The shared playback position used by all chart tabs for one BacktestRun. Store d
 
 | Field | Type | Description |
 |---|---|---|
-| source_candle_index | integer | Index into the immutable available one-minute candle sequence. |
+| source_candle_index | integer | Index into the immutable snapshot's one-minute candle sequence, bounded below by `snapshot.replay_start_source_index`; warm-up indexes are not eligible replay positions. |
 | time_ms | integer | Timestamp of the selected source candle in UTC epoch milliseconds. |
 | revision | integer | Monotonic version to reject stale writes. |
 | updated_at | UTC timestamp | Last persisted cursor update. |
 
-Play/pause/speed are live transport state. When the run becomes ready, the persisted cursor is index zero at the first available candle; on reload, restore the saved cursor and start paused. Every tab observes the same CandleKit controller and cursor. Backward seek rebuilds the display from data no later than the selected cursor.
+Play/pause/speed are live transport state. When the run becomes ready, the persisted cursor points at the first available replay-period candle; on reload, restore the saved cursor and start paused. Every tab observes the same CandleKit controller and cursor. Backward seek rebuilds the display from warm-up context plus replay-period data no later than the selected cursor; it cannot move the cursor into warm-up history.
 
 ## ReplayChartPanel
 

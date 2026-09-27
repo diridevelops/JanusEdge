@@ -1,9 +1,12 @@
 import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
+import { fileURLToPath } from 'node:url';
+
+const configDirectory = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig(({ mode }) => {
-    const env = loadEnv(mode, __dirname, '');
+    const env = loadEnv(mode, configDirectory, '');
     const apiProxyTarget =
         process.env.VITE_API_PROXY_TARGET?.trim() ||
         env.VITE_API_PROXY_TARGET ||
@@ -15,7 +18,7 @@ export default defineConfig(({ mode }) => {
         plugins: [react()],
         resolve: {
             alias: {
-                '@': path.resolve(__dirname, './src'),
+                '@': path.resolve(configDirectory, './src'),
             },
         },
         server: {

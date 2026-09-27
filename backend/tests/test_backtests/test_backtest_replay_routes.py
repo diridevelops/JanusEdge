@@ -60,7 +60,7 @@ class _Provider:
 
     def fetch_day(self, instrument, utc_date):
         self.calls.append((instrument, utc_date))
-        return self.outcomes[utc_date]
+        return self.outcomes.get(utc_date, _day_result(utc_date, []))
 
 
 def _day_result(utc_date, candles):
@@ -95,8 +95,10 @@ def _create_ready_run(app, client, headers):
     jan_5 = date(2026, 1, 5)
     jan_6 = date(2026, 1, 6)
     jan_7 = date(2026, 1, 7)
+    dec_5 = date(2025, 12, 5)
     provider = _Provider(
         {
+            dec_5: _day_result(dec_5, [_candle(dec_5, 0, 0.9)]),
             jan_5: _day_result(
                 jan_5,
                 [_candle(jan_5, 0, 1.1), _candle(jan_5, 1, 1.2)],
@@ -145,7 +147,9 @@ def test_available_utc_dates_and_day_candles_are_read_from_owned_snapshot(
         f"/api/backtest/runs/{run_id}/candle-dates", headers=owner
     )
     assert dates.status_code == 200
-    assert dates.json == {"dates": ["2026-01-05", "2026-01-07"]}
+    assert dates.json == {
+        "dates": ["2025-12-05", "2026-01-05", "2026-01-07"]
+    }
 
     before = client.get(
         f"/api/backtest/runs/{run_id}/candle-dates?before=2026-01-07",
@@ -156,7 +160,7 @@ def test_available_utc_dates_and_day_candles_are_read_from_owned_snapshot(
         headers=owner,
     )
     assert before.status_code == after.status_code == 200
-    assert before.json == {"dates": ["2026-01-05"]}
+    assert before.json == {"dates": ["2025-12-05", "2026-01-05"]}
     assert after.json == {"dates": ["2026-01-07"]}
 
     invalid_date = client.get(
@@ -164,7 +168,7 @@ def test_available_utc_dates_and_day_candles_are_read_from_owned_snapshot(
         headers=owner,
     )
     outside_selection = client.get(
-        f"/api/backtest/runs/{run_id}/candles?date=2026-01-08",
+        f"/api/backtest/runs/{run_id}/candles?date=2026-02-08",
         headers=owner,
     )
     assert invalid_date.status_code == 400
@@ -192,7 +196,15 @@ def test_available_utc_dates_and_day_candles_are_read_from_owned_snapshot(
     ]
     assert empty_day.json == {"candles": []}
     assert len(last_day.json["candles"]) == 1
-    assert run["snapshot"]["candle_count"] == 3
+    warmup_day = client.get(
+        f"/api/backtest/runs/{run_id}/candles?date=2025-12-05",
+        headers=owner,
+    )
+    assert warmup_day.status_code == 200
+    assert len(warmup_day.json["candles"]) == 1
+    assert run["snapshot"]["candle_count"] == 4
+    assert run["snapshot"]["replay_start_source_index"] == 1
+    assert run["replay_cursor"]["source_candle_index"] == 1
 
     # The snapshot is a fixed artifact; the worker will not fetch refreshed
     # source data for an already ready run.
@@ -208,10 +220,8 @@ def test_available_utc_dates_and_day_candles_are_read_from_owned_snapshot(
     )
     assert reread.json["run"]["snapshot"] == snapshot_before
     assert provider.calls == [
-        ("EUR-USD", date(2026, 1, 5)),
-        ("EUR-USD", date(2026, 1, 6)),
-        ("EUR-USD", date(2026, 1, 7)),
-    ]
+        ("EUR-USD", date(2025, 12, day)) for day in range(5, 32)
+    ] + [("EUR-USD", date(2026, 1, day)) for day in range(1, 8)]
 
     assert client.get(
         f"/api/backtest/runs/{run_id}/candle-dates", headers=other_user
@@ -230,18 +240,32 @@ def test_replay_cursor_accepts_valid_selection_and_intentional_step_back(
     run_id, run, _ = _create_ready_run(app, client, owner)
     first_time = 1767571200000
     last_time = 1767744000000
+    warmup_time = int(
+        datetime(2025, 12, 5, tzinfo=timezone.utc).timestamp() * 1000
+    )
 
     initial = _cursor_values(run["replay_cursor"])
     assert initial == {
-        "source_candle_index": 0,
+        "source_candle_index": 1,
         "time_ms": first_time,
         "revision": 0,
     }
 
+    warmup_write = client.put(
+        f"/api/backtest/runs/{run_id}/replay-position",
+        json={
+            "source_candle_index": 0,
+            "time_ms": warmup_time,
+            "expected_revision": 0,
+        },
+        headers=owner,
+    )
+    assert warmup_write.status_code == 400
+
     forward = client.put(
         f"/api/backtest/runs/{run_id}/replay-position",
         json={
-            "source_candle_index": 2,
+            "source_candle_index": 3,
             "time_ms": last_time,
             "expected_revision": 0,
         },
@@ -249,7 +273,7 @@ def test_replay_cursor_accepts_valid_selection_and_intentional_step_back(
     )
     assert forward.status_code == 200
     assert _cursor_values(forward.json["replay_cursor"]) == {
-        "source_candle_index": 2,
+        "source_candle_index": 3,
         "time_ms": last_time,
         "revision": 1,
     }
@@ -257,7 +281,7 @@ def test_replay_cursor_accepts_valid_selection_and_intentional_step_back(
     step_back = client.put(
         f"/api/backtest/runs/{run_id}/replay-position",
         json={
-            "source_candle_index": 0,
+            "source_candle_index": 1,
             "time_ms": first_time,
             "expected_revision": 1,
         },
@@ -265,13 +289,13 @@ def test_replay_cursor_accepts_valid_selection_and_intentional_step_back(
     )
     assert step_back.status_code == 200
     assert _cursor_values(step_back.json["replay_cursor"]) == {
-        "source_candle_index": 0,
+        "source_candle_index": 1,
         "time_ms": first_time,
         "revision": 2,
     }
 
     assert _saved_cursor(client, owner, run_id) == {
-        "source_candle_index": 0,
+        "source_candle_index": 1,
         "time_ms": first_time,
         "revision": 2,
     }
@@ -290,7 +314,7 @@ def test_stale_revision_mismatched_pair_and_nonowner_writes_do_not_overwrite(
     moved = client.put(
         f"/api/backtest/runs/{run_id}/replay-position",
         json={
-            "source_candle_index": 2,
+            "source_candle_index": 3,
             "time_ms": final_time,
             "expected_revision": 0,
         },
@@ -302,7 +326,7 @@ def test_stale_revision_mismatched_pair_and_nonowner_writes_do_not_overwrite(
     stale = client.put(
         f"/api/backtest/runs/{run_id}/replay-position",
         json={
-            "source_candle_index": 1,
+            "source_candle_index": 2,
             "time_ms": first_time + 60_000,
             "expected_revision": 0,
         },
@@ -310,7 +334,7 @@ def test_stale_revision_mismatched_pair_and_nonowner_writes_do_not_overwrite(
     )
     assert stale.status_code == 409
     assert _saved_cursor(client, owner, run_id) == {
-        "source_candle_index": 2,
+        "source_candle_index": 3,
         "time_ms": final_time,
         "revision": 1,
     }
@@ -318,7 +342,7 @@ def test_stale_revision_mismatched_pair_and_nonowner_writes_do_not_overwrite(
     mismatch = client.put(
         f"/api/backtest/runs/{run_id}/replay-position",
         json={
-            "source_candle_index": 2,
+            "source_candle_index": 3,
             "time_ms": first_time,
             "expected_revision": 1,
         },
@@ -326,7 +350,7 @@ def test_stale_revision_mismatched_pair_and_nonowner_writes_do_not_overwrite(
     )
     assert mismatch.status_code == 400
     assert _saved_cursor(client, owner, run_id) == {
-        "source_candle_index": 2,
+        "source_candle_index": 3,
         "time_ms": final_time,
         "revision": 1,
     }
@@ -334,7 +358,7 @@ def test_stale_revision_mismatched_pair_and_nonowner_writes_do_not_overwrite(
     nonowner = client.put(
         f"/api/backtest/runs/{run_id}/replay-position",
         json={
-            "source_candle_index": 0,
+            "source_candle_index": 1,
             "time_ms": first_time,
             "expected_revision": 1,
         },
@@ -342,7 +366,7 @@ def test_stale_revision_mismatched_pair_and_nonowner_writes_do_not_overwrite(
     )
     assert nonowner.status_code == 404
     assert _saved_cursor(client, owner, run_id) == {
-        "source_candle_index": 2,
+        "source_candle_index": 3,
         "time_ms": final_time,
         "revision": 1,
     }
