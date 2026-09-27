@@ -44,8 +44,36 @@
 }
 
 .backtest-candlekit .backtest-drawing-toolbar {
-  top: 10px;
-  left: 10px;
+  box-sizing: border-box;
+  top: 0;
+  left: 0;
+  height: 100%;
+  max-height: 100%;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border: 0;
+  border-right: 1px solid var(--ck-border);
+  scrollbar-color: var(--ck-muted) transparent;
+  scrollbar-width: thin;
+}
+
+.backtest-candlekit .backtest-drawing-toolbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.backtest-candlekit .backtest-drawing-toolbar::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background: var(--ck-muted);
+}
+
+.backtest-candlekit .backtest-drawing-toolbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.backtest-candlekit .backtest-drawing-toolbar .ck-toolbar-btn {
+  flex: 0 0 28px;
 }
 
 .backtest-candlekit .backtest-drawing-status {
