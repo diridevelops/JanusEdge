@@ -160,6 +160,7 @@ export function BacktestChartWorkspace({
   const savingRef = useRef(false);
   const skipNextNotificationRef = useRef(false);
   const nextChartNumberRef = useRef(extractBacktestWorkspaceTabs(initialLayout).length + 1);
+  const markWorkspaceReady = useCallback(() => setIsReady(true), []);
 
   const enqueueSave = useCallback((layout: WorkspaceLayout) => {
     if (conflictDraftRef.current) return;
@@ -326,7 +327,7 @@ export function BacktestChartWorkspace({
           workspace={workspace}
           className="backtest-flexlayout h-full w-full"
           hideToolbar
-          onReady={() => setIsReady(true)}
+          onReady={markWorkspaceReady}
         />
       </div>
     </section>

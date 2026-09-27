@@ -61,10 +61,7 @@ export function useBacktestChartSync(
   replayController: ReplayController
 ) {
   const engine = useMemo<SyncEngine>(() => createSyncEngine(), []);
-  const groupId = useMemo(() => engine.createGroup({
-    name: 'Backtest replay charts',
-    flags: new Set<SyncFlag>(['cursor', 'crosshair', 'timeRange']),
-  }), [engine]);
+  const groupId = 'backtest-replay';
   const [options, setOptions] = useState<BacktestSyncOptions>({
     crosshair: true,
     pan: true,
@@ -76,10 +73,18 @@ export function useBacktestChartSync(
   tabsRef.current = tabs;
   const detachRef = useRef(new Map<string, () => void>());
 
-  useEffect(() => () => {
-    for (const detach of detachRef.current.values()) detach();
-    detachRef.current.clear();
-    engine.deleteGroup(groupId);
+  useEffect(() => {
+    const detachments = detachRef.current;
+    engine.createGroup({
+      id: groupId,
+      name: 'Backtest replay charts',
+      flags: new Set<SyncFlag>(['cursor', 'crosshair', 'timeRange']),
+    });
+    return () => {
+      for (const detach of detachments.values()) detach();
+      detachments.clear();
+      engine.deleteGroup(groupId);
+    };
   }, [engine, groupId]);
 
   useEffect(() => {
