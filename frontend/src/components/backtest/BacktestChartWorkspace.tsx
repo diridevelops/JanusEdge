@@ -6,6 +6,7 @@ import {
 } from '@getcandlekit/charts/react/workspace';
 import type { ChartViewApi } from '@getcandlekit/charts/react';
 import 'flexlayout-react/style/light.css';
+import { createPortal } from 'react-dom';
 import {
   useCallback,
   useEffect,
@@ -72,7 +73,6 @@ function createChartPanelComponent(
     return (
       <BacktestChartPanelView
         tab={tab}
-        title={instance.title}
         runId={runtime.runId}
         displayTimezone={runtime.displayTimezone}
         cursorTimeMs={runtime.cursorTimeMs}
@@ -110,6 +110,99 @@ interface BacktestChartWorkspaceProps {
   onChartReady: ChartPanelRuntime['onChartReady'];
   snapToLive: ChartPanelRuntime['snapToLive'];
   onTabsChange: (tabs: BacktestChartTab[]) => void;
+}
+
+interface ChartTabAddButtonPortalsProps {
+  layoutRootRef: MutableRefObject<HTMLDivElement | null>;
+  onAddChart: () => void;
+  disabled: boolean;
+}
+
+function ChartTabAddButtonPortals({
+  layoutRootRef,
+  onAddChart,
+  disabled,
+}: ChartTabAddButtonPortalsProps) {
+  const [mountNodes, setMountNodes] = useState<HTMLElement[]>([]);
+
+  useEffect(() => {
+    const root = layoutRootRef.current;
+    if (!root) return;
+
+    const createdNodes = new Set<HTMLElement>();
+    let frameId = 0;
+
+    const reconcileTabBars = () => {
+      const tabBars = Array.from(
+        root.querySelectorAll<HTMLElement>('.flexlayout__tabset_tabbar_inner')
+      );
+      const nextMountNodes = tabBars.map((tabBar) => {
+        let mountNode = Array.from(tabBar.children).find((child) =>
+          child.classList.contains('backtest-add-chart-tab-mount')
+        ) as HTMLElement | undefined;
+
+        if (!mountNode) {
+          mountNode = document.createElement('div');
+          mountNode.className = 'backtest-add-chart-tab-mount';
+          mountNode.dataset.backtestAddChartMount = String(createdNodes.size + 1);
+          tabBar.appendChild(mountNode);
+          createdNodes.add(mountNode);
+        }
+
+        return mountNode;
+      });
+
+      setMountNodes((current) =>
+        current.length === nextMountNodes.length
+          && current.every((node, index) => node === nextMountNodes[index])
+          ? current
+          : nextMountNodes
+      );
+    };
+
+    const observer = new MutationObserver(() => {
+      window.cancelAnimationFrame(frameId);
+      frameId = window.requestAnimationFrame(reconcileTabBars);
+    });
+    observer.observe(root, { childList: true, subtree: true });
+    reconcileTabBars();
+
+    return () => {
+      observer.disconnect();
+      window.cancelAnimationFrame(frameId);
+      createdNodes.forEach((node) => node.remove());
+    };
+  }, [layoutRootRef]);
+
+  return (
+    <>
+      {mountNodes.map((mountNode) =>
+        createPortal(
+          <button
+            key="add-chart"
+            type="button"
+            onClick={() => {
+              const selectedChartTab = mountNode
+                .closest('.flexlayout__tabset')
+                ?.querySelector<HTMLElement>(
+                  '.flexlayout__tab_button--selected, .flexlayout__tab_button_stretch'
+                );
+              selectedChartTab?.click();
+              onAddChart();
+            }}
+            disabled={disabled}
+            aria-label="Add chart"
+            title="Add chart"
+            className="backtest-add-chart-tab-button"
+          >
+            +
+          </button>,
+          mountNode,
+          mountNode.dataset.backtestAddChartMount
+        )
+      )}
+    </>
+  );
 }
 
 /** Persisted CandleKit/FlexLayout workspace for one ready Backtest run. */
@@ -177,6 +270,7 @@ export function BacktestChartWorkspace({
   const skipNextNotificationRef = useRef(false);
   const nextChartNumberRef = useRef(extractBacktestWorkspaceTabs(initialLayout).length + 1);
   const markWorkspaceReady = useCallback(() => setIsReady(true), []);
+  const workspaceRootRef = useRef<HTMLDivElement>(null);
 
   const enqueueSave = useCallback((layout: WorkspaceLayout) => {
     if (conflictDraftRef.current) return;
@@ -293,19 +387,6 @@ export function BacktestChartWorkspace({
 
   return (
     <section className="flex h-[min(72vh,900px)] min-h-[540px] flex-col overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-800">
-        <button
-          type="button"
-          onClick={addChart}
-          disabled={!isReady || Boolean(conflictDraft)}
-          className="rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-gray-600 dark:bg-gray-900 dark:text-gray-200 dark:hover:bg-gray-700"
-        >
-          Add chart
-        </button>
-        <span className="text-xs text-gray-500 dark:text-gray-400">
-          Drag tabs to reorder or move · drop at a pane edge to split · drag dividers to resize
-        </span>
-      </div>
       {conflictDraft && (
         <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100" role="alert">
           <span>Your local chart layout conflicts with a newer saved layout. Your draft is retained.</span>
@@ -336,7 +417,8 @@ export function BacktestChartWorkspace({
         </div>
       )}
       <div
-        className={`backtest-flexlayout-theme min-h-0 flex-1 ${conflictDraft ? 'pointer-events-none opacity-60' : ''}`}
+        ref={workspaceRootRef}
+        className={`backtest-flexlayout-theme relative min-h-0 flex-1 ${conflictDraft ? 'pointer-events-none opacity-60' : ''}`}
         data-theme={colors.isDark ? 'dark' : 'light'}
       >
         <FlexLayoutAdapter
@@ -344,6 +426,11 @@ export function BacktestChartWorkspace({
           className="backtest-flexlayout h-full w-full"
           hideToolbar
           onReady={markWorkspaceReady}
+        />
+        <ChartTabAddButtonPortals
+          layoutRootRef={workspaceRootRef}
+          onAddChart={addChart}
+          disabled={!isReady || Boolean(conflictDraft)}
         />
       </div>
     </section>

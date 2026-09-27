@@ -160,7 +160,7 @@ Invariants:
 - Follow status is derived by comparing the current scroll position with the captured real-time offset. While following, a replay cursor update keeps the latest currently revealed bar at that offset. A user horizontal navigation that places it away from that offset leaves the pane's selected range unchanged as replay advances; if replay naturally catches up to that offset, the pane is following again.
 - Continuous replay updates use coalesced, non-animated repositioning; the initial and user-requested snap may use the chart's animated real-time scroll. A same-interval update to the active higher-timeframe bar does not change the pane's horizontal range or scale.
 - The lower-right return-to-latest action and the existing double-click time-axis gesture scroll the pane to its latest revealed bar and restore follow. The action is hidden while the pane is snapped to that bar. Manual navigation back to the real-time offset also restores follow.
-- A synchronized pan or return-to-latest operation is evaluated against each affected pane's resulting range. Existing pan-sync settings continue to determine which panes receive the range.
+- Panning, zooming, and return-to-latest affect only the pane where the action occurs; crosshair synchronization does not alter another pane's viewport.
 - Rewind and seek use only bars revealed at the new replay cursor.
 
 ## ChartWorkspaceLayout
@@ -193,20 +193,9 @@ Invariants:
 
 Legacy migration: if no workspace exists and `backtest_chart_tabs` contains flat records, translate them in position order into visible sibling chart panes, retaining each id and interval. Flat records contain no prior split topology or active-tab state. If there are no legacy records, create one 1m chart using the single-chart layout. Persist the initialized workspace before enabling workspace edits; concurrent initializations use revision zero compare-and-swap and the loser reloads the saved document.
 
-## ChartSyncSettings
+## ChartSynchronization
 
-Page-level transient settings for the open run detail.
-
-| Field | Type | Description |
-|---|---|---|
-| sync_crosshair | boolean | Defaults to true. |
-| sync_pan | boolean | Defaults to true. |
-| sync_zoom | boolean | Defaults to true. |
-| replay_shared | constant | Always true; there is no control to disable shared replay. |
-
-CandleKit SyncEngine routes the visual sync events. The JanusEdge adapter translates visible logical ranges and crosshair locations through absolute UTC times before applying them to a chart at another interval. Raw logical indexes are never copied directly between timeframes.
-
-If a target chart has no candle at the crosshair's UTC time, it uses the nearest available candle at or before that time; if none exists, it shows no synchronized crosshair. Pan and zoom preserve the same UTC bounds and round outward to the target chart's interval boundaries.
+Crosshair synchronization is active by default and shared replay position is always enabled. The replay detail has no Chart sync settings section. CandleKit SyncEngine routes crosshair locations only; the JanusEdge adapter translates them through absolute UTC time before applying them to another interval. Raw logical indexes are never copied directly between timeframes. If a target chart has no candle at the crosshair's UTC time, it uses the nearest available candle at or before that time; if none exists, it shows no synchronized crosshair. Pan and zoom remain local to each pane.
 
 ## ChartDrawingState
 

@@ -26,14 +26,14 @@
 - [x] CHK010 Does the preparing-run requirement define what progress communicates (for example, a meaningful stage or determinate measure) while remaining consistent with the retry behavior? [Spec §FR-017; Spec §FR-018; Spec §FR-022; Spec §SC-008]
 - [x] CHK011 Do data-gap requirements distinguish dates with no candles from missing intervals within an otherwise populated date, and specify what gap information users should receive? [Spec §FR-005; Spec §FR-007; Spec §US2]
 - [x] CHK012 Does the chart-interval requirement make clear how standard and custom intervals coexist, how invalid custom values are handled, and whether interval selection is retained per tab? [Spec §FR-023; Spec §SC-009]
-- [x] CHK013 Do crosshair, pan, and zoom requirements define how timestamp and visible-range alignment work across different intervals when a target chart has no candle at the exact source timestamp or range boundary? [Spec §FR-026; Spec §FR-027; Spec §SC-012]
+- [x] CHK013 Do crosshair requirements define time alignment across intervals when a target chart has no candle at the exact source timestamp, and is pan/zoom behavior explicit as pane-local? [Spec §FR-026; Spec §FR-027; Spec §SC-012]
 - [x] CHK014 Are replay position, visible chart data, and active higher-timeframe bar requirements consistent for seek, step-back, gaps, and interval boundaries, including the no-look-ahead constraint? [Spec §FR-011; Spec §FR-013; Spec §FR-014; Spec §FR-024; Spec §SC-010]
 
 ## Scenario and Acceptance Coverage
 
 - [x] CHK015 Do the user scenarios include acceptance outcomes for creating, editing, restoring, and removing drawings, including a return to the run after reload? [Spec §US5; Plan §Design Decisions]
 - [x] CHK016 Do acceptance scenarios cover a partially populated date range and make the expected gap report distinct from whole-range no-data cleanup and provider failure? [Spec §US2; Spec §FR-005; Spec §FR-007; Spec §FR-017]
-- [x] CHK017 Do multi-tab scenarios state the expected synchronization outcome at differing timeframes for replay controls, crosshair, pan, and zoom independently? [Spec §US3; Spec §FR-025; Spec §FR-027; Spec §SC-011; Spec §SC-012]
+- [x] CHK017 Do multi-tab scenarios state the expected shared replay/crosshair behavior and pane-local pan/zoom outcome at differing timeframes? [Spec §US3; Spec §FR-025; Spec §FR-027; Spec §SC-011; Spec §SC-012]
 
 ## Dependencies, Security, and Non-Functional Requirements
 
