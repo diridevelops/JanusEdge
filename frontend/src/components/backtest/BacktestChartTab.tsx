@@ -6,6 +6,7 @@ import { CandleKitReplayChart } from './CandleKitReplayChart';
 
 interface BacktestChartTabProps {
   runId: string;
+  instrument: string;
   tab: BacktestChartTabConfig;
   displayTimezone: string;
   cursorTimeMs: number;
@@ -39,6 +40,7 @@ function isPresetInterval(minutes: number): boolean {
 /** A persisted chart panel with controlled, whole-minute interval validation. */
 export function BacktestChartTab({
   runId,
+  instrument,
   tab,
   displayTimezone,
   cursorTimeMs,
@@ -104,7 +106,10 @@ export function BacktestChartTab({
           onChartReady={onChartReady}
           snapToLive={snapToLive}
         />
-        <div className="absolute left-12 top-2 z-20">
+        <div className="backtest-chart-controls">
+          <span className="backtest-instrument-label" aria-label={`Instrument ${instrument}`}>
+            {instrument}
+          </span>
           <label htmlFor={`backtest-timeframe-${tab.id}`} className="sr-only">
             Chart timeframe
           </label>

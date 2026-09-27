@@ -42,6 +42,7 @@ interface BacktestChartPanelProps {
 
 interface ChartPanelRuntime {
   runId: string;
+  instrument: string;
   displayTimezone: string;
   cursorTimeMs: number;
   registerDrawingFlusher: (
@@ -74,6 +75,7 @@ function createChartPanelComponent(
       <BacktestChartPanelView
         tab={tab}
         runId={runtime.runId}
+        instrument={runtime.instrument}
         displayTimezone={runtime.displayTimezone}
         cursorTimeMs={runtime.cursorTimeMs}
         registerDrawingFlusher={runtime.registerDrawingFlusher}
@@ -228,6 +230,7 @@ export function BacktestChartWorkspace({
   );
   const runtimeRef = useRef<ChartPanelRuntime>({
     runId: run.id,
+    instrument: run.instrument,
     displayTimezone,
     cursorTimeMs,
     registerDrawingFlusher,
@@ -236,6 +239,7 @@ export function BacktestChartWorkspace({
   });
   runtimeRef.current = {
     runId: run.id,
+    instrument: run.instrument,
     displayTimezone,
     cursorTimeMs,
     registerDrawingFlusher,

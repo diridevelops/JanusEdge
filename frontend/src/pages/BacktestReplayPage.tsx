@@ -17,23 +17,6 @@ import {
 import type { WorkspaceLayout } from '@getcandlekit/charts/react/workspace';
 import '../styles/backtest-candlekit.css';
 
-function formatTimestamp(timeMs: number, timezone: string): string {
-  try {
-    return new Intl.DateTimeFormat(undefined, {
-      timeZone: timezone || 'UTC',
-      year: 'numeric',
-      month: 'short',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      hourCycle: 'h23',
-      timeZoneName: 'short',
-    }).format(new Date(timeMs));
-  } catch {
-    return new Date(timeMs).toISOString();
-  }
-}
-
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim()) return error.message;
   return 'Could not load this Backtest run.';
@@ -216,7 +199,6 @@ function BacktestReplayWorkspaceRun({
   }, [registerReplayChart, registerSyncChart]);
 
   const firstTimeMs = run.snapshot?.first_time_ms ?? run.coverage?.first_time_ms;
-  const lastTimeMs = run.snapshot?.last_time_ms ?? run.coverage?.last_time_ms;
   const timezone = user?.display_timezone
     || user?.timezone
     || run.display_timezone
@@ -237,21 +219,10 @@ function BacktestReplayWorkspaceRun({
     <div className="backtest-candlekit mx-auto max-w-[1800px] space-y-4" style={chartOverlayStyle}>
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
+          <h1 className="sr-only">{run.instrument} replay</h1>
           <Link to="/backtest/runs" className="text-sm font-medium text-blue-600 hover:text-blue-700 dark:text-blue-400">
             ← Backtest runs
           </Link>
-          <h1 className="mt-2 text-2xl font-bold text-gray-900 dark:text-gray-100">
-            {run.instrument} replay
-          </h1>
-          <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
-            {run.requested_start_date} to {run.requested_end_date} · {run.account_label}
-          </p>
-          <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-            Display timezone: {timezone}
-            {firstTimeMs !== undefined && lastTimeMs !== undefined && (
-              <> · Data: {formatTimestamp(firstTimeMs, timezone)} — {formatTimestamp(lastTimeMs, timezone)}</>
-            )}
-          </p>
         </div>
       </header>
 

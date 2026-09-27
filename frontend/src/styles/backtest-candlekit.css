@@ -187,6 +187,7 @@
 }
 
 .backtest-timeframe-select {
+  box-sizing: border-box;
   width: 3.75rem;
   height: 1.5rem;
   -webkit-appearance: none !important;
@@ -204,6 +205,36 @@
   cursor: pointer;
 }
 
+.backtest-instrument-label {
+  box-sizing: border-box;
+  display: inline-flex;
+  height: 1.5rem;
+  align-items: center;
+  border: 1px solid var(--ck-border);
+  border-radius: 4px;
+  padding: 0 6px;
+  color: var(--ck-fg);
+  background: var(--ck-bg);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.backtest-chart-controls {
+  position: absolute;
+  z-index: 20;
+  top: 8px;
+  left: 3rem;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--ck-border);
+  border-radius: 6px;
+  padding: 3px;
+  background: var(--ck-bg);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.16);
+}
+
 .backtest-timeframe-control::after {
   position: absolute;
   top: 50%;
@@ -215,6 +246,12 @@
   content: '';
   pointer-events: none;
   transform: translateY(-70%) rotate(45deg);
+}
+
+.backtest-timeframe-control {
+  display: flex;
+  align-items: center;
+  line-height: 0;
 }
 
 .backtest-timeframe-select:focus-visible {
