@@ -4,7 +4,7 @@ import {
   type PanelInstance,
   type WorkspaceLayout,
 } from '@getcandlekit/charts/react/workspace';
-import type { ChartViewApi } from '@getcandlekit/charts/react';
+import type { ChartViewApi, ReplayController } from '@getcandlekit/charts/react';
 import 'flexlayout-react/style/light.css';
 import { createPortal } from 'react-dom';
 import {
@@ -30,6 +30,7 @@ import {
   type BacktestWorkspaceApi,
 } from '../../utils/backtestWorkspace';
 import { BacktestChartTab as BacktestChartPanelView } from './BacktestChartTab';
+import { BacktestReplayControls } from './BacktestReplayControls';
 
 interface BacktestChartPanelConfig extends Record<string, unknown> {
   interval_minutes: number;
@@ -104,6 +105,7 @@ function errorMessage(error: unknown): string {
 
 interface BacktestChartWorkspaceProps {
   run: BacktestRunDetail;
+  replayController: ReplayController;
   displayTimezone: string;
   initialLayout: WorkspaceLayout;
   revision: number;
@@ -210,6 +212,7 @@ function ChartTabAddButtonPortals({
 /** Persisted CandleKit/FlexLayout workspace for one ready Backtest run. */
 export function BacktestChartWorkspace({
   run,
+  replayController,
   displayTimezone,
   initialLayout,
   revision,
@@ -391,6 +394,12 @@ export function BacktestChartWorkspace({
 
   return (
     <section className="flex h-[min(72vh,900px)] min-h-[540px] flex-col overflow-hidden rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-900">
+      <div className="backtest-workspace-replay-bar">
+        <BacktestReplayControls
+          controller={replayController}
+          displayTimezone={displayTimezone}
+        />
+      </div>
       {conflictDraft && (
         <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100" role="alert">
           <span>Your local chart layout conflicts with a newer saved layout. Your draft is retained.</span>

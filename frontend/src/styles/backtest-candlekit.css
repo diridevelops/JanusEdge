@@ -26,9 +26,113 @@
 
 .backtest-candlekit .backtest-candlekit-replay {
   width: 100%;
-  border-radius: 0.75rem;
-  padding: 1rem;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.05);
+  gap: 4px;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.backtest-workspace-replay-bar {
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--ck-border);
+  padding: 5px 8px 6px;
+  background: var(--ck-bg);
+}
+
+.backtest-candlekit .backtest-candlekit-replay .ck-replay-head {
+  display: none;
+}
+
+.backtest-candlekit .backtest-candlekit-replay .ck-replay-clock {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto minmax(0, 1fr);
+  grid-template-rows: 4px auto;
+  gap: 3px 8px;
+  align-items: center;
+}
+
+.backtest-candlekit .backtest-candlekit-replay .ck-replay-time {
+  grid-column: 2;
+  grid-row: 2;
+  color: var(--ck-muted);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.backtest-candlekit .backtest-candlekit-replay .ck-replay-bar {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  height: 4px;
+}
+
+.backtest-candlekit .backtest-candlekit-replay .ck-replay-range {
+  display: contents;
+}
+
+.backtest-candlekit .backtest-candlekit-replay .ck-replay-range > span:first-child {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.backtest-candlekit .backtest-candlekit-replay .ck-replay-range > span:nth-child(2) {
+  grid-column: 3;
+  grid-row: 2;
+  justify-self: start;
+}
+
+.backtest-candlekit .backtest-candlekit-replay .ck-replay-range > span:nth-child(3) {
+  grid-column: 4;
+  grid-row: 2;
+  justify-self: end;
+}
+
+.backtest-candlekit .backtest-candlekit-replay .ck-replay-transport {
+  justify-content: center;
+  gap: 4px;
+}
+
+.backtest-candlekit .backtest-candlekit-replay .ck-replay-btn {
+  box-sizing: border-box;
+  height: 24px;
+  padding: 0 8px;
+}
+
+.backtest-candlekit .backtest-candlekit-replay .ck-replay-speed {
+  box-sizing: border-box;
+  margin-left: 0;
+  width: 68px;
+  height: 24px;
+  padding: 0 22px 0 8px !important;
+  appearance: none !important;
+  border-color: var(--ck-border);
+  border-radius: 4px;
+  color: var(--ck-fg);
+  background-color: var(--ck-bg) !important;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--ck-muted) 50%),
+    linear-gradient(135deg, var(--ck-muted) 50%, transparent 50%) !important;
+  background-position:
+    calc(100% - 10px) 50%,
+    calc(100% - 6px) 50% !important;
+  background-repeat: no-repeat !important;
+  background-size: 4px 4px, 4px 4px !important;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.backtest-candlekit .backtest-candlekit-replay .ck-replay-speed:focus-visible {
+  outline: 2px solid var(--ck-accent);
+  outline-offset: 1px;
+}
+
+.backtest-candlekit .backtest-candlekit-replay .ck-replay-seek {
+  height: 12px;
+  margin: 0;
 }
 
 .backtest-candlekit .backtest-candlekit-chart {
@@ -47,8 +151,9 @@
   box-sizing: border-box;
   top: 0;
   left: 0;
-  height: 100%;
-  max-height: 100%;
+  bottom: 0;
+  height: auto;
+  max-height: none;
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
