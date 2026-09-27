@@ -443,12 +443,7 @@ export function CandleKitReplayChart({
         }}
       >
         {isHydrated && currentSaveState.status !== 'conflict' && (
-          <>
-            <DrawingToolbar className="ck-toolbar backtest-drawing-toolbar" />
-            <div className="backtest-drawing-hint" aria-label="Drawing editing instructions">
-              Select a drawing to move or reshape it. Press Delete to remove the selection.
-            </div>
-          </>
+          <DrawingToolbar className="ck-toolbar backtest-drawing-toolbar" />
         )}
       </ChartView>
       <CandleKitReplayFollowButton
@@ -488,9 +483,6 @@ export function CandleKitReplayChart({
             </button>
           )}
         </div>
-      )}
-      {isHydrated && currentSaveState.status === 'saved' && (
-        <div className="backtest-drawing-saved" role="status">Drawings saved</div>
       )}
       <span className="sr-only">
         Drawing state uses CandleKit {CANDLEKIT_VERSION}, schema {DRAWING_SCHEMA_VERSION}.

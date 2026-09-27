@@ -48,21 +48,6 @@
   left: 10px;
 }
 
-.backtest-candlekit .backtest-drawing-hint {
-  position: absolute;
-  z-index: 10;
-  bottom: 10px;
-  left: 10px;
-  max-width: calc(100% - 20px);
-  border: 1px solid var(--ck-border);
-  border-radius: var(--ck-radius, 6px);
-  padding: 4px 8px;
-  color: var(--ck-muted);
-  background: var(--ck-bg);
-  font-size: 11px;
-  pointer-events: none;
-}
-
 .backtest-candlekit .backtest-drawing-status {
   position: absolute;
   z-index: 20;
@@ -97,20 +82,6 @@
 
 .backtest-candlekit .backtest-drawing-status button:hover {
   border-color: var(--ck-accent);
-}
-
-.backtest-candlekit .backtest-drawing-saved {
-  position: absolute;
-  z-index: 9;
-  right: 10px;
-  bottom: 10px;
-  border: 1px solid var(--ck-border);
-  border-radius: var(--ck-radius, 6px);
-  padding: 3px 7px;
-  color: var(--ck-muted);
-  background: var(--ck-bg);
-  font-size: 10px;
-  pointer-events: none;
 }
 
 .backtest-candlekit .backtest-follow-live {
