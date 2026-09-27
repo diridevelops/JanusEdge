@@ -26,6 +26,7 @@ import {
   createCandleKitControlsAdapter,
   createReplayPositionWriter,
 } from '../utils/backtestReplay';
+import { getBacktestPriceFormat } from '../utils/backtestPriceFormat';
 
 export type BacktestReplayStatus = 'loading' | 'ready' | 'error';
 
@@ -146,6 +147,9 @@ export function useBacktestReplay(
       chartControllersRef.current.delete(tabId);
       return;
     }
+    chart.getSeries().applyOptions({
+      priceFormat: getBacktestPriceFormat(runRef.current.instrument),
+    });
     chartControllersRef.current.set(tabId, chart);
     const snapshot = snapshotsRef.current.get(tabId);
     chart.setData(snapshot?.bars.map(toBar) ?? []);
