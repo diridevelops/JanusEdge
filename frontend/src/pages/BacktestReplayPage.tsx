@@ -3,10 +3,6 @@ import { Link, useParams } from 'react-router-dom';
 import { getBacktestChartWorkspace, getBacktestRun, saveBacktestChartWorkspace } from '../api/backtests.api';
 import { BacktestChartWorkspace } from '../components/backtest/BacktestChartWorkspace';
 import { BacktestReplayControls } from '../components/backtest/BacktestReplayControls';
-import {
-  BacktestSyncControls,
-  type BacktestSyncOptions,
-} from '../components/backtest/BacktestSyncControls';
 import { Spinner } from '../components/ui/Spinner';
 import { useBacktestChartSync } from '../hooks/useBacktestChartSync';
 import { useBacktestReplay } from '../hooks/useBacktestReplay';
@@ -203,12 +199,8 @@ function BacktestReplayWorkspaceRun({
   const handleWorkspaceTabsChange = useCallback((nextTabs: BacktestChartTab[]) => {
     setTabs(nextTabs);
   }, []);
-  const setSyncOptions = chartSync.setOptions;
   const registerSyncChart = chartSync.registerChart;
   const registerReplayChart = replay.registerTabChart;
-  const handleSyncChange = useCallback((options: BacktestSyncOptions) => {
-    setSyncOptions(options);
-  }, [setSyncOptions]);
 
   const handleChartReady = useCallback((
     tabId: string,
@@ -297,7 +289,6 @@ function BacktestReplayWorkspaceRun({
             controller={replay.controlsController}
             displayTimezone={timezone}
           />
-          <BacktestSyncControls options={chartSync.options} onChange={handleSyncChange} />
           <BacktestChartWorkspace
             run={run}
             displayTimezone={timezone}

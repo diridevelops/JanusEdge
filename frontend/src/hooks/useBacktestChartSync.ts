@@ -1,21 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   createSyncEngine,
   type ChartController,
   type SyncEngine,
-  type SyncEvent,
   type SyncFlag,
   type SyncMember,
 } from '@getcandlekit/charts';
 import type { MouseEventParams, Time } from 'lightweight-charts';
 import type { BacktestChartTab } from '../types/backtest.types';
 import type { ReplayController } from '@getcandlekit/charts';
-import {
-  findNearestPriorCandleIndex,
-  logicalRangeToUtcRange,
-  roundUtcRangeOutward,
-  utcRangeToLogicalRange,
-} from '../utils/backtestChartSync';
+import { findNearestPriorCandleIndex } from '../utils/backtestChartSync';
 import {
   createBacktestChartFollowState,
   snapBacktestChartFollowToLive,
@@ -23,7 +17,6 @@ import {
   updateBacktestChartFollowOnCandle,
 } from '../utils/backtestChartFollow';
 import { registerPanelSubscription } from '../utils/backtestPanelLifecycle';
-import type { BacktestSyncOptions } from '../components/backtest/BacktestSyncControls';
 
 function toUtcMilliseconds(time: Time | null | undefined): number | null {
   if (typeof time === 'number') return time * 1_000;
@@ -33,34 +26,7 @@ function toUtcMilliseconds(time: Time | null | undefined): number | null {
   return null;
 }
 
-function approximatelyEqual(
-  left: { from: number; to: number },
-  right: { from: number; to: number }
-): boolean {
-  return Math.abs(left.from - right.from) < 0.05
-    && Math.abs(left.to - right.to) < 0.05;
-}
-
-function classifyRangeChange(
-  previous: { from: number; to: number },
-  next: { from: number; to: number }
-): 'pan' | 'zoom' {
-  const previousSpan = previous.to - previous.from;
-  const nextSpan = next.to - next.from;
-  return Math.abs(previousSpan - nextSpan) > Math.max(0.5, previousSpan * 0.01)
-    ? 'zoom'
-    : 'pan';
-}
-
-function getEventUtcRange(
-  event: SyncEvent
-): { from: number; to: number } | null {
-  return event.kind === 'timeRange'
-    ? { from: event.from, to: event.to }
-    : null;
-}
-
-/** Route UTC crosshair and visible-range events through CandleKit's SyncEngine. */
+/** Sync replay crosshairs while keeping chart viewport navigation pane-local. */
 export function useBacktestChartSync(
   tabs: readonly BacktestChartTab[],
   symbol: string,
@@ -68,13 +34,6 @@ export function useBacktestChartSync(
 ) {
   const engine = useMemo<SyncEngine>(() => createSyncEngine(), []);
   const groupId = 'backtest-replay';
-  const [options, setOptions] = useState<BacktestSyncOptions>({
-    crosshair: true,
-    pan: true,
-    zoom: true,
-  });
-  const optionsRef = useRef(options);
-  optionsRef.current = options;
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
   const detachRef = useRef(new Map<string, () => void>());
@@ -86,7 +45,7 @@ export function useBacktestChartSync(
     engine.createGroup({
       id: groupId,
       name: 'Backtest replay charts',
-      flags: new Set<SyncFlag>(['cursor', 'crosshair', 'timeRange']),
+      flags: new Set<SyncFlag>(['cursor', 'crosshair']),
     });
     return () => {
       for (const detach of detachments.values()) detach();
@@ -94,13 +53,6 @@ export function useBacktestChartSync(
       engine.deleteGroup(groupId);
     };
   }, [engine, groupId]);
-
-  useEffect(() => {
-    const flags = new Set<SyncFlag>(['cursor']);
-    if (options.crosshair) flags.add('crosshair');
-    if (options.pan || options.zoom) flags.add('timeRange');
-    engine.setFlags(groupId, flags);
-  }, [engine, groupId, options]);
 
   useEffect(() => {
     let lastCursor: number | null = null;
@@ -130,8 +82,6 @@ export function useBacktestChartSync(
     const chartElement = chart.chartElement();
     const timeScale = chart.timeScale();
     const realtimeOffset = timeScale.options().rightOffset ?? 0;
-    const lastRangeRef: { current: { from: number; to: number } | null } = { current: null };
-    const appliedRangeRef: { current: { from: number; to: number } | null } = { current: null };
     let isDisposed = false;
     let followFrame: number | null = null;
     let userRangeInputFrame: number | null = null;
@@ -181,7 +131,6 @@ export function useBacktestChartSync(
         followFrame = null;
         if (isDisposed || !followState.isFollowing) return;
         timeScale.scrollToPosition(realtimeOffset, false);
-        lastRangeRef.current = timeScale.getVisibleLogicalRange();
       });
     };
 
@@ -191,7 +140,6 @@ export function useBacktestChartSync(
       const update = snapBacktestChartFollowToLive(followState);
       followState = update.state;
       if (update.followStateChanged) onFollowStateChange(true);
-      lastRangeRef.current = timeScale.getVisibleLogicalRange();
     };
 
     const refreshLatestCandle = () => {
@@ -207,28 +155,6 @@ export function useBacktestChartSync(
       followLatestCandle();
     };
 
-    const applyUserViewportChange = (range: { from: number; to: number }) => {
-      const previous = lastRangeRef.current;
-      lastRangeRef.current = range;
-      updateFollowStateFromPosition();
-      if (!previous || approximatelyEqual(previous, range)) return;
-
-      const changeKind = classifyRangeChange(previous, range);
-      const currentOptions = optionsRef.current;
-      if ((changeKind === 'pan' && !currentOptions.pan)
-        || (changeKind === 'zoom' && !currentOptions.zoom)) return;
-
-      const tab = getTab();
-      const utcRange = logicalRangeToUtcRange(getTimes(), range);
-      if (!tab || !utcRange) return;
-      engine.broadcast(groupId, {
-        kind: 'timeRange',
-        from: utcRange.from,
-        to: utcRange.to,
-        sourcePanelId: tabId,
-      });
-    };
-
     const scheduleUserViewportCheck = (framesToSettle = 2) => {
       userRangeInputPending = true;
       if (userRangeInputFrame !== null) {
@@ -238,7 +164,7 @@ export function useBacktestChartSync(
       const check = () => {
         if (isDisposed) return;
         const range = timeScale.getVisibleLogicalRange();
-        if (range) applyUserViewportChange(range);
+        if (range) updateFollowStateFromPosition();
         framesRemaining -= 1;
         if (framesRemaining > 0) {
           userRangeInputFrame = window.requestAnimationFrame(check);
@@ -278,7 +204,6 @@ export function useBacktestChartSync(
 
     // A new or remounted pane starts at the latest revealed candle.
     timeScale.scrollToPosition(realtimeOffset, false);
-    lastRangeRef.current = timeScale.getVisibleLogicalRange();
     onFollowStateChange(followState.isFollowing);
 
     function setCrosshairAtTime(ts: number | null, y?: number | null) {
@@ -321,29 +246,14 @@ export function useBacktestChartSync(
           setCrosshairAtTime(event.ts, event.y);
           return;
         }
-        if (event.kind === 'timeRange') {
-          const utcRange = getEventUtcRange(event);
-          const tab = getTab();
-          if (!utcRange || !tab) return;
-          const times = getTimes();
-          const rounded = roundUtcRangeOutward(utcRange, tab.interval_minutes);
-          const logical = utcRangeToLogicalRange(times, rounded);
-          if (!logical) return;
-          appliedRangeRef.current = logical;
-          lastRangeRef.current = logical;
-          timeScale.setVisibleLogicalRange(logical);
-          updateFollowStateFromPosition();
-          return;
-        }
         // Cursor synchronization is owned by the single shared controller and
-        // its per-tab bounded data updates; no chart can disable or clone it.
+        // its per-tab bounded data updates. Chart time ranges stay local.
       },
     };
 
     const detachMember = engine.attach(groupId, member);
 
     const onCrosshairMove = (param: MouseEventParams<Time>) => {
-      if (!optionsRef.current.crosshair) return;
       const ts = toUtcMilliseconds(param.time ?? null);
       let y: number | null = null;
       const seriesValue = param.seriesData.get(controller.getSeries()) as
@@ -360,24 +270,9 @@ export function useBacktestChartSync(
     };
 
     const onVisibleRangeChange = (range: { from: number; to: number } | null) => {
-      if (!range) {
-        lastRangeRef.current = null;
-        return;
-      }
-      if (appliedRangeRef.current && approximatelyEqual(appliedRangeRef.current, range)) {
-        appliedRangeRef.current = null;
-        lastRangeRef.current = range;
+      if (range && (isPointerDown || userRangeInputPending)) {
         updateFollowStateFromPosition();
-        return;
       }
-      if (isPointerDown || userRangeInputPending) {
-        applyUserViewportChange(range);
-        return;
-      }
-
-      // Replay data updates, follow snaps, and layout changes can emit range
-      // notifications. Only a user's chart gesture can detach or sync a pane.
-      lastRangeRef.current = range;
     };
 
     chart.subscribeCrosshairMove(onCrosshairMove);
@@ -422,8 +317,6 @@ export function useBacktestChartSync(
   }, []);
 
   return {
-    options,
-    setOptions,
     registerChart,
     unregisterChart,
     snapToLive,
