@@ -26,6 +26,7 @@ import {
   retryPendingPanelFlush,
   waitForPendingPanelFlush,
 } from '../../utils/backtestPanelLifecycle';
+import { createBacktestTimeFormatters } from '../../utils/backtestTimeFormat';
 
 const EMPTY_DATA: never[] = [];
 const CANDLEKIT_VERSION = '0.1.0';
@@ -53,6 +54,7 @@ interface CandleKitReplayChartProps {
   tabId: string;
   runId: string;
   intervalMinutes: number;
+  displayTimezone: string;
   cursorTimeMs: number;
   registerDrawingFlusher: (
     tabId: string,
@@ -81,6 +83,7 @@ export function CandleKitReplayChart({
   tabId,
   runId,
   intervalMinutes,
+  displayTimezone,
   cursorTimeMs,
   registerDrawingFlusher,
   onChartReady,
@@ -142,6 +145,15 @@ export function CandleKitReplayChart({
       volumeDown: colors.isDark ? 'rgba(248,113,113,0.35)' : 'rgba(239,68,68,0.35)',
     };
   }, [colors]);
+
+  const timeFormatters = useMemo(
+    () => createBacktestTimeFormatters(displayTimezone),
+    [displayTimezone]
+  );
+  const chartOptions = useMemo(() => ({
+    localization: { timeFormatter: timeFormatters.timeFormatter },
+    timeScale: { tickMarkFormatter: timeFormatters.tickMarkFormatter },
+  }), [timeFormatters]);
 
   const overlayStyle = {
     '--ck-bg': colors.tooltipBg,
@@ -379,6 +391,7 @@ export function CandleKitReplayChart({
       <ChartView
         data={EMPTY_DATA}
         theme={chartTheme}
+        chartOptions={chartOptions}
         drawing={isHydrated ? drawingController : null}
         showVolume
         autoFit

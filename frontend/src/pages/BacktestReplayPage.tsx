@@ -10,6 +10,7 @@ import {
 import { Spinner } from '../components/ui/Spinner';
 import { useBacktestChartSync } from '../hooks/useBacktestChartSync';
 import { useBacktestReplay } from '../hooks/useBacktestReplay';
+import { useAuth } from '../hooks/useAuth';
 import { useChartColors } from '../hooks/useChartColors';
 import type { BacktestChartTab, BacktestRunDetail } from '../types/backtest.types';
 import {
@@ -192,6 +193,7 @@ function BacktestReplayWorkspaceRun({
   revision: number;
 }) {
   const colors = useChartColors();
+  const { user } = useAuth();
   const [tabs, setTabs] = useState<BacktestChartTab[]>(() => (
     extractBacktestWorkspaceTabs(initialLayout)
   ));
@@ -222,7 +224,10 @@ function BacktestReplayWorkspaceRun({
 
   const firstTimeMs = run.snapshot?.first_time_ms ?? run.coverage?.first_time_ms;
   const lastTimeMs = run.snapshot?.last_time_ms ?? run.coverage?.last_time_ms;
-  const timezone = run.display_timezone || 'UTC';
+  const timezone = user?.display_timezone
+    || user?.timezone
+    || run.display_timezone
+    || 'UTC';
   const chartOverlayStyle = {
     '--ck-bg': colors.tooltipBg,
     '--ck-fg': colors.tooltipText,
@@ -294,6 +299,7 @@ function BacktestReplayWorkspaceRun({
           <BacktestSyncControls options={chartSync.options} onChange={handleSyncChange} />
           <BacktestChartWorkspace
             run={run}
+            displayTimezone={timezone}
             initialLayout={initialLayout}
             revision={revision}
             cursorTimeMs={replay.cursorTimeMs ?? run.replay_cursor?.time_ms ?? firstTimeMs ?? 0}

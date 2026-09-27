@@ -8,6 +8,7 @@ interface BacktestChartTabProps {
   runId: string;
   tab: BacktestChartTabConfig;
   title: string;
+  displayTimezone: string;
   cursorTimeMs: number;
   registerDrawingFlusher: (
     tabId: string,
@@ -22,6 +23,7 @@ export function BacktestChartTab({
   runId,
   tab,
   title,
+  displayTimezone,
   cursorTimeMs,
   registerDrawingFlusher,
   onIntervalChange,
@@ -108,6 +110,7 @@ export function BacktestChartTab({
           tabId={tab.id}
           runId={runId}
           intervalMinutes={tab.interval_minutes}
+          displayTimezone={displayTimezone}
           cursorTimeMs={cursorTimeMs}
           registerDrawingFlusher={registerDrawingFlusher}
           onChartReady={onChartReady}

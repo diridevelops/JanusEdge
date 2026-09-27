@@ -41,6 +41,7 @@ interface BacktestChartPanelProps {
 
 interface ChartPanelRuntime {
   runId: string;
+  displayTimezone: string;
   cursorTimeMs: number;
   registerDrawingFlusher: (
     tabId: string,
@@ -68,6 +69,7 @@ function createChartPanelComponent(
         tab={tab}
         title={instance.title}
         runId={runtime.runId}
+        displayTimezone={runtime.displayTimezone}
         cursorTimeMs={runtime.cursorTimeMs}
         registerDrawingFlusher={runtime.registerDrawingFlusher}
         onIntervalChange={(_tabId, intervalMinutes) => {
@@ -94,6 +96,7 @@ function errorMessage(error: unknown): string {
 
 interface BacktestChartWorkspaceProps {
   run: BacktestRunDetail;
+  displayTimezone: string;
   initialLayout: WorkspaceLayout;
   revision: number;
   cursorTimeMs: number;
@@ -105,6 +108,7 @@ interface BacktestChartWorkspaceProps {
 /** Persisted CandleKit/FlexLayout workspace for one ready Backtest run. */
 export function BacktestChartWorkspace({
   run,
+  displayTimezone,
   initialLayout,
   revision,
   cursorTimeMs,
@@ -123,12 +127,14 @@ export function BacktestChartWorkspace({
   );
   const runtimeRef = useRef<ChartPanelRuntime>({
     runId: run.id,
+    displayTimezone,
     cursorTimeMs,
     registerDrawingFlusher,
     onChartReady,
   });
   runtimeRef.current = {
     runId: run.id,
+    displayTimezone,
     cursorTimeMs,
     registerDrawingFlusher,
     onChartReady,
