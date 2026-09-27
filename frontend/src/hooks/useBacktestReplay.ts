@@ -126,10 +126,11 @@ export function useBacktestReplay(
   const snapshotsRef = useRef(new Map<string, TabBarsSnapshot>());
   const chartControllersRef = useRef(new Map<string, ChartController>());
   const writerRef = useRef<ReturnType<typeof createReplayPositionWriter> | null>(null);
+  const loadPromiseRef = useRef<{ key: string; promise: Promise<void> } | null>(null);
+  const effectLifecycleRef = useRef({ generation: 0 });
   const allCandleTimesRef = useRef<number[]>([]);
   const lastProcessedCursorRef = useRef<number | null>(null);
   const restoreInProgressRef = useRef(true);
-  const cancelledRef = useRef(false);
   const lastObservedReplayRef = useRef<{ cursorTimeMs: number; playing: boolean } | null>(null);
   const drawingFlushersRef = useRef(new Map<string, () => Promise<void> | void>());
 
@@ -226,7 +227,9 @@ export function useBacktestReplay(
   }, []);
 
   useEffect(() => {
-    cancelledRef.current = false;
+    let cancelled = false;
+    const effectLifecycle = effectLifecycleRef.current;
+    const effectGeneration = ++effectLifecycle.generation;
     const drawingFlushers = drawingFlushersRef.current;
     restoreInProgressRef.current = true;
     lastProcessedCursorRef.current = null;
@@ -248,7 +251,7 @@ export function useBacktestReplay(
       setStatus('error');
       setError('This ready run is missing its immutable candle snapshot or saved replay cursor.');
       return () => {
-        cancelledRef.current = true;
+        cancelled = true;
       };
     }
     const readySnapshot = snapshot;
@@ -276,8 +279,8 @@ export function useBacktestReplay(
     );
 
     const unsubscribeState = controller.subscribe((nextState) => {
-      if (cancelledRef.current || restoreInProgressRef.current || !isReadyState(nextState)) {
-        if (nextState.status === 'error' && !cancelledRef.current) {
+      if (cancelled || restoreInProgressRef.current || !isReadyState(nextState)) {
+        if (nextState.status === 'error' && !cancelled) {
           setStatus('error');
           setError(nextState.error);
         }
@@ -305,7 +308,7 @@ export function useBacktestReplay(
       if (previousCursor === nextState.cursor.ts) return;
 
       queueMicrotask(() => {
-        if (cancelledRef.current || restoreInProgressRef.current) return;
+        if (cancelled || restoreInProgressRef.current) return;
         const latestState = controller.getState();
         if (!isReadyState(latestState)
           || lastProcessedCursorRef.current === latestState.cursor.ts) return;
@@ -317,7 +320,7 @@ export function useBacktestReplay(
 
     const unsubscribeBar = controller.onBar((event) => {
       if (
-        cancelledRef.current
+        cancelled
         || restoreInProgressRef.current
         || event.symbol !== runDetail.instrument
         || event.interval !== '1m'
@@ -338,17 +341,24 @@ export function useBacktestReplay(
 
     async function loadReplay() {
       try {
-        await controller.load({
-          id: runDetail.id,
-          series: [{ symbol: runDetail.instrument, interval: '1m' }],
-          // Loading from the last saved snapshot candle causes CandleKit to load
-          // all prior available dates. With a one-year maximum, 400 dates covers
-          // the full run and gives ReplayControls its complete seek window.
-          start: readySnapshot.last_time_ms,
-          end: readySnapshot.last_time_ms,
-          source,
-        });
-        if (cancelledRef.current) return;
+        const loadKey = `${runDetail.id}:${loadAttempt}`;
+        let load = loadPromiseRef.current;
+        if (load?.key !== loadKey) {
+          const promise = controller.load({
+            id: runDetail.id,
+            series: [{ symbol: runDetail.instrument, interval: '1m' }],
+            // Loading from the last saved snapshot candle causes CandleKit to load
+            // all prior available dates. With a one-year maximum, 400 dates covers
+            // the full run and gives ReplayControls its complete seek window.
+            start: readySnapshot.last_time_ms,
+            end: readySnapshot.last_time_ms,
+            source,
+          });
+          load = { key: loadKey, promise };
+          loadPromiseRef.current = load;
+        }
+        await load.promise;
+        if (cancelled) return;
 
         const loadedState = controller.getState();
         if (!isReadyState(loadedState)) {
@@ -384,10 +394,10 @@ export function useBacktestReplay(
           await waitForCursor(
             controller,
             readyCursor.time_ms,
-            () => cancelledRef.current
+            () => cancelled
           );
         }
-        if (cancelledRef.current) return;
+        if (cancelled) return;
 
         controller.pause();
         rebuildAtCursor(readyCursor.time_ms);
@@ -401,7 +411,7 @@ export function useBacktestReplay(
         setControlsController(adapter);
         setStatus('ready');
       } catch (loadError: unknown) {
-        if (cancelledRef.current) return;
+        if (cancelled) return;
         restoreInProgressRef.current = true;
         setStatus('error');
         setError(loadError instanceof Error ? loadError.message : 'Could not load this replay.');
@@ -411,7 +421,7 @@ export function useBacktestReplay(
     void loadReplay();
 
     return () => {
-      cancelledRef.current = true;
+      cancelled = true;
       restoreInProgressRef.current = true;
       unsubscribeState();
       unsubscribeBar();
@@ -424,7 +434,11 @@ export function useBacktestReplay(
       writerRef.current = null;
       for (const chart of chartControllers.values()) chart.setData([]);
       chartControllers.clear();
-      controller.unload();
+      // React Strict Mode replays effects immediately in development. Defer
+      // unloading so the replayed setup can reuse the in-flight snapshot load.
+      queueMicrotask(() => {
+        if (effectLifecycle.generation === effectGeneration) controller.unload();
+      });
     };
   }, [
     appendAtCursor,
