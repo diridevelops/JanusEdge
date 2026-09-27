@@ -57,6 +57,14 @@ def get_run(run_id: str):
     ), 200
 
 
+@backtest_bp.route("/runs/<run_id>", methods=["DELETE"])
+@jwt_required()
+def delete_run(run_id: str):
+    """Start permanent owner-scoped cleanup; 202 means pending, not done."""
+    run = backtest_service.delete_run(get_jwt_identity(), run_id)
+    return jsonify({"run": run}), 202
+
+
 @backtest_bp.route("/runs/<run_id>/candle-dates", methods=["GET"])
 @jwt_required()
 def list_candle_dates(run_id: str):

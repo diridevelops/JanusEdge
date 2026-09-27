@@ -35,6 +35,10 @@ class AccountRepository(BaseRepository):
         query = {"user_id": ObjectId(user_id)}
         if status:
             query["status"] = status
+        else:
+            # A Backtest account is hidden from workspace selectors while its
+            # confirmed run deletion is waiting for physical cleanup.
+            query["status"] = {"$ne": "deleting"}
         if workspace_mode == "real":
             query["$or"] = [
                 {"workspace_mode": "real"},

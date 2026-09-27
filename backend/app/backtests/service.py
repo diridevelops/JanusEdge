@@ -278,6 +278,43 @@ class BacktestService:
 
         return [serialize_run(run, accounts.get(run["_id"])) for run in runs]
 
+    def delete_run(self, user_id: str, run_id) -> dict:
+        """Accept an owner-scoped permanent deletion for worker cleanup."""
+        run = self.repository.find_owned_run(user_id, run_id)
+        if run is None:
+            raise NotFoundError("Backtest run not found.")
+        if run.get("status") == "deleting":
+            return {"id": str(run["_id"]), "status": "deleting"}
+        if run.get("status") not in {"preparing", "ready"}:
+            raise ConflictError("Backtest run cannot be deleted in its current state.")
+
+        now = utc_now()
+        deleting = self.repository.request_deletion(
+            user_id, run["_id"], now=now
+        )
+        if deleting is None:
+            current = self.repository.find_owned_run(user_id, run["_id"])
+            if current is None:
+                raise NotFoundError("Backtest run not found.")
+            if current.get("status") == "deleting":
+                return {"id": str(current["_id"]), "status": "deleting"}
+            raise ConflictError("Backtest run changed; refresh and try again.")
+
+        user_oid = ObjectId(user_id)
+        mongo.db.trade_accounts.update_many(
+            {
+                "user_id": user_oid,
+                "workspace_mode": "backtest",
+                "$or": [
+                    {"backtest_run_id": deleting["_id"]},
+                    {"_id": deleting.get("account_id")},
+                ],
+            },
+            {"$set": {"status": "deleting", "updated_at": now}},
+        )
+        self.job_repository.cancel_for_run(deleting["_id"], now=now)
+        return {"id": str(deleting["_id"]), "status": "deleting"}
+
     def get_run(self, user_id: str, run_id) -> dict:
         run = self.repository.find_owned_run(user_id, run_id)
         if run is None:

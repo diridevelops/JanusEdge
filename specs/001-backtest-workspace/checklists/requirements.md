@@ -21,6 +21,7 @@
 - [x] Edge cases are identified
 - [x] Scope is clearly bounded
 - [x] Dependencies and assumptions are identified
+- [x] Run deletion confirmation, cascade scope, cancellation, and interrupted-cleanup cases are defined
 
 ## Feature Readiness
 
@@ -34,4 +35,6 @@
 - Version one is limited to downloading and replaying completed one-minute candles for one instrument and date range.
 - Playback rates are explicitly defined as one, five, or twenty candles per second.
 - Each run creates one Backtest account; simulated orders and trade recording are deferred.
+- Run deletion is permanent, confirmed, available during preparation or after readiness, and physically removes only that run's dedicated account, linked trades and dependents, run data, and every object under its MinIO prefix.
+- A `deleting` run is only a temporary non-playable cleanup marker; interim hiding or a 202 response is not completion. Completion requires an empty run MinIO prefix and no run/account/trade/deletion-marker records.
 - Real and Backtest activity remain separated; trade imports and manual trade creation are available only in Real mode.

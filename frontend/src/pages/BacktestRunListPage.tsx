@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
+  deleteBacktestRun,
   dismissBacktestNotice,
   listBacktestNotices,
   listBacktestRuns,
@@ -23,6 +24,7 @@ export function BacktestRunListPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [retryingRunId, setRetryingRunId] = useState<string | null>(null);
+  const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
   const [dismissingNoticeId, setDismissingNoticeId] = useState<string | null>(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [formInitialValues, setFormInitialValues] = useState<Partial<BacktestRunFormValues>>();
@@ -75,15 +77,17 @@ export function BacktestRunListPage() {
     };
   }, [refresh]);
 
-  const hasPreparingRun = runs.some((run) => run.status === 'preparing');
+  const hasPendingRun = runs.some(
+    (run) => run.status === 'preparing' || run.status === 'deleting'
+  );
   useEffect(() => {
-    if (!hasPreparingRun) return;
+    if (!hasPendingRun) return;
 
     const intervalId = window.setInterval(() => {
       void refresh();
     }, 5000);
     return () => window.clearInterval(intervalId);
-  }, [hasPreparingRun, refresh]);
+  }, [hasPendingRun, refresh]);
 
   function openNewRunForm() {
     setFormInitialValues(undefined);
@@ -120,6 +124,19 @@ export function BacktestRunListPage() {
     }
   }
 
+  async function handleDeleteRun(runId: string) {
+    setDeletingRunId(runId);
+    setLoadError(null);
+    try {
+      await deleteBacktestRun(runId);
+      await refresh();
+    } catch {
+      setLoadError('Could not start run deletion. Refresh the list and try again.');
+    } finally {
+      setDeletingRunId(null);
+    }
+  }
+
   async function handleDismissNotice(noticeId: string) {
     setDismissingNoticeId(noticeId);
     try {
@@ -153,11 +170,13 @@ export function BacktestRunListPage() {
         isLoading={isLoading}
         loadError={loadError}
         retryingRunId={retryingRunId}
+        deletingRunId={deletingRunId}
         dismissingNoticeId={dismissingNoticeId}
         onCreateRun={openNewRunForm}
         onRefresh={() => refresh(true)}
         onOpenRun={(runId) => navigate(`/backtest/runs/${encodeURIComponent(runId)}/replay`)}
         onRetryRun={handleRetryRun}
+        onDeleteRun={handleDeleteRun}
         onNoticeAction={openNoticeAction}
         onDismissNotice={handleDismissNotice}
       />

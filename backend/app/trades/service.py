@@ -8,6 +8,7 @@ from bson import ObjectId
 
 from app.market_data.service import MarketDataService
 from app.storage import get_bucket, get_client
+from app.extensions import mongo
 from app.whatif.cache import clear_simulation_cache
 from app.models.trade import create_trade_doc
 from app.repositories.account_repo import (
@@ -1643,7 +1644,45 @@ class TradeService:
             NotFoundError: If trade not found.
         """
         trade = self._get_trade_or_raise(user_id, trade_id)
+        self._delete_trade_document(user_id, trade)
 
+    def delete_backtest_account_trades(
+        self, user_id: str, account_id, *, before_each=None
+    ) -> int:
+        """Permanently delete all trade records owned by one Backtest account.
+
+        This internal cleanup path deliberately does not depend on the user's
+        currently selected workspace, and includes soft-deleted trade rows.
+        """
+        user_oid = ObjectId(user_id)
+        account_oid = (
+            account_id
+            if isinstance(account_id, ObjectId)
+            else ObjectId(str(account_id))
+        )
+        trades = list(
+            mongo.db.trades.find(
+                {"user_id": user_oid, "trade_account_id": account_oid}
+            ).sort([("_id", 1)])
+        )
+        for trade in trades:
+            if before_each is not None:
+                before_each()
+            self._delete_trade_document(user_id, trade)
+            if before_each is not None:
+                before_each()
+        remaining = mongo.db.trades.count_documents(
+            {"user_id": user_oid, "trade_account_id": account_oid}
+        )
+        if remaining:
+            raise RuntimeError(
+                "Backtest account cleanup left trade records behind."
+            )
+        return len(trades)
+
+    def _delete_trade_document(self, user_id: str, trade: dict) -> None:
+        """Remove a trade and its owned records only after media is purged."""
+        trade_id = str(trade["_id"])
         self._delete_trade_media(user_id, trade_id)
         self.exec_repo.delete_many(
             {"trade_id": ObjectId(trade_id)}
@@ -1732,34 +1771,21 @@ class TradeService:
     def _delete_trade_media(
         self, user_id: str, trade_id: str
     ) -> None:
-        """Delete all media objects and records for a trade."""
+        """Delete all media objects before deleting their MongoDB references."""
         media_docs = self.media_repo.find_by_trade(
             user_id, trade_id
         )
         if not media_docs:
             return
-
-        try:
-            client = get_client()
-            bucket = get_bucket()
-        except RuntimeError:
-            client = None
-            bucket = None
-
-        if client and bucket:
-            for media_doc in media_docs:
-                try:
-                    client.remove_object(
-                        bucket, media_doc["object_key"]
-                    )
-                except Exception:
-                    logger.warning(
-                        "Failed to remove object %s",
-                        media_doc["object_key"],
-                        exc_info=True,
-                    )
-
+        client = get_client()
+        bucket = get_bucket()
+        for media_doc in media_docs:
+            # Propagate object-store errors so callers keep the trade/media
+            # documents and can retry instead of orphaning the stored object.
+            client.remove_object(bucket, media_doc["object_key"])
         self.media_repo.delete_for_trade(user_id, trade_id)
+        if self.media_repo.find_by_trade(user_id, trade_id):
+            raise RuntimeError("Trade media records could not be removed.")
 
     def _cleanup_empty_import_batch(
         self, import_batch_id: str

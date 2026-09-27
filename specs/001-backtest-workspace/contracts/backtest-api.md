@@ -4,7 +4,7 @@ This contract describes the authenticated Flask API used by the React Backtest p
 
 ## Authentication and ownership
 
-All endpoints require the existing JWT bearer authentication. The backend derives user_id from the JWT and applies owner filtering to every run, preparation job, candle, account, replay-position, and drawing operation. Request bodies never accept a user_id. Access to another user’s resource returns the same not-found behavior as an unknown id.
+All endpoints require the existing JWT bearer authentication. The backend derives user_id from the JWT and applies owner filtering to every run, preparation job, candle, account, trade, replay-position, deletion, and drawing operation. Request bodies never accept a user_id. Access to another user’s resource returns the same not-found behavior as an unknown id.
 
 Timestamps are UTC epoch milliseconds. Candle bars are returned in chronological order with one-minute source interval.
 
@@ -62,11 +62,30 @@ Return 202 while preparation continues. Invalid input uses the app’s validatio
 
 ### GET /api/backtest/runs
 
-Returns the authenticated user’s preparing and ready runs, newest first. Each list entry includes id, instrument, selected date range, generated account label, status, and preparation progress (`stage` plus a percentage when measurable, otherwise null). The frontend polls this endpoint every five seconds while at least one run is preparing and stops when none are preparing. Progress is read from MongoDB state updated by the worker. Failed/no-data records are not retained.
+Returns the authenticated user’s preparing, ready, and deleting runs, newest first. Each list entry includes id, instrument, selected date range, generated account label, status, and preparation progress (`stage` plus a percentage when measurable, otherwise null). A deleting run is shown as pending cleanup and cannot be opened. The frontend polls this endpoint every five seconds while at least one run is preparing or deleting and stops when none are. Progress is read from MongoDB state updated by the worker. Failed/no-data records are not retained.
 
 ### GET /api/backtest/runs/{run_id}
 
-Returns the owned run detail, account label, available candle coverage, empty dates and partial-gap summary, saved cursor, and status. A preparing run remains on the list page and has no chart detail data. Its persisted cursor is initialized to source index zero and the timestamp of its first available candle when the run becomes ready. Chart workspace state is loaded through the dedicated chart-workspace routes below.
+Returns the owned run detail, account label, available candle coverage, empty dates and partial-gap summary, saved cursor, and status. A preparing or deleting run remains on the list page and has no playable chart detail. Its persisted cursor is initialized to source index zero and the timestamp of its first available candle when the run becomes ready. Chart workspace state is loaded through the dedicated chart-workspace routes below.
+
+### DELETE /api/backtest/runs/{run_id}
+
+Permanently deletes an owned preparing or ready run. The frontend must require explicit confirmation before calling this endpoint and explain that the run's dedicated Backtest account and all trades linked to it will also be removed. The request has no user or account identifier; the server derives ownership and the one-to-one account association from the run record.
+
+Accepted response:
+
+~~~json
+{
+  "run": {
+    "id": "run-id",
+    "status": "deleting"
+  }
+}
+~~~
+
+Return 202 after the durable run state changes to `deleting`; this means cleanup was accepted, not that deletion completed. The run immediately becomes non-playable, and the associated account and trades may be excluded from Backtest views while cleanup is pending, but hiding them is only an interim state. A repeated request while cleanup is pending returns the same pending state. A missing or non-owned run returns the standard 404 behavior.
+
+The worker treats `deleting` as a cancellation fence: preparation, replay-position writes, chart-workspace writes, and drawing writes return the existing conflict error for a run that is being deleted and cannot publish or mutate that run. It resumes cleanup after restart and physically removes every object under the run's MinIO prefix, including staged and immutable candle objects and any unreferenced objects, then verifies the prefix is empty. It also removes the preparation job, replay cursor, chart tabs/workspace, drawings, every trade linked to the dedicated account (including trade-owned dependent records and files), and the account. Remove the run record carrying the `deleting` marker only after all associated MongoDB records and MinIO objects are physically gone. The run disappearing from `GET /api/backtest/runs` is the completion signal; do not report success while cleanup is pending or resources are merely hidden. Cleanup is idempotent. It must not delete another run's or any Real account's records, even when labels or instruments match. User-initiated deletion does not create a preparation-failure notice.
 
 ## Preparation result notices
 
@@ -262,9 +281,10 @@ The server validates interval limits, ownership, payload size, and JSON shape, t
 
 ## Status and error behavior
 
-- Preparing and ready are the only retained run statuses.
+- Preparing and ready are the normal retained run statuses. `deleting` is a temporary, non-playable state retained only while confirmed cleanup is pending.
 - Interrupted preparation stays preparing. A separate worker claims durable MongoDB jobs with expiring leases; after a worker restart or lease expiry, the job resumes from the last completed UTC-date checkpoint. Manual retry requeues the same job.
 - Failed and no-data runs are reported and then deleted with their account.
+- Confirmed user deletion removes the dedicated account and its linked trades, while a durable `deleting` run state fences writes and lets the worker finish idempotent cleanup after restart.
 - Invalid input and out-of-range requests use the existing validation error shape.
 - Unknown or non-owned run resources return not found.
 - Drawing revision conflicts return 409 with the latest revision.

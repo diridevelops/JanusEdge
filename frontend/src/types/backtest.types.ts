@@ -15,7 +15,7 @@ export interface CreateBacktestRunRequest {
   display_timezone: string;
 }
 
-export type BacktestRunStatus = 'preparing' | 'ready';
+export type BacktestRunStatus = 'preparing' | 'ready' | 'deleting';
 export type BacktestPreparationOutcome = 'no_data' | 'failed';
 export type BacktestPreparationNextAction = 'edit_range' | 'start_new_run';
 

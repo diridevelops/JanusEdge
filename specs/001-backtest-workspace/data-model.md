@@ -31,23 +31,28 @@ One user-owned replay request and the saved one-minute candle selection for that
 | source | enum | dukascopy. |
 | source_side | enum | COMB, represented as component-wise midpoint OHLC. |
 | source_interval_minutes | integer | Fixed at 1. |
-| status | enum | preparing or ready. Failed/no-data runs are reported and deleted per the feature requirements. |
+| status | enum | preparing, ready, or deleting. Failed/no-data runs are reported and deleted per the feature requirements. |
 | progress | object | Current preparation stage and a percentage when measurable; otherwise indicates indeterminate progress. |
 | account_id | ObjectId | The single associated Backtest account. |
 | preparation_job_id | ObjectId/string | The durable worker job associated with this run. |
 | snapshot | object | Immutable snapshot metadata described below. Present when ready. |
 | coverage | object | First/last available candle, candle count, fully empty dates, and summaries of partial gaps. Present when ready. |
 | replay_cursor | object | Saved available-candle index and UTC timestamp. Initialized to index zero and the first available candle timestamp in the same MongoDB update that marks the run ready. |
+| deletion_requested_at | UTC timestamp/null | Set when the owner confirms permanent deletion; the deleting state is the durable cleanup marker until associated resources are purged. |
+| deletion_requested_by | ObjectId/null | Authenticated owner who confirmed deletion. |
 | created_at / updated_at | UTC timestamps | Lifecycle timestamps. |
 
 Invariants:
 
 - Unique ownership and run identity. Every lookup and mutation filters by both user_id and run id.
 - One Backtest account per run, enforced by a unique user_id/run_id association.
-- One durable BacktestPreparationJob per active or ready run, enforced by a unique run_id association.
+- One durable BacktestPreparationJob per preparing or ready run, enforced by a unique run_id association. Deletion removes the job during cleanup; after that, the run's `deleting` status remains the durable marker until the rest of the purge completes and the run record is removed last.
 - A ready run always references one complete immutable snapshot containing at least one candle.
 - The snapshot never changes after the run is ready; refreshes create a new run and snapshot.
 - A preparing run may be retried or recovered after interruption without creating a second job, run, or account. Completed UTC-date checkpoints are durable; only an incomplete date may need to be fetched again.
+- A deleting run is non-playable and cannot transition to ready. Its status is a temporary durable cleanup marker, not a soft-delete outcome; the run record is removed only after all run-owned resources have been physically purged.
+- Once deletion is requested, its account and trades may be excluded from Backtest views while cleanup is pending. This interim hiding is not completion. Cleanup is limited to the account identified by this run and the trades linked to that account.
+- Completed deletion leaves no run, account, preparation/replay/workspace/drawing records, linked trades or trade-owned dependent data, or objects under the run's MinIO prefix. The worker verifies the run prefix is empty before removing the run record and its deletion marker.
 - The run's status-ready transition and initial cursor (source_candle_index zero, first available timestamp, revision zero) are persisted together in the run document.
 - Cursor position is an index into the immutable ordered list of available one-minute candles. It may not point to an unavailable or later-than-current candle.
 - The current position is persisted as the newest requested cursor, with server-side versioning or ordered writes preventing an older in-flight update from replacing a newer one.
@@ -69,7 +74,7 @@ Durable MongoDB job claimed by the separate preparation worker. MongoDB is both 
 | staging_prefix | string | Run-scoped MinIO prefix containing completed per-date results until final snapshot assembly. |
 | created_at / updated_at | UTC timestamps | Job lifecycle and checkpoint update times. |
 
-The worker atomically claims queued jobs or jobs with expired leases, renews its lease while working, writes non-empty date candles to MinIO, then persists the date outcome (including empty) in `completed_utc_dates`. On recovery it skips committed dates and may repeat only the current incomplete date. A completed job remains associated with its ready run. No-data and terminal provider failure create a notice, delete the run/account/job, and remove staged data.
+The worker atomically claims queued jobs or jobs with expired leases, renews its lease while working, writes non-empty date candles to MinIO, then persists the date outcome (including empty) in `completed_utc_dates`. On recovery it skips committed dates and may repeat only the current incomplete date. A completed job remains associated with its ready run. No-data and terminal provider failure create a notice, delete the run/account/job, and remove staged data. If the run enters `deleting`, the worker must stop preparation and resume idempotent deletion cleanup instead of publishing a snapshot or ready state.
 
 ## BacktestCandleSnapshot
 
@@ -106,9 +111,9 @@ The account selector record associated with exactly one BacktestRun. Store this 
 | backtest_run_id | ObjectId/string | Unique associated run. |
 | account_name | string | Stable system-generated value. |
 | display_name | string | Instrument and selected date range, with a short unique suffix when needed. |
-| status | enum | active for a ready/preparing run; removed when the run is deleted after failure/no-data. |
+| status | enum | active for a ready/preparing run; deleting while confirmed run cleanup is pending; removed when deletion completes. |
 
-A Backtest account has no real trades. Trade recording and simulated orders remain unavailable in this version. The account is a way to identify the run in Backtest trade-facing screens.
+A Backtest account is dedicated to one run and has no Real trades. Trade recording and simulated orders remain unavailable in this version. If Backtest trades are associated with this account, they are exclusively owned by this run for deletion purposes. When account status is `deleting`, the account and its trades may be hidden from Backtest trade-facing queries while cleanup is pending; this is not deletion completion. Deletion physically removes every trade linked by `trade_account_id` and all trade-owned dependent data, then removes the account. On completion, neither the account nor its trades or dependents remain in storage.
 
 ## ReplayCursor
 
@@ -235,10 +240,12 @@ Notices are visible on the run-list page until dismissed and do not cause failed
 
 - One user owns many BacktestRuns.
 - Each BacktestRun has exactly one BacktestAccount and one immutable BacktestCandleSnapshot.
-- Each preparing or ready BacktestRun has exactly one durable BacktestPreparationJob; completed jobs remain for the lifetime of their ready run.
+- Each preparing or ready BacktestRun has exactly one durable BacktestPreparationJob; completed jobs remain for the lifetime of their ready run. During deletion the job is physically removed as part of cleanup, while the run's `deleting` status remains the durable marker until all remaining resources are purged and the run record is removed last.
+- Each BacktestAccount belongs to exactly one BacktestRun and may be referenced by zero or more trades through `trade_account_id`; those trades are removed with the account when that run is deleted.
 - Each BacktestRun has one durable ReplayCursor shared by all active chart tabs.
 - Each BacktestRun has zero or one ChartWorkspaceLayout before first open and exactly one after initialization, and may have zero or more BacktestPreparationNotices for completed failures/no-data outcomes.
 - Each BacktestRun may have zero or more ChartDrawingState documents, one per interval.
+- A confirmed deletion moves the run and account to `deleting`; hiding them from normal Backtest views is only an interim state. The run's durable deleting state resumes cleanup after interruption. Cleanup physically removes all account-linked trades and their dependent data, the account, preparation job, replay cursor, chart tabs/workspace, drawings, and every object under the run's MinIO prefix (including staged, snapshot, and unreferenced objects). After verifying no associated documents or MinIO objects remain, remove the run record and its deletion marker last. Repeated deletion and cleanup passes are safe.
 - Real accounts and trades are excluded from Backtest queries; Backtest accounts are excluded from Real queries.
 
 

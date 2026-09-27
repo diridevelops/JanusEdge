@@ -124,6 +124,16 @@ Sources: [CandleKit workspace example](https://github.com/rohanbeingsocial/candl
 
 Source: [Lightweight Charts 5.2 ITimeScaleApi](https://tradingview.github.io/lightweight-charts/docs/api/interfaces/ITimeScaleApi) (`scrollPosition`, `scrollToRealTime`, and visible logical range notifications).
 
+### 11. Delete a run through a durable, owner-scoped cleanup state
+
+**Decision**: Require confirmation before permanent deletion. Mark the owned run `deleting` as a temporary durable cleanup marker, immediately stop replay, and let the existing worker resume cleanup after restarts. Hiding the run/account/trades from queries is only an interim pending state. Fence preparation publication and all replay/workspace/drawing writes once deletion starts. Physically remove every trade linked through the run's one-to-one account and all trade-owned dependent records/files using the existing trade cleanup path; remove all run-owned MongoDB data and every object under the run's MinIO prefix, including staged, immutable snapshot, and unreferenced objects; verify the prefix is empty; then remove the account and the run record carrying the marker last. Only that completed purge counts as deletion. Repeated requests and cleanup passes are idempotent. Trade creation remains out of scope.
+
+**Rationale**: A run may be preparing while the worker owns a lease, and its staged or final candle objects live outside MongoDB. A durable lifecycle marker prevents a late worker from publishing a deleted run and allows interrupted cleanup to resume. The dedicated account's `backtest_run_id` and each trade's `trade_account_id` provide a narrow cascade boundary that preserves other runs and Real records. Reusing the existing trade deletion path avoids leaving trade-owned media or other dependent records behind.
+
+**Alternatives considered**: Delete all resources synchronously in the HTTP request. Rejected because a process or object-store failure can interrupt the cascade, and an in-flight preparation worker still needs a cancellation fence. Introduce a second standalone deletion queue. Rejected because the run's durable `deleting` status already serves as the work marker and avoids duplicate lifecycle state. Soft-delete with a restore action. Rejected because the requested behavior is permanent removal of the run, account, and linked trades.
+
+Sources: [`BacktestRun` ownership and worker cleanup](../../backend/app/backtests/repository.py), [preparation-worker terminal cleanup](../../backend/app/backtests/worker.py), [trade deletion cascade](../../backend/app/trades/service.py).
+
 ## Implementation-Time Validations
 
 - The requested CandleKit 0.1.1 version is not published. The 0.1.0 tarball's declarations confirm ChartView, ReplayControls, DrawingToolbar, ReplayDataSource, SyncEngine, DrawingEngine export/import, and configurable speed choices; no replay-aware drawing visibility API is present.
@@ -131,7 +141,8 @@ Source: [Lightweight Charts 5.2 ITimeScaleApi](https://tradingview.github.io/lig
 - Resolve PyArrow >=25 from the Dukascopy package against the backend’s other locked dependencies.
 - Pin the sibling downloader at Git revision `e8dd0b7fc01631e5d519b92b6eea34ed2f156957`. Its `fetch_instrument_codes` catalog API and per-UTC-date `run_downloads(instrument, "COMB", date, 1, ...)` API are present. This revision requires PyArrow >=25.0, so the backend's 18.1.0 pin must be raised and locked consistently.
 - Exercise worker lease expiry and recovery after API and worker restarts; verify completed UTC-date staging is reused and the ready transition writes the first-candle cursor with the ready status.
-- Verify the run-list polling stops when no run is preparing and makes no more than five seconds elapse between progress refreshes while preparation continues.
+- Verify the run-list polling stops when no run is preparing or deleting and makes no more than five seconds elapse between refreshes while either state continues.
+- Verify confirmed deletion fences an in-flight preparation lease, resumes after API/worker restart, and treats pending hiding/202 responses as incomplete. On completion, assert that only the target run's trades and trade-owned data, account, run-owned MongoDB records, and every object in its MinIO prefix (including unreferenced objects) are physically removed, that the prefix is empty, and that no deletion marker remains.
 - Verify sync mapping on tabs with different chart intervals and empty/gap dates.
 - Verify the pinned CandleKit 0.1.0 workspace adapter with the exact locked `flexlayout-react` peer, custom JanusEdge chart panel registration, layout serialization, split/move/reorder/resize operations, and cleanup/re-registration of replay, sync, and drawing subscriptions when a panel moves.
 - Verify one-pane 1m initialization, legacy flat-tab migration into visible sibling panes, and revision-conflict handling on concurrent layout saves. The current upstream example's `ReplayPanel` import must not be assumed available in 0.1.0.

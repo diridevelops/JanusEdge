@@ -43,6 +43,7 @@ class SnapshotStore:
         candles: list[dict],
         *,
         before_write=None,
+        after_write=None,
     ) -> str | None:
         if not candles:
             return None
@@ -57,6 +58,8 @@ class SnapshotStore:
         if before_write is not None:
             before_write()
         self._put(key, payload)
+        if after_write is not None:
+            after_write(key)
         return key
 
     def assemble_snapshot(
@@ -66,6 +69,7 @@ class SnapshotStore:
         run: dict,
         completed_dates: list[dict],
         before_publish=None,
+        after_publish=None,
     ) -> tuple[dict, dict]:
         frames = []
         for checkpoint in completed_dates:
@@ -104,10 +108,13 @@ class SnapshotStore:
             frame=frame,
             time_values=time_values,
             before_write=before_publish,
+            after_write=after_publish,
         )
         if before_publish is not None:
             before_publish()
         self._put(object_key, payload)
+        if after_publish is not None:
+            after_publish(object_key)
 
         available_dates = sorted(
             {
@@ -215,13 +222,23 @@ class SnapshotStore:
         return int(times[source_candle_index])
 
     def remove_prefix(self, prefix: str) -> None:
-        for item in self._client.list_objects(
-            self._bucket, prefix=prefix, recursive=True
-        ):
-            self._client.remove_object(self._bucket, item.object_name)
+        client = self._client
+        bucket = self._bucket
+        for item in client.list_objects(bucket, prefix=prefix, recursive=True):
+            client.remove_object(bucket, item.object_name)
+        remaining = list(
+            client.list_objects(bucket, prefix=prefix, recursive=True)
+        )
+        if remaining:
+            raise RuntimeError(
+                f"MinIO prefix cleanup left objects under {prefix}."
+            )
 
     def remove_run_objects(self, user_id, run_id) -> None:
         self.remove_prefix(f"backtests/{user_id}/{run_id}/")
+
+    def remove_object(self, object_key: str) -> None:
+        self._client.remove_object(self._bucket, object_key)
 
     def _read_parquet(
         self, object_key: str, *, columns: list[str] | None = None
@@ -261,6 +278,7 @@ class SnapshotStore:
         frame: pd.DataFrame,
         time_values: list[int],
         before_write=None,
+        after_write=None,
     ) -> list[dict]:
         """Write immutable UTC-day partitions and their global row ranges."""
         indexes = []
@@ -290,6 +308,8 @@ class SnapshotStore:
             if before_write is not None:
                 before_write()
             self._put(partition_key, partition_payload)
+            if after_write is not None:
+                after_write(partition_key)
             indexes.append(
                 {
                     "utc_date": utc_date.isoformat(),

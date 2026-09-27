@@ -41,6 +41,11 @@ export async function listBacktestRuns(): Promise<BacktestRunSummary[]> {
   return response.data.runs;
 }
 
+/** Start permanent deletion; HTTP 202 means cleanup is pending, not complete. */
+export async function deleteBacktestRun(runId: string): Promise<void> {
+  await apiClient.delete(`/backtest/runs/${encodeURIComponent(runId)}`);
+}
+
 /** Fetch one owned run and its ready-state replay configuration. */
 export async function getBacktestRun(
   runId: string

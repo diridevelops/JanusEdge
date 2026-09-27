@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from bson import ObjectId
+from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
 from app.extensions import mongo
@@ -47,7 +48,7 @@ class BacktestRepository(BaseRepository):
         return self.find_many(
             {
                 "user_id": ObjectId(user_id),
-                "status": {"$in": ["preparing", "ready"]},
+                "status": {"$in": ["preparing", "ready", "deleting"]},
             },
             sort=[("created_at", -1), ("_id", -1)],
         )
@@ -65,6 +66,180 @@ class BacktestRepository(BaseRepository):
             {"$set": updates},
         )
         return result.matched_count == 1
+
+    def request_deletion(self, user_id: str, run_id, *, now) -> dict | None:
+        """Atomically turn an owned preparing/ready run into a cleanup marker."""
+        run_oid = _object_id(run_id)
+        user_oid = _object_id(user_id)
+        if run_oid is None or user_oid is None:
+            return None
+        return self.collection.find_one_and_update(
+            {
+                "_id": run_oid,
+                "user_id": user_oid,
+                "status": {"$in": ["preparing", "ready"]},
+            },
+            {
+                "$set": {
+                    "status": "deleting",
+                    "progress": {"stage": "deleting", "percent": None},
+                    "deletion_requested_at": now,
+                    "deletion_requested_by": user_oid,
+                    "updated_at": now,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+
+    def find_deletion_candidate(self, *, now) -> dict | None:
+        """Find a deletion whose prior preparation lease has expired."""
+        return self.collection.find_one(
+            {
+                "status": "deleting",
+                "$and": [
+                    {
+                        "$or": [
+                            {"preparation_lease_expires_at": {"$lte": now}},
+                            {"preparation_lease_expires_at": None},
+                            {"preparation_lease_expires_at": {"$exists": False}},
+                        ]
+                    },
+                    {
+                        "$or": [
+                            {"deletion_lease_expires_at": {"$lte": now}},
+                            {"deletion_lease_expires_at": None},
+                            {"deletion_lease_expires_at": {"$exists": False}},
+                        ]
+                    },
+                ],
+            },
+            sort=[("deletion_requested_at", 1), ("_id", 1)],
+        )
+
+    def claim_deletion_lease(
+        self, user_id, run_id, worker_id: str, *, now, lease_seconds: int
+    ) -> dict | None:
+        """Claim cleanup only after preparation has released its run lease."""
+        run_oid = _object_id(run_id)
+        user_oid = _object_id(user_id)
+        if run_oid is None or user_oid is None:
+            return None
+        return self.collection.find_one_and_update(
+            {
+                "_id": run_oid,
+                "user_id": user_oid,
+                "status": "deleting",
+                "$and": [
+                    {
+                        "$or": [
+                            {"preparation_lease_expires_at": {"$lte": now}},
+                            {"preparation_lease_expires_at": None},
+                            {"preparation_lease_expires_at": {"$exists": False}},
+                        ]
+                    },
+                    {
+                        "$or": [
+                            {"deletion_lease_expires_at": {"$lte": now}},
+                            {"deletion_lease_expires_at": None},
+                            {"deletion_lease_expires_at": {"$exists": False}},
+                        ]
+                    },
+                ],
+            },
+            {
+                "$set": {
+                    "deletion_lease_owner": worker_id,
+                    "deletion_lease_expires_at": now + timedelta(seconds=lease_seconds),
+                    "updated_at": now,
+                },
+                "$inc": {"deletion_attempt_count": 1},
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+
+    def renew_deletion_lease(
+        self, user_id, run_id, worker_id: str, *, now, lease_seconds: int
+    ) -> bool:
+        run_oid = _object_id(run_id)
+        user_oid = _object_id(user_id)
+        if run_oid is None or user_oid is None:
+            return False
+        result = self.collection.update_one(
+            {
+                "_id": run_oid,
+                "user_id": user_oid,
+                "status": "deleting",
+                "deletion_lease_owner": worker_id,
+                "deletion_lease_expires_at": {"$gt": now},
+            },
+            {
+                "$set": {
+                    "deletion_lease_expires_at": now + timedelta(seconds=lease_seconds),
+                    "updated_at": now,
+                }
+            },
+        )
+        return result.matched_count == 1
+
+    def release_deletion_lease(self, user_id, run_id, worker_id: str) -> None:
+        run_oid = _object_id(run_id)
+        user_oid = _object_id(user_id)
+        if run_oid is None or user_oid is None:
+            return
+        self.collection.update_one(
+            {
+                "_id": run_oid,
+                "user_id": user_oid,
+                "status": "deleting",
+                "deletion_lease_owner": worker_id,
+            },
+            {
+                "$unset": {
+                    "deletion_lease_owner": "",
+                    "deletion_lease_expires_at": "",
+                }
+            },
+        )
+
+    def finish_deletion(self, user_id, run_id, worker_id: str, *, now) -> bool:
+        """Remove all MongoDB associations and the run marker last."""
+        run_oid = _object_id(run_id)
+        user_oid = _object_id(user_id)
+        if run_oid is None or user_oid is None:
+            return False
+        lease_query = {
+            "_id": run_oid,
+            "user_id": user_oid,
+            "status": "deleting",
+            "deletion_lease_owner": worker_id,
+            "deletion_lease_expires_at": {"$gt": now},
+        }
+        run = self.collection.find_one(lease_query)
+        if run is None:
+            return False
+
+        for collection_name in (
+            "backtest_chart_tabs",
+            "backtest_chart_workspaces",
+            "backtest_drawing_states",
+            "backtest_preparation_jobs",
+            "backtest_notices",
+        ):
+            mongo.db[collection_name].delete_many(
+                {"user_id": user_oid, "run_id": run_oid}
+            )
+        mongo.db.trade_accounts.delete_many(
+            {
+                "user_id": user_oid,
+                "workspace_mode": "backtest",
+                "$or": [
+                    {"backtest_run_id": run_oid},
+                    {"_id": run.get("account_id")},
+                ],
+            }
+        )
+        result = self.collection.delete_one(lease_query)
+        return result.deleted_count == 1
 
     def update_progress(
         self,
@@ -802,3 +977,16 @@ class PreparationJobRepository:
 
     def delete_for_run(self, run_id) -> dict | None:
         return self.collection.find_one_and_delete({"run_id": run_id})
+
+    def cancel_for_run(self, run_id, *, now) -> bool:
+        """Fence queued/running preparation work without releasing its run lease."""
+        result = self.collection.update_one(
+            {"run_id": run_id, "state": {"$in": ["queued", "running"]}},
+            {
+                "$set": {
+                    "state": "cancelled",
+                    "updated_at": now,
+                }
+            },
+        )
+        return result.matched_count == 1

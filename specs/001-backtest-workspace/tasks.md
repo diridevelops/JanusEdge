@@ -8,11 +8,11 @@ description: "Implementation backlog for the dockable Backtest chart workspace"
 
 **Prerequisites**: `plan.md` and `spec.md` are available. The project constitution remains an unratified Spec Kit placeholder and defines no project gates.
 
-**Scope**: This backlog carries forward implementation already recorded as complete and includes the replay chart follow-mode and chart-workspace UI refinements. It does not repeat the Real/Backtest separation, run preparation, core replay transport, account integration, or initial drawing integration tasks. The old flat chart-tabs task is superseded by the dockable workspace work in User Story 3. These carry-forward notes reflect the prior task ledger, not a new code audit.
+**Scope**: This backlog carries forward implementation already recorded as complete and includes the replay chart follow-mode, chart-workspace UI refinements, and the new run-deletion feature. It does not repeat the Real/Backtest separation, run preparation, core replay transport, account integration, or initial drawing integration tasks. The old flat chart-tabs task is superseded by the dockable workspace work in User Story 3. These carry-forward notes reflect the prior task ledger, not a new code audit.
 
 **Tests**: Focused backend and frontend tests for the versioned workspace contract, migration, and panel lifecycle are recorded above. The full quickstart UI/browser scenario task remains open; no tests or browser checks were run for the current UI refinement.
 
-**Organization**: Preserve existing story phases and task statuses, then add the follow-mode enhancement and the chart UI refinement as sequential phases after the carried-forward backlog. User Stories 1, 2, and 4 have no new tasks in this plan delta because their work is recorded as complete in the prior task list.
+**Organization**: Preserve existing story phases and task statuses, then add the follow-mode enhancement, chart UI refinement, and run-deletion story after the carried-forward backlog. User Stories 1, 2, and 4 have no new tasks for their original scope because their work is recorded as complete in the prior task list.
 
 **Format**: `- [ ] T### [P?] [US#?] Description with file path`
 
@@ -146,6 +146,27 @@ No new tasks in this plan delta; the prior task list records this story's implem
 
 ---
 
+## Phase 11: User Story 6 - Delete a run and its activity (Priority: P1)
+
+**Goal**: Let the owner permanently remove a preparing or ready run together with its dedicated Backtest account, linked trades, and run-owned replay data, while preserving unrelated and Real records.
+
+**Independent Test**: Cancel a deletion confirmation and verify nothing changes. Confirm deletion of a ready run containing linked trades and verify that completion occurs only after its run/account/trade/dependent records are physically absent and its MinIO prefix is empty. Repeat during active preparation and after interrupting cleanup; the run must never become ready and cleanup must resume without touching another run or Real data.
+
+### Tests for User Story 6
+
+- [X] T021 [P] [US6] Add backend deletion tests for owner isolation, preparing-run worker fencing, restart recovery, and idempotent cleanup. On completion, assert the run/deletion marker, account, linked trade documents, trade-owned dependent records/files, and preparation/replay/workspace/drawing records are absent, and listing the run's MinIO prefix returns zero objects (including unreferenced objects) in `backend/tests/test_backtests/test_backtest_run_deletion.py`; confirm these tests fail before implementation.
+- [X] T022 [P] [US6] Add frontend tests for confirmation/cancel behavior, pending-deletion display, and list refresh/error handling in `frontend/src/components/backtest/BacktestRunList.test.tsx`; confirm these tests fail before implementation.
+
+### Implementation for User Story 6
+
+- [X] T023 [US6] Add the durable owner-scoped `deleting` run state and authenticated `DELETE /api/backtest/runs/{run_id}` contract; fence replay, workspace, drawing, and preparation writes once deletion begins in `backend/app/backtests/repository.py`, `backend/app/backtests/service.py`, and `backend/app/backtests/routes.py`.
+- [X] T024 [P] [US6] Make the worker resume and idempotently purge deleting runs: physically remove every object under the run's MinIO prefix and verify it is empty, remove the preparation job, chart tabs/workspace, drawings, and every linked trade plus its dependent data, then remove the dedicated account and finally the run/deletion marker. Interim query filtering may hide pending resources but must not substitute for the purge. Implement in `backend/app/backtests/worker.py`, `backend/app/backtests/repository.py`, `backend/app/trades/service.py`, `backend/app/repositories/trade_repo.py`, and `backend/app/workspace_mode/service.py`.
+- [X] T025 [US6] Add the delete API/type handling and run-list confirmation flow; treat 202 as pending cleanup, show completion only after the run disappears following physical purge, keep cancel non-mutating, and prevent opening a deleting run in `frontend/src/api/backtests.api.ts`, `frontend/src/types/backtest.types.ts`, `frontend/src/components/backtest/BacktestRunList.tsx`, and `frontend/src/pages/BacktestRunListPage.tsx`.
+
+**Checkpoint**: A 202 response and interim hiding are treated only as pending cleanup. Confirm deletion completes only after the run/deletion marker, account, linked trades and dependent data are absent and the run's MinIO prefix is empty; cleanup survives restarts and no unrelated Backtest or Real data changes.
+
+---
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -159,6 +180,7 @@ No new tasks in this plan delta; the prior task list records this story's implem
 - **Polish (Phase 8)**: T013 depends on implementation completion; T014 remains open until the remaining UI validation scenarios are completed.
 - **US3 follow-mode enhancement (Phase 9)**: Depends on the existing chart workspace and shared replay controller from Phase 5. Add tests in T015 before implementing T016-T017; T017 depends on follow-state and snap APIs from T016. T014 is not a prerequisite and remains deferred until UI validation resumes.
 - **US3 chart UI refinement (Phase 10)**: Depends on the existing chart workspace from Phase 5. T018-T020 are implemented as a refinement of that workspace; full UI validation remains tracked separately by T014.
+- **US6 deletion (Phase 11)**: Depends on the existing run/account lifecycle from US2 and account association from US4. T021-T022 can be authored in parallel; T023 establishes the deletion fence and endpoint, after which T024 and T025 can proceed in parallel on backend cleanup/query filtering and frontend controls.
 
 ### User Story Dependencies
 
@@ -168,6 +190,7 @@ No new tasks in this plan delta; the prior task list records this story's implem
 - **US3 follow-mode delta (P1)**: Extends the delivered replay chart panes; T015 precedes T016, and T017 uses the state/action interfaces implemented by T016.
 - **US4 (P2)**: Previously delivered; no new tasks.
 - **US5 (P2)**: Starts after US3 panel moves are implemented.
+- **US6 (P1)**: Extends the existing US2 run and US4 account relationship; independent of chart layout and drawing behavior. It does not add trade creation or order entry.
 
 ### Parallel Opportunities
 
@@ -191,6 +214,7 @@ Task: T004 frontend workspace bootstrap and legacy conversion tests in frontend/
 3. Complete User Story 5 lifecycle handling before release so moving a panel cannot lose drawings or leak subscriptions.
 4. Complete the US3 follow-mode tasks so each pane can track or inspect replay history independently.
 5. Run headless automated checks after implementation. Keep T014 open until the remaining quickstart UI scenarios are completed.
+6. Complete User Story 6 before enabling any future Backtest trade-recording flow, so a run's dedicated account cannot outlive its run.
 
 ## Notes
 

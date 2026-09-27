@@ -1,8 +1,9 @@
-import { AlertTriangle, CheckCircle2, Loader2, Play, RefreshCw, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Loader2, Play, RefreshCw, Trash2, X } from 'lucide-react';
 import type {
   BacktestPreparationNotice,
   BacktestRunSummary,
 } from '../../types/backtest.types';
+import { confirmBacktestRunDeletion } from '../../utils/backtestRunDeletion';
 
 interface BacktestRunListProps {
   runs: BacktestRunSummary[];
@@ -10,11 +11,13 @@ interface BacktestRunListProps {
   isLoading: boolean;
   loadError: string | null;
   retryingRunId: string | null;
+  deletingRunId: string | null;
   dismissingNoticeId: string | null;
   onCreateRun: () => void;
   onRefresh: () => void | Promise<void>;
   onOpenRun: (runId: string) => void;
   onRetryRun: (runId: string) => void | Promise<void>;
+  onDeleteRun: (runId: string) => void | Promise<void>;
   onNoticeAction: (notice: BacktestPreparationNotice) => void;
   onDismissNotice: (noticeId: string) => void | Promise<void>;
 }
@@ -37,11 +40,13 @@ export function BacktestRunList({
   isLoading,
   loadError,
   retryingRunId,
+  deletingRunId,
   dismissingNoticeId,
   onCreateRun,
   onRefresh,
   onOpenRun,
   onRetryRun,
+  onDeleteRun,
   onNoticeAction,
   onDismissNotice,
 }: BacktestRunListProps) {
@@ -145,6 +150,7 @@ export function BacktestRunList({
           <div className="space-y-3">
             {runs.map((run) => {
               const isPreparing = run.status === 'preparing';
+              const isDeleting = run.status === 'deleting';
               const percent = run.progress?.percent;
               const hasMeasuredProgress = typeof percent === 'number' && Number.isFinite(percent);
               const safePercent = hasMeasuredProgress
@@ -168,30 +174,54 @@ export function BacktestRunList({
                       )}
                     </div>
 
-                    {isPreparing ? (
-                      <button
-                        type="button"
-                        onClick={() => void onRetryRun(run.id)}
-                        disabled={retryingRunId === run.id}
-                        className="btn-secondary inline-flex items-center gap-2 text-sm disabled:opacity-60"
-                      >
-                        {retryingRunId === run.id
-                          ? <Loader2 className="h-4 w-4 animate-spin" />
-                          : <RefreshCw className="h-4 w-4" />}
-                        Retry preparation
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => onOpenRun(run.id)}
-                        className="btn-primary inline-flex items-center gap-2 text-sm"
-                      >
-                        <Play className="h-4 w-4" /> Open replay
-                      </button>
+                    {!isDeleting && (
+                      <div className="flex flex-wrap items-center gap-2">
+                        {isPreparing ? (
+                          <button
+                            type="button"
+                            onClick={() => void onRetryRun(run.id)}
+                            disabled={retryingRunId === run.id}
+                            className="btn-secondary inline-flex items-center gap-2 text-sm disabled:opacity-60"
+                          >
+                            {retryingRunId === run.id
+                              ? <Loader2 className="h-4 w-4 animate-spin" />
+                              : <RefreshCw className="h-4 w-4" />}
+                            Retry preparation
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => onOpenRun(run.id)}
+                            className="btn-primary inline-flex items-center gap-2 text-sm"
+                          >
+                            <Play className="h-4 w-4" /> Open replay
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (confirmBacktestRunDeletion(run)) {
+                              void onDeleteRun(run.id);
+                            }
+                          }}
+                          disabled={deletingRunId === run.id}
+                          className="btn-secondary inline-flex items-center gap-2 text-sm text-red-700 disabled:opacity-60 dark:text-red-300"
+                        >
+                          {deletingRunId === run.id
+                            ? <Loader2 className="h-4 w-4 animate-spin" />
+                            : <Trash2 className="h-4 w-4" />}
+                          Delete run
+                        </button>
+                      </div>
                     )}
                   </div>
 
-                  {isPreparing ? (
+                  {isDeleting ? (
+                    <p className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-300" role="status">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Deletion in progress. The account, linked trades, and stored run data are being permanently removed.
+                    </p>
+                  ) : isPreparing ? (
                     <div>
                       <div className="mb-2 flex items-center justify-between gap-4 text-sm">
                         <span className="text-gray-700 dark:text-gray-300">

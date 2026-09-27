@@ -17,6 +17,7 @@ from app.backtests.repository import (
     PreparationJobRepository,
 )
 from app.backtests.snapshot_store import SnapshotStore
+from app.extensions import mongo
 from app.utils.datetime_utils import utc_now
 
 
@@ -92,6 +93,54 @@ class _LeaseHeartbeat:
                 continue
 
 
+class _DeletionLeaseHeartbeat:
+    """Renew a deletion lease while MinIO/trade cleanup is in progress."""
+
+    def __init__(self, worker, run, app):
+        self.worker = worker
+        self.run = run
+        self.app = app
+        self.stop_event = threading.Event()
+        self.lost = threading.Event()
+        self.thread = threading.Thread(
+            target=self._run,
+            name=f"backtest-delete-{run['_id']}",
+            daemon=True,
+        )
+
+    def start(self):
+        self.thread.start()
+
+    def stop(self):
+        self.stop_event.set()
+        if self.thread.is_alive():
+            self.thread.join(timeout=2)
+
+    def check(self):
+        if self.lost.is_set():
+            raise LeaseLostError("Backtest deletion lease was lost.")
+
+    def _run(self):
+        interval = max(1, min(30, self.worker.lease_seconds // 3))
+        while not self.stop_event.wait(interval):
+            try:
+                with self.app.app_context():
+                    renewed = self.worker.repository.renew_deletion_lease(
+                        self.run["user_id"],
+                        self.run["_id"],
+                        self.worker.worker_id,
+                        now=_as_utc(self.worker.clock()),
+                        lease_seconds=self.worker.lease_seconds,
+                    )
+                if not renewed:
+                    self.lost.set()
+                    return
+            except Exception:
+                # A transient database interruption may still leave the lease
+                # live; the owner check fences any later renewal.
+                continue
+
+
 class BacktestWorker:
     """Claim and process one durable preparation job at a time."""
 
@@ -124,6 +173,8 @@ class BacktestWorker:
                 "BacktestWorker.process_one requires a Flask application context."
             )
         now = _as_utc(self.clock())
+        if self._process_deleting_run(now):
+            return True
         candidate = self.job_repository.find_candidate(now=now)
         if candidate is None:
             return False
@@ -198,6 +249,93 @@ class BacktestWorker:
             heartbeat.stop()
         return True
 
+    def _process_deleting_run(self, now) -> bool:
+        """Resume one confirmed deletion before claiming preparation work."""
+        candidate = self.repository.find_deletion_candidate(now=now)
+        if candidate is None:
+            return False
+        run = self.repository.claim_deletion_lease(
+            candidate["user_id"],
+            candidate["_id"],
+            self.worker_id,
+            now=now,
+            lease_seconds=self.lease_seconds,
+        )
+        if run is None:
+            return False
+
+        heartbeat = _DeletionLeaseHeartbeat(
+            self, run, current_app._get_current_object()
+        )
+        heartbeat.start()
+        try:
+            self._finish_deletion(run, heartbeat)
+        except LeaseLostError:
+            return True
+        except Exception:
+            self.repository.release_deletion_lease(
+                run["user_id"], run["_id"], self.worker_id
+            )
+            raise
+        finally:
+            heartbeat.stop()
+        return True
+
+    def _finish_deletion(self, run: dict, heartbeat) -> None:
+        """Purge external and related records before removing the run marker."""
+        from app.trades.service import TradeService
+
+        user_id = str(run["user_id"])
+        run_id = run["_id"]
+        heartbeat.check()
+        self.snapshot_store.remove_run_objects(run["user_id"], run_id)
+        heartbeat.check()
+
+        accounts = list(
+            mongo.db.trade_accounts.find(
+                {
+                    "user_id": run["user_id"],
+                    "workspace_mode": "backtest",
+                    "backtest_run_id": run_id,
+                }
+            )
+        )
+        account_ids = {account["_id"] for account in accounts}
+        if run.get("account_id") is not None:
+            account_id = run["account_id"]
+            account_ids.add(
+                account_id
+                if isinstance(account_id, ObjectId)
+                else ObjectId(str(account_id))
+            )
+
+        trade_service = TradeService()
+        for account_id in sorted(account_ids, key=str):
+            heartbeat.check()
+            trade_service.delete_backtest_account_trades(
+                user_id, account_id, before_each=heartbeat.check
+            )
+        remaining_trade_count = mongo.db.trades.count_documents(
+            {
+                "user_id": run["user_id"],
+                "trade_account_id": {"$in": list(account_ids)},
+            }
+        )
+        if remaining_trade_count:
+            raise RuntimeError(
+                "Backtest run cleanup left linked trades behind."
+            )
+
+        heartbeat.check()
+        completed = self.repository.finish_deletion(
+            run["user_id"],
+            run_id,
+            self.worker_id,
+            now=_as_utc(self.clock()),
+        )
+        if not completed and self.repository.find_owned_run(user_id, run_id):
+            raise LeaseLostError("Backtest deletion lease expired before completion.")
+
     def _process_claimed(self, job: dict, run: dict, heartbeat) -> None:
         run_id = run["_id"]
         user_id = run["user_id"]
@@ -260,6 +398,9 @@ class BacktestWorker:
                 before_write=lambda: self._renew_or_lose(
                     job, run, heartbeat
                 ),
+                after_write=lambda key: self._verify_preparation_write(
+                    job, run, heartbeat, key
+                ),
             )
             next_date = utc_date + timedelta(days=1)
             now = _as_utc(self.clock())
@@ -302,6 +443,9 @@ class BacktestWorker:
             run=run,
             completed_dates=checkpoints,
             before_publish=lambda: self._renew_or_lose(job, run, heartbeat),
+            after_publish=lambda key: self._verify_preparation_write(
+                job, run, heartbeat, key
+            ),
         )
         if not snapshot.get("candle_count"):
             self._renew_or_lose(job, run, heartbeat)
@@ -435,6 +579,20 @@ class BacktestWorker:
         self._renew_leases(
             job["_id"], run["_id"], run["user_id"], self.worker_id
         )
+
+    def _verify_preparation_write(
+        self, job: dict, run: dict, heartbeat, object_key: str
+    ) -> None:
+        """Fence an object PUT that overlapped run deletion or lease loss."""
+        try:
+            self._renew_or_lose(job, run, heartbeat)
+        except LeaseLostError:
+            current = self.repository.find_owned_run(
+                str(run["user_id"]), run["_id"]
+            )
+            if current is None or current.get("status") == "deleting":
+                self.snapshot_store.remove_object(object_key)
+            raise
 
     @staticmethod
     def _date_range(start: date, end: date) -> list[date]:
