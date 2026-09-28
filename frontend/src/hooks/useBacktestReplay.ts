@@ -26,7 +26,10 @@ import {
   createCandleKitControlsAdapter,
   createReplayPositionWriter,
 } from '../utils/backtestReplay';
-import { getBacktestPriceFormat } from '../utils/backtestPriceFormat';
+import {
+  getBacktestPriceFormat,
+  normalizeBacktestCandle,
+} from '../utils/backtestPriceFormat';
 
 export type BacktestReplayStatus = 'loading' | 'ready' | 'error';
 
@@ -55,6 +58,18 @@ function toBar(bar: BacktestAggregatedBar): Bar {
     close: bar.close,
     ...(typeof bar.volume === 'number' ? { volume: bar.volume } : {}),
   };
+}
+
+function toDisplayCandles(
+  run: BacktestRunDetail,
+  candles: readonly BacktestCandle[]
+): BacktestCandle[] {
+  if (!run.blind_mode) return [...candles];
+  const referencePrice = run.normalized_reference_price;
+  if (referencePrice == null || !Number.isFinite(referencePrice) || referencePrice === 0) {
+    throw new Error('This Blind run is missing a valid normalized-price reference.');
+  }
+  return candles.map((candle) => normalizeBacktestCandle(candle, referencePrice));
 }
 
 function isReadyState(state: ReplayState): state is Extract<ReplayState, { status: 'ready' }> {
@@ -171,8 +186,10 @@ export function useBacktestReplay(
 
   const rebuildAtCursor = useCallback((cursorTimeMs: number) => {
     const runDetail = runRef.current;
-    const sourceBars = controller.getBarsUpToCursor(runDetail.instrument, '1m')
-      .map(toCandle);
+    const sourceBars = toDisplayCandles(
+      runDetail,
+      controller.getBarsUpToCursor(runDetail.instrument, '1m').map(toCandle)
+    );
     const cursorIndex = sourceBars.length - 1;
 
     for (const tab of tabsRef.current) {
@@ -192,14 +209,18 @@ export function useBacktestReplay(
   }, [controller]);
 
   const appendAtCursor = useCallback((bar: Bar, cursorTimeMs: number) => {
-    const candle = toCandle(bar);
+    const candle = toDisplayCandles(runRef.current, [toCandle(bar)])[0];
+    if (!candle) return;
     for (const tab of tabsRef.current) {
       const snapshot = snapshotsRef.current.get(tab.id);
       const visibleBars = controller.getBarsUpToCursor(runRef.current.instrument, '1m');
       const bars = snapshot?.intervalMinutes === tab.interval_minutes
         ? appendRevealedCandle(snapshot.bars, candle, tab.interval_minutes)
         : aggregateRevealedCandles(
-          visibleBars.map(toCandle),
+          toDisplayCandles(
+            runRef.current,
+            visibleBars.map(toCandle)
+          ),
           tab.interval_minutes,
           visibleBars.length - 1
         );
@@ -457,14 +478,17 @@ export function useBacktestReplay(
     enqueueCursorSave,
     loadAttempt,
     rebuildAtCursor,
-    run.id,
+    run,
   ]);
 
   useEffect(() => {
     if (status !== 'ready') return;
     const state = controller.getState();
     if (!isReadyState(state)) return;
-    const sourceBars = controller.getBarsUpToCursor(run.instrument, '1m').map(toCandle);
+    const sourceBars = toDisplayCandles(
+      run,
+      controller.getBarsUpToCursor(run.instrument, '1m').map(toCandle)
+    );
     const cursorIndex = sourceBars.length - 1;
 
     for (const tab of tabs) {
@@ -488,7 +512,7 @@ export function useBacktestReplay(
         }
       }
     }
-  }, [controller, run.instrument, status, tabs]);
+  }, [controller, run, run.instrument, status, tabs]);
 
   return {
     controller,

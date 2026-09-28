@@ -9,6 +9,8 @@ interface BacktestChartTabProps {
   instrument: string;
   tab: BacktestChartTabConfig;
   displayTimezone: string;
+  blindMode: boolean;
+  normalizedReferencePrice: number | null;
   cursorTimeMs: number;
   registerDrawingFlusher: (
     tabId: string,
@@ -43,6 +45,8 @@ export function BacktestChartTab({
   instrument,
   tab,
   displayTimezone,
+  blindMode,
+  normalizedReferencePrice,
   cursorTimeMs,
   registerDrawingFlusher,
   onIntervalChange,
@@ -101,6 +105,8 @@ export function BacktestChartTab({
           runId={runId}
           intervalMinutes={tab.interval_minutes}
           displayTimezone={displayTimezone}
+          blindMode={blindMode}
+          normalizedReferencePrice={normalizedReferencePrice}
           cursorTimeMs={cursorTimeMs}
           registerDrawingFlusher={registerDrawingFlusher}
           onChartReady={onChartReady}

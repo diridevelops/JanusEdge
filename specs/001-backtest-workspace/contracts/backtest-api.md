@@ -69,7 +69,21 @@ The manual request above remains unchanged. Random selection instead sends:
 }
 ~~~
 
-The worker chooses eligible years randomly without replacement and probes at most ten distinct random eligible dates per year. A probe fetches the UTC day or days intersecting that local date and accepts a candidate only when a COMB one-minute candle falls inside the exact replay local-day UTC bounds. After ten empty probes, it discards the year and selects another untried eligible year. It does not treat provider errors as empty days. On a hit, it persists the final local dates, creates the one date-labeled account, and enters the normal warm-up/preparation flow. The inclusive end is the day before adding the selected calendar months with month-end clamping. If every year is exhausted, the run/account/job are removed and a dismissible notice identifies the instrument and duration. A start-day hit does not guarantee candles later in the selected period; existing coverage, gap, and readiness rules still apply. The cutoff and attempts remain fixed/durable across worker restart, and deleting a selecting-period run fences account creation.
+The worker chooses eligible years randomly without replacement and probes at most ten distinct random eligible dates per year. A probe fetches the UTC day or days intersecting that local date and accepts a candidate only when a COMB one-minute candle falls inside the exact replay local-day UTC bounds. After ten empty probes, it discards the year and selects another untried eligible year. It does not treat provider errors as empty days. On a hit, it persists the final local dates, creates the one account using FR-009's label rules, and enters the normal warm-up/preparation flow. The inclusive end is the day before adding the selected calendar months with month-end clamping. If every year is exhausted, the run/account/job are removed and a dismissible notice identifies the instrument and duration. A start-day hit does not guarantee candles later in the selected period; existing coverage, gap, and readiness rules still apply. The cutoff and attempts remain fixed/durable across worker restart, and deleting a selecting-period run fences account creation.
+
+Blind mode adds `"blind_mode": true` to a random request:
+
+~~~json
+{
+  "instrument": "EUR-USD",
+  "display_timezone": "Europe/Rome",
+  "period_selection": "random",
+  "period_months": 3,
+  "blind_mode": true
+}
+~~~
+
+`blind_mode` is optional and defaults to false. It is valid only with random selection when true. Omitting it preserves existing manual and random request/response shapes; an explicit false is equivalent to omission. A blind run persists and returns `blind_mode: true`; once its snapshot is ready it also retains the fixed `normalized_reference_price`, equal to the first available replay-period candle's open. Zero or non-finite reference prices fail before readiness through the existing cleanup and dismissible-notice lifecycle. Negative reference prices use the exact `100 × P / referencePrice` mapping.
 
 Accepted response:
 
@@ -94,11 +108,11 @@ Return 202 while preparation continues. Invalid input uses the app’s validatio
 
 ### GET /api/backtest/runs
 
-Returns the authenticated user’s selecting-period, preparing, ready, and deleting runs, newest first. Each list entry includes id, instrument, period selection, nullable selected dates, nullable account label, status, and progress (`stage` plus a percentage when measurable, otherwise null). Until selection resolves, the frontend shows the instrument and selection status without dates or an account. A deleting run is shown as pending cleanup and cannot be opened. The frontend polls this endpoint every five seconds while at least one run is selecting-period, preparing, or deleting and stops when none are. Progress is read from MongoDB state updated by the worker. Failed/no-data records are not retained.
+Returns the authenticated user’s selecting-period, preparing, ready, and deleting runs, newest first. Each list entry includes id, instrument, period selection, nullable selected dates, nullable account label, status, and progress (`stage` plus a percentage when measurable, otherwise null); it includes `blind_mode` for new records, treating a missing value on legacy records as false. Until selection resolves, the frontend shows the instrument and selection status without dates or an account. For blind runs, the frontend omits dates and ranges in every run-list state and the account label contains “blind” without dates. The API continues returning canonical run dates and prices; this is rendered-UI masking, not API redaction. A deleting run is shown as pending cleanup and cannot be opened. The frontend polls this endpoint every five seconds while at least one run is selecting-period, preparing, or deleting and stops when none are. Progress is read from MongoDB state updated by the worker. Failed/no-data records are not retained.
 
 ### GET /api/backtest/runs/{run_id}
 
-Returns the owned run detail, nullable account label/dates while selection is pending, selected replay-period coverage, warm-up coverage, saved cursor, and status. A selecting-period, preparing, or deleting run remains on the list page and has no playable chart detail. When the run becomes ready, its persisted cursor is initialized to the snapshot index and timestamp of the first available candle at or after the selected replay start; this index can be greater than zero because the snapshot includes warm-up candles. Readiness requires at least one candle in the selected replay period. Chart workspace state is loaded through the dedicated chart-workspace routes below.
+Returns the owned run detail, nullable account label/dates while selection is pending, selected replay-period coverage, warm-up coverage, saved cursor, `blind_mode`, `normalized_reference_price` (for ready blind runs), and status. A selecting-period, preparing, or deleting run remains on the list page and has no playable chart detail. When the run becomes ready, its persisted cursor is initialized to the snapshot index and timestamp of the first available candle at or after the selected replay start; this index can be greater than zero because the snapshot includes warm-up candles. Readiness requires at least one candle in the selected replay period. The frontend uses the fixed reference for blind chart display, hides complete dates/raw prices, and formats all displayed replay times, including the current cursor timestamp, as local weekday/time; source candle responses remain canonical. Chart workspace state is loaded through the dedicated chart-workspace routes below.
 
 ### DELETE /api/backtest/runs/{run_id}
 
@@ -225,7 +239,7 @@ The frontend adapter exposes the following CandleKit source operations through t
 
 ### GET /api/backtest/runs/{run_id}/candle-dates?before={utc_date}&after={utc_date}
 
-Returns the sorted UTC dates that contain one or more candles in the immutable snapshot, including the preceding warm-up period. This supports CandleKit’s day-oriented listDatesBefore/listDatesAfter behavior. Dates with no data are omitted and are not replaced by synthetic candles. The snapshot's selected replay start remains separately identified by the run detail and replay-start index.
+Returns the sorted UTC dates that contain one or more candles in the immutable snapshot, including the preceding warm-up period. This supports CandleKit’s day-oriented listDatesBefore/listDatesAfter behavior. Dates with no data are omitted and are not replaced by synthetic candles. The snapshot's selected replay start remains separately identified by the run detail and replay-start index. Dates remain canonical in this API for blind runs; the UI must not render them as calendar-date labels.
 
 Example response:
 
@@ -237,7 +251,7 @@ Example response:
 
 ### GET /api/backtest/runs/{run_id}/candles?date={utc_date}
 
-Returns one UTC day of the run’s one-minute snapshot. An empty array is valid for a requested date with no candles. A date outside `[context_start_utc_ms, end_utc_ms)` returns validation/not-found according to the existing API error convention. This source data includes warm-up candles; the frontend may display candles before the replay cursor as historical context, but MUST filter replay-period candles after the current cursor.
+Returns one UTC day of the run’s one-minute snapshot with canonical timestamps and prices. An empty array is valid for a requested date with no candles. A date outside `[context_start_utc_ms, end_utc_ms)` returns validation/not-found according to the existing API error convention. This source data includes warm-up candles; the frontend may display candles before the replay cursor as historical context, but MUST filter replay-period candles after the current cursor. For blind runs, normalize values before display and never render the raw timestamps/prices; API-level redaction is not part of this contract.
 
 Example response:
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import random
 import threading
@@ -611,6 +612,7 @@ class BacktestWorker:
                 instrument=resolved_run["instrument"],
                 start_date=start_date,
                 end_date=end_date,
+                blind_mode=bool(resolved_run.get("blind_mode", False)),
             )
             mongo.db.trade_accounts.insert_one(account)
 
@@ -770,6 +772,37 @@ class BacktestWorker:
             self._finish_outcome(run, terminal_job, heartbeat)
             return
 
+        normalization_reference = snapshot.pop(
+            "_normalization_reference_price", None
+        )
+        if run.get("blind_mode"):
+            valid_reference = (
+                isinstance(normalization_reference, (int, float))
+                and not isinstance(normalization_reference, bool)
+                and math.isfinite(float(normalization_reference))
+                and float(normalization_reference) != 0
+            )
+            if not valid_reference:
+                self._renew_or_lose(job, run, heartbeat)
+                terminal_job = self.job_repository.mark_terminal(
+                    job["_id"],
+                    self.worker_id,
+                    now=_as_utc(self.clock()),
+                    outcome="failed",
+                    error_type="InvalidNormalizationReference",
+                    terminal_message=(
+                        "Blind mode could not normalize this run because the "
+                        "first replay-period candle has a zero or non-finite "
+                        "opening price."
+                    ),
+                )
+                if terminal_job is None:
+                    raise LeaseLostError(
+                        "Preparation lease expired before normalization failure cleanup."
+                    )
+                self._finish_outcome(run, terminal_job, heartbeat)
+                return
+
         self._renew_or_lose(job, run, heartbeat)
         ready = self.repository.mark_ready(
             user_id_text,
@@ -779,6 +812,11 @@ class BacktestWorker:
             warmup_coverage=snapshot["warmup_coverage"],
             replay_start_source_index=snapshot["replay_start_source_index"],
             first_time_ms=snapshot["replay_start_time_ms"],
+            normalized_reference_price=(
+                float(normalization_reference)
+                if run.get("blind_mode")
+                else None
+            ),
             worker_id=self.worker_id,
             now=_as_utc(self.clock()),
         )
@@ -858,6 +896,9 @@ class BacktestWorker:
                     run.get("period_months")
                     if run
                     else (job.get("selection") or {}).get("period_months")
+                ),
+                "blind_mode": bool(
+                    (run or {}).get("blind_mode", job.get("blind_mode", False))
                 ),
                 "outcome": "no_data" if no_data else "failed",
                 "next_action": (

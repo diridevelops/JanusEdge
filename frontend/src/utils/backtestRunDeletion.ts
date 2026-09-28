@@ -6,9 +6,11 @@ export function getBacktestRunDeletionConfirmation(
 ): string {
   return [
     `Permanently delete the ${run.instrument} Backtest run?`,
-    run.requested_start_date && run.requested_end_date
+    !run.blind_mode && run.requested_start_date && run.requested_end_date
       ? `Selected range: ${run.requested_start_date} through ${run.requested_end_date}.`
-      : `Period: random ${run.period_months ?? ''}-month selection is still pending.`,
+      : run.blind_mode
+        ? `Period: blind random ${run.period_months ?? ''}-month selection.`
+        : `Period: random ${run.period_months ?? ''}-month selection is still pending.`,
     run.account_id
       ? `Dedicated account: ${run.account_label || run.account_id}.`
       : 'The run does not have an associated account yet.',

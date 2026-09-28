@@ -38,6 +38,7 @@ def create_backtest_run_doc(
     start_utc_ms: int,
     end_utc_ms: int,
     context_start_utc_ms: int,
+    blind_mode: bool = False,
 ) -> dict[str, Any]:
     """Build a preparing run document with stable source semantics."""
     now = utc_now()
@@ -58,6 +59,8 @@ def create_backtest_run_doc(
         "volume_semantics": VOLUME_SEMANTICS,
         "period_selection": "manual",
         "period_months": None,
+        "blind_mode": blind_mode,
+        "normalized_reference_price": None,
         "status": "preparing",
         "progress": {"stage": "downloading", "percent": None},
         "account_id": account_id,
@@ -80,6 +83,7 @@ def create_selecting_period_run_doc(
     display_timezone: str,
     period_months: int,
     selection_as_of_date: date,
+    blind_mode: bool = False,
 ) -> dict[str, Any]:
     """Build a run that has no selected dates or account yet."""
     now = utc_now()
@@ -100,6 +104,8 @@ def create_selecting_period_run_doc(
         "volume_semantics": VOLUME_SEMANTICS,
         "period_selection": "random",
         "period_months": period_months,
+        "blind_mode": blind_mode,
+        "normalized_reference_price": None,
         "selection_as_of_date": selection_as_of_date.isoformat(),
         "status": "selecting_period",
         "progress": {"stage": "selecting_period", "percent": None},
@@ -166,6 +172,7 @@ def create_random_selection_job_doc(
     minimum_start_date: date,
     maximum_start_date: date,
     staging_prefix: str,
+    blind_mode: bool = False,
 ) -> dict[str, Any]:
     """Build a durable selection job with a fixed cutoff and recovery state."""
     now = utc_now()
@@ -185,6 +192,7 @@ def create_random_selection_job_doc(
         "next_utc_date": None,
         "end_utc_date": None,
         "staging_prefix": staging_prefix,
+        "blind_mode": blind_mode,
         "selection": {
             "status": "searching",
             "as_of_date": as_of_date.isoformat(),
@@ -239,7 +247,17 @@ def serialize_backtest_value(value):
 def serialize_run(run: dict, account: dict | None = None) -> dict:
     """Serialize a run and its account label for the public API."""
     result = serialize_backtest_value(run)
-    if account is not None:
+    result.setdefault("blind_mode", bool(run.get("blind_mode", False)))
+    result.setdefault("normalized_reference_price", None)
+    if result["blind_mode"]:
+        # Older linked accounts may still have a date-bearing persisted label.
+        run_id = result.get("id", run.get("_id"))
+        result["account_label"] = (
+            f"Backtest {result['instrument']} blind ({run_id})"
+            if run_id is not None
+            else f"Backtest {result['instrument']} blind"
+        )
+    elif account is not None:
         result["account_label"] = account.get("display_name") or account.get(
             "account_name"
         )

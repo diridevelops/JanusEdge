@@ -17,6 +17,12 @@ const run: BacktestRunSummary = {
   created_at: '2026-01-01T00:00:00Z',
 };
 
+const blindRun: BacktestRunSummary = {
+  ...run,
+  blind_mode: true,
+  account_label: 'Backtest EUR-USD blind',
+};
+
 describe('Backtest run deletion controls', () => {
   it('asks for explicit confirmation with the run, account, and trade scope', () => {
     let confirmationText = '';
@@ -173,5 +179,86 @@ describe('Backtest run deletion controls', () => {
     expect(html).toContain('role="alert"');
     expect(html).toContain('Could not load Backtest runs');
     expect(html).toContain('Refresh');
+  });
+});
+
+describe('Blind Backtest run display', () => {
+  it('omits dates from blind run deletion confirmation', () => {
+    let confirmationText = '';
+    confirmBacktestRunDeletion(blindRun, (message) => {
+      confirmationText = message;
+      return false;
+    });
+
+    expect(confirmationText).toContain('EUR-USD');
+    expect(confirmationText).not.toContain('2026-01-05');
+    expect(confirmationText).not.toContain('2026-01-06');
+  });
+
+  it('hides legacy dates in blind account labels', () => {
+    const legacyBlindRun = {
+      ...blindRun,
+      account_label: 'Backtest EUR-USD 2026-01-05 to 2026-01-06 (old-account-id)',
+    };
+    const html = renderToStaticMarkup(
+      <BacktestRunList
+        runs={[legacyBlindRun]}
+        notices={[]}
+        isLoading={false}
+        loadError={null}
+        retryingRunId={null}
+        deletingRunId={null}
+        dismissingNoticeId={null}
+        onCreateRun={() => undefined}
+        onRefresh={() => undefined}
+        onOpenRun={() => undefined}
+        onRetryRun={() => undefined}
+        onDeleteRun={() => undefined}
+        onNoticeAction={() => undefined}
+        onDismissNotice={() => undefined}
+      />
+    );
+
+    expect(html).toContain('Backtest EUR-USD blind');
+    expect(html).not.toContain('2026-01-05');
+    expect(html).not.toContain('2026-01-06');
+    expect(html).not.toContain('old-account-id');
+  });
+
+  it('hides blind dates in dismissible preparation notices', () => {
+    const html = renderToStaticMarkup(
+      <BacktestRunList
+        runs={[]}
+        notices={[{
+          id: 'blind-notice',
+          instrument: 'EUR-USD',
+          requested_start_date: '2026-01-05',
+          requested_end_date: '2026-01-06',
+          blind_mode: true,
+          period_selection: 'random',
+          period_months: 1,
+          outcome: 'failed',
+          next_action: 'start_new_run',
+          message: 'Preparation failed.',
+          created_at: '2026-01-07T00:00:00Z',
+        }]}
+        isLoading={false}
+        loadError={null}
+        retryingRunId={null}
+        deletingRunId={null}
+        dismissingNoticeId={null}
+        onCreateRun={() => undefined}
+        onRefresh={() => undefined}
+        onOpenRun={() => undefined}
+        onRetryRun={() => undefined}
+        onDeleteRun={() => undefined}
+        onNoticeAction={() => undefined}
+        onDismissNotice={() => undefined}
+      />
+    );
+
+    expect(html).toContain('EUR-USD');
+    expect(html).not.toContain('2026-01-05');
+    expect(html).not.toContain('2026-01-06');
   });
 });

@@ -69,6 +69,34 @@ class BacktestRepository(BaseRepository):
         )
         return result.matched_count == 1
 
+    def set_missing_blind_reference(
+        self, user_id: str, run_id, reference_price: float
+    ) -> bool:
+        """Backfill a legacy blind run without replacing an established value."""
+        run_oid = _object_id(run_id)
+        user_oid = _object_id(user_id)
+        if run_oid is None or user_oid is None:
+            return False
+        result = self.collection.update_one(
+            {
+                "_id": run_oid,
+                "user_id": user_oid,
+                "status": "ready",
+                "blind_mode": True,
+                "$or": [
+                    {"normalized_reference_price": None},
+                    {"normalized_reference_price": {"$exists": False}},
+                ],
+            },
+            {
+                "$set": {
+                    "normalized_reference_price": reference_price,
+                    "updated_at": utc_now(),
+                }
+            },
+        )
+        return result.modified_count == 1
+
     def request_deletion(self, user_id: str, run_id, *, now) -> dict | None:
         """Atomically turn an owned pending/ready run into a cleanup marker."""
         run_oid = _object_id(run_id)
@@ -319,6 +347,7 @@ class BacktestRepository(BaseRepository):
         warmup_coverage: dict,
         replay_start_source_index: int,
         first_time_ms: int,
+        normalized_reference_price: float | None = None,
         worker_id: str,
         now,
     ) -> bool:
@@ -340,6 +369,7 @@ class BacktestRepository(BaseRepository):
                     "snapshot": snapshot,
                     "coverage": coverage,
                     "warmup_coverage": warmup_coverage,
+                    "normalized_reference_price": normalized_reference_price,
                     "status": "ready",
                     "progress": {"stage": "complete", "percent": 100},
                     "replay_cursor": {

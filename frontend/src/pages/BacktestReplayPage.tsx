@@ -101,6 +101,24 @@ export function BacktestReplayPage() {
     );
   }
 
+  if (run.blind_mode && (
+    run.normalized_reference_price == null
+    || !Number.isFinite(run.normalized_reference_price)
+    || run.normalized_reference_price === 0
+  )) {
+    return (
+      <section className="mx-auto max-w-3xl rounded-xl border border-red-200 bg-white p-6 dark:border-red-900 dark:bg-gray-900">
+        <h1 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Replay unavailable</h1>
+        <p className="mt-2 text-sm text-red-700 dark:text-red-300" role="alert">
+          This Blind run is missing a valid normalized-price reference.
+        </p>
+        <Link to="/backtest/runs" className="mt-4 inline-flex rounded-md px-3 py-2 text-sm text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800">
+          Back to runs
+        </Link>
+      </section>
+    );
+  }
+
   return <BacktestReplayRunView key={run.id} run={run} />;
 }
 
@@ -292,6 +310,7 @@ function BacktestReplayWorkspaceRun({
           <BacktestReplayControls
             controller={replay.controlsController}
             displayTimezone={timezone}
+            blindMode={Boolean(run.blind_mode)}
           />
         </>
       )}

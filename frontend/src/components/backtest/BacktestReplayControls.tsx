@@ -1,41 +1,29 @@
+import { useMemo } from 'react';
 import { ReplayControls, type ReplayController } from '@getcandlekit/charts/react';
+import { createBacktestTimeFormatters } from '../../utils/backtestTimeFormat';
 
 interface BacktestReplayControlsProps {
   controller: ReplayController;
   displayTimezone: string;
-}
-
-function createTimeFormatter(timezone: string) {
-  return (timeMs: number) => {
-    try {
-      return new Intl.DateTimeFormat(undefined, {
-        timeZone: timezone || 'UTC',
-        year: 'numeric',
-        month: 'short',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hourCycle: 'h23',
-        timeZoneName: 'short',
-      }).format(new Date(timeMs));
-    } catch {
-      return new Date(timeMs).toISOString();
-    }
-  };
+  blindMode: boolean;
 }
 
 /** Keep CandleKit's transport and seek controls, restricting speed choices to the product rates. */
 export function BacktestReplayControls({
   controller,
   displayTimezone,
+  blindMode,
 }: BacktestReplayControlsProps) {
+  const formatTime = useMemo(() => {
+    const formatter = createBacktestTimeFormatters(displayTimezone, blindMode);
+    return (timeMs: number) => formatter.timeFormatter(timeMs / 1_000);
+  }, [blindMode, displayTimezone]);
   return (
     <div className="backtest-replay-controls">
       <ReplayControls
         controller={controller}
         speeds={[1, 5, 20]}
-        formatTime={createTimeFormatter(displayTimezone)}
+        formatTime={formatTime}
         showProgress
         className="ck-replay backtest-candlekit-replay"
       />

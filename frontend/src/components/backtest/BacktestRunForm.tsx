@@ -16,6 +16,7 @@ export interface BacktestRunFormValues {
   endDate: string;
   periodSelection: 'manual' | 'random';
   periodMonths: BacktestRandomPeriodMonths;
+  blindMode: boolean;
 }
 
 interface BacktestRunFormProps {
@@ -57,6 +58,7 @@ export function BacktestRunForm({
   const [periodMonths, setPeriodMonths] = useState<BacktestRandomPeriodMonths>(
     initialValues?.periodMonths ?? 1
   );
+  const [blindMode, setBlindMode] = useState(initialValues?.blindMode ?? false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -95,7 +97,7 @@ export function BacktestRunForm({
     () => getLatestAllowedBacktestEndDate(startDate),
     [startDate]
   );
-  const isRandomSelection = periodSelection === 'random';
+  const isRandomSelection = blindMode || periodSelection === 'random';
   const rangeError = !isRandomSelection && startDate && endDate
     ? getBacktestDateRangeError(startDate, endDate)
     : null;
@@ -129,6 +131,7 @@ export function BacktestRunForm({
           endDate,
           periodSelection,
           periodMonths,
+          blindMode,
         }, displayTimezone)
       );
       await onCreated(run);
@@ -193,12 +196,12 @@ export function BacktestRunForm({
           </label>
           <select
             id="backtest-period-selection"
-            value={periodSelection}
+            value={blindMode ? 'random' : periodSelection}
             onChange={(event) => {
               setPeriodSelection(event.target.value as 'manual' | 'random');
               setFormError(null);
             }}
-            disabled={isSubmitting}
+            disabled={isSubmitting || blindMode}
             className="input-field"
           >
             <option value="manual">Choose dates</option>
@@ -225,6 +228,22 @@ export function BacktestRunForm({
           </div>
         )}
       </div>
+
+      <label className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300">
+        <input
+          type="checkbox"
+          checked={blindMode}
+          onChange={(event) => {
+            const enabled = event.target.checked;
+            setBlindMode(enabled);
+            if (enabled) setPeriodSelection('random');
+            setFormError(null);
+          }}
+          disabled={isSubmitting}
+          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+        />
+        Blind mode
+      </label>
 
       <div className="grid gap-4 sm:grid-cols-2">
         <div>

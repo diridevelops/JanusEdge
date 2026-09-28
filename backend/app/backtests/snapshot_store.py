@@ -178,6 +178,13 @@ class SnapshotStore:
             "context_start_utc_ms": context_start_ms,
             "replay_start_source_index": replay_start_source_index,
             "replay_start_time_ms": replay_start_time_ms,
+            # The worker consumes this internal handoff before persisting the
+            # public snapshot metadata or serializing the run response.
+            "_normalization_reference_price": (
+                float(replay_frame.iloc[0]["open"])
+                if not replay_frame.empty
+                else None
+            ),
             "replay_period_candle_count": len(replay_frame.index),
             "warmup_coverage": warmup_coverage,
             "first_time_ms": time_values[0],

@@ -8,11 +8,11 @@ description: "Implementation backlog for the dockable Backtest chart workspace"
 
 **Prerequisites**: `plan.md` and `spec.md` are available. The project constitution remains an unratified Spec Kit placeholder and defines no project gates.
 
-**Scope**: This backlog carries forward implementation already recorded as complete and includes the replay chart follow-mode, chart-workspace UI refinements, run deletion, the one-month warm-up-history delta, and random replay-period selection. It does not repeat the Real/Backtest separation, original run preparation, core replay transport, account integration, or initial drawing integration tasks. The old flat chart-tabs task is superseded by the dockable workspace work in User Story 3. These carry-forward notes reflect the prior task ledger, not a new code audit.
+**Scope**: This backlog carries forward implementation already recorded as complete and includes the replay chart follow-mode, chart-workspace UI refinements, run deletion, the one-month warm-up-history delta, random replay-period selection, and the Blind mode delta. It does not repeat the Real/Backtest separation, original run preparation, core replay transport, account integration, or initial drawing integration tasks. The old flat chart-tabs task is superseded by the dockable workspace work in User Story 3. These carry-forward notes reflect the prior task ledger, not a new code audit.
 
-**Tests**: Focused backend and frontend tests for the versioned workspace contract, migration, panel lifecycle, run deletion, warm-up history, and random period selection are recorded below. The full quickstart UI/browser scenario task remains open until those end-to-end scenarios have been run.
+**Tests**: Focused backend and frontend tests for the versioned workspace contract, migration, panel lifecycle, run deletion, warm-up history, random period selection, and Blind mode are recorded below. The full quickstart UI/browser scenario task remains open until those end-to-end scenarios have been run.
 
-**Organization**: Preserve existing story phases and task statuses, then add the follow-mode enhancement, chart UI refinement, run-deletion story, and warm-up-history delta after the carried-forward backlog. User Stories 1, 2, and 4 have no new tasks for their original scope because their work is recorded as complete in the prior task list.
+**Organization**: Preserve existing story phases and task statuses, then add the follow-mode enhancement, chart UI refinement, run-deletion story, warm-up-history delta, random-period selection, and Blind mode after the carried-forward backlog. User Stories 1, 2, and 4 have no new tasks for their original scope because their work is recorded as complete in the prior task list.
 
 **Format**: `- [ ] T### [P?] [US#?] Description with file path`
 
@@ -221,6 +221,30 @@ No new tasks in this plan delta; the prior task list records this story's implem
 
 **Checkpoint**: Manual runs retain their request and preparation behavior. Random runs remain date/account-free while searching, resume from persisted attempts, either resolve into normal warm-up/preparation or emit a dismissible duration-aware failure, and are fenced by deletion.
 
+---
+
+## Phase 15: User Story 8 - Create and replay a blind run (Priority: P1)
+
+**Goal**: Let users replay a random period without rendered calendar dates or raw prices, using a stable normalized price reference while retaining canonical data for replay.
+
+**Independent Test**: Verify the blind form contract, blind account label and date suppression, normalized chart values anchored to the first replay candle, timezone-aware weekday/time labels, invalid-reference failure, and unchanged non-blind request/display behavior. Trade recording remains unavailable.
+
+### Specification
+
+- [X] T040 [US8] Update the normative feature requirements, architecture, data model, API contract, research decisions, implementation backlog, and quickstart with Blind mode behavior and future Journal masking rules in `specs/001-backtest-workspace/spec.md`, `plan.md`, `data-model.md`, `contracts/backtest-api.md`, `research.md`, `tasks.md`, and `quickstart.md`.
+
+### Tests
+
+- [X] T041 [US8] Add backend tests for optional `blind_mode`, its random-selection requirement, legacy/default false behavior, blind account labels without dates, persistence of the normalized reference from the first replay-period candle, and zero/non-finite reference failure before readiness in `backend/tests/test_backtests/test_blind_mode.py` and `backend/tests/test_backtests/test_backtest_routes.py`.
+- [X] T042 [US8] Add frontend tests for the unchecked checkbox, forced/locked random selection, unlock on uncheck, preserved request shapes, blind date suppression, normalized OHLC/price-coordinate rendering, and weekday/time formatting for the replay cursor, axes, and crosshair in `frontend/src/components/backtest/BacktestRunForm.test.tsx`, `frontend/src/components/backtest/BacktestRunList.test.tsx`, and focused backtest price/time utility tests.
+
+### Implementation
+
+- [X] T043 [US8] Persist the immutable run blind flag and normalized reference, require random selection for blind requests, set the reference from the first available replay-period candle before ready, fail clearly for zero/non-finite references, and generate date-free “blind” account labels with collision suffixes in the Backtest schemas, service, repository, worker, and API response.
+- [X] T044 [US8] Add the Blind mode form behavior and render-only privacy transformation. Hide full dates and raw prices throughout blind run/list/notice/account/chart surfaces; format replay cursor timestamps, chart ticks, and tooltips as configured-timezone weekday/time; apply the fixed `100 × P / referencePrice` scale to replay and warm-up OHLC, labels, and drawings in `frontend/src/components/backtest/BacktestRunForm.tsx`, `frontend/src/components/backtest/BacktestRunList.tsx`, `frontend/src/pages/BacktestRunListPage.tsx`, `frontend/src/pages/BacktestReplayPage.tsx`, and the Backtest chart/time/price utilities. Do not add trade entry or recording.
+
+**Checkpoint**: Blind runs always use the existing random-selection lifecycle; canonical data remains unchanged, rendered surfaces reveal no full dates or raw prices, and trade capture remains deferred with its future Journal display requirement specified in FR-040.
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -238,6 +262,7 @@ No new tasks in this plan delta; the prior task list records this story's implem
 - **Warm-up preparation (Phase 12)**: T026 validates date-window and selected-period readiness behavior before T027 implements it.
 - **Warm-up replay (Phase 13)**: T028 and T029 tests can be authored in parallel. T030 depends on the replay-start index produced by T027 and validated by T028. T031 depends on the backend response/cursor contract in T030 and the frontend behavior tests in T029.
 - **US7 random period selection (Phase 14)**: T035 and T036 establish backend and frontend contracts before T037-T038. T037 persists worker selection and resolves the run before account creation; T038 consumes the pending and resolved states. T039 captures the shipped behavior in the design and validation artifacts.
+- **US8 Blind mode (Phase 15)**: T041 and T042 establish backend and frontend contracts independently. T043 persists and validates run-level privacy/normalization metadata. T044 consumes that metadata to force random selection and apply the display transformation; it depends on the response and reference contract from T043. T040 records the agreed requirements and is complete before implementation begins.
 
 ### User Story Dependencies
 
@@ -248,6 +273,7 @@ No new tasks in this plan delta; the prior task list records this story's implem
 - **US4 (P2)**: Previously delivered; no new tasks.
 - **US5 (P2)**: Starts after US3 panel moves are implemented.
 - **US6 (P1)**: Extends the existing US2 run and US4 account relationship; independent of chart layout and drawing behavior. It does not add trade creation or order entry.
+- **US8 (P1)**: Extends the existing random-selection run flow and replay chart; it does not add trade creation, order entry, or Journal persistence.
 - **US2 warm-up delta (Phase 12)**: Extends the delivered run preparation; T026 precedes T027.
 - **US3 warm-up delta (Phase 13)**: Extends the delivered replay controller; T028-T029 precede T030-T031, with the frontend implementation consuming the persisted cursor boundary from the backend contract.
 
@@ -258,6 +284,7 @@ No new tasks in this plan delta; the prior task list records this story's implem
 - Within US5, complete T011 before T012; backend tests and frontend tests from US3 can run independently.
 - T026, T028, and T029 target separate backend or frontend test files and can be authored in parallel; implementation must wait for its corresponding tests.
 - T035 and T036 target separate backend and frontend test files and can be authored independently; implementation must wait for both contract test sets.
+- T041 and T042 target separate backend and frontend test files and can be authored independently; each implementation task waits for its corresponding blind-mode tests.
 
 ## Parallel Example: User Story 3
 
@@ -278,10 +305,11 @@ Task: T004 frontend workspace bootstrap and legacy conversion tests in frontend/
 6. Complete User Story 6 before enabling any future Backtest trade-recording flow, so a run's dedicated account cannot outlive its run.
 7. Implement the warm-up history extension after tests define its calendar-date boundary, partial-availability behavior, and separation from replay-eligible candles.
 8. Implement random selection as a persisted worker phase before normal preparation; keep the manual request path unchanged and create the account only after a candle-bearing start date is found.
+9. Implement Blind mode on top of the random path after backend and frontend tests define request compatibility, date masking, reference-price failure behavior, and normalized chart presentation. Keep API redaction and trade entry out of scope.
 
 ## Notes
 
-- This list contains implementation and validation work; T039 is the explicit documentation update for the random-period feature.
+- This list contains implementation and validation work; T039 and T040 are the explicit documentation updates for random-period selection and Blind mode respectively.
 - All generated task IDs are sequential. `[P]` is used only where the tasks can work on separate files without waiting for unfinished implementation.
 - The previous task T034 for flat `/chart-tabs` persistence is superseded by T003-T010; do not implement a second flat layout source of truth.
 - T014 covers the full quickstart UI/browser validation matrix and remains unchecked because that complete matrix was not run as part of the current source and documentation update.

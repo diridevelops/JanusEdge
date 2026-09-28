@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import calendar
 import json
+import math
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -119,12 +120,16 @@ def _latest_random_start(as_of_date: date, period_months: int) -> date:
 def _build_backtest_account_document(
     *, user_id: ObjectId, run_id: ObjectId, account_id: ObjectId,
     instrument: str, start_date: date, end_date: date,
+    blind_mode: bool = False,
 ) -> dict:
-    """Build the single date-labeled account associated with a selected run."""
-    account_label = (
-        f"Backtest {instrument} {start_date.isoformat()} to "
-        f"{end_date.isoformat()} ({run_id})"
-    )
+    """Build the run's unique account label without dates when blind."""
+    if blind_mode:
+        account_label = f"Backtest {instrument} blind ({run_id})"
+    else:
+        account_label = (
+            f"Backtest {instrument} {start_date.isoformat()} to "
+            f"{end_date.isoformat()} ({run_id})"
+        )
     account = create_trade_account_doc(
         user_id=user_id,
         account_name=account_label,
@@ -208,6 +213,7 @@ class BacktestService:
         display_timezone: str,
         period_selection: str | None = None,
         period_months: int | None = None,
+        blind_mode: bool | None = None,
     ) -> dict:
         """Validate and create one run, Backtest account, and durable job."""
         user_oid = _object_id(user_id)
@@ -233,6 +239,9 @@ class BacktestService:
                 "Display timezone must be a valid IANA timezone."
             ) from exc
 
+        if blind_mode is not None and not isinstance(blind_mode, bool):
+            raise ValidationError("blind_mode must be a boolean when provided.")
+        blind_mode = blind_mode is True
         selection = period_selection or "manual"
         if selection == "random":
             if (
@@ -253,9 +262,12 @@ class BacktestService:
                 display_timezone=display_timezone,
                 timezone_info=timezone_info,
                 period_months=period_months,
+                blind_mode=blind_mode,
             )
         if selection != "manual":
             raise ValidationError("period_selection must be 'random' when provided.")
+        if blind_mode:
+            raise ValidationError("Blind mode requires random period selection.")
         if period_months is not None:
             raise ValidationError(
                 "period_months is only supported for random period selection."
@@ -292,6 +304,7 @@ class BacktestService:
             instrument=instrument,
             start_date=start,
             end_date=end,
+            blind_mode=blind_mode,
         )
         account_label = account["display_name"]
         run = create_backtest_run_doc(
@@ -306,6 +319,7 @@ class BacktestService:
             start_utc_ms=start_utc_ms,
             end_utc_ms=end_utc_ms,
             context_start_utc_ms=context_start_utc_ms,
+            blind_mode=blind_mode,
         )
         staging_prefix = f"backtests/{user_oid}/{run_id}/staging/"
         job = self.preparation_jobs.build_for_run(
@@ -355,6 +369,7 @@ class BacktestService:
             "start_utc_ms": start_utc_ms,
             "context_start_utc_ms": context_start_utc_ms,
             "end_utc_ms": end_utc_ms,
+            "blind_mode": blind_mode,
         }
 
     def _create_random_run(
@@ -365,6 +380,7 @@ class BacktestService:
         display_timezone: str,
         timezone_info: ZoneInfo,
         period_months: int,
+        blind_mode: bool = False,
     ) -> dict:
         """Create a pending run whose dates and account await worker selection."""
         now = self.clock()
@@ -388,6 +404,7 @@ class BacktestService:
             display_timezone=display_timezone,
             period_months=period_months,
             selection_as_of_date=as_of_date,
+            blind_mode=blind_mode,
         )
         job = self.preparation_jobs.build_for_random_selection(
             job_id=job_id,
@@ -399,6 +416,7 @@ class BacktestService:
             minimum_start_date=minimum_start_date,
             maximum_start_date=maximum_start_date,
             staging_prefix=f"backtests/{user_oid}/{run_id}/staging/",
+            blind_mode=blind_mode,
         )
 
         inserted_run = False
@@ -419,6 +437,7 @@ class BacktestService:
             "display_timezone": display_timezone,
             "period_selection": "random",
             "period_months": period_months,
+            "blind_mode": blind_mode,
             "status": "selecting_period",
             "account_id": None,
             "account_label": None,
@@ -482,6 +501,7 @@ class BacktestService:
         run = self.repository.find_owned_run(user_id, run_id)
         if run is None:
             raise NotFoundError("Backtest run not found.")
+        self._backfill_blind_reference(run, user_id)
         from app.backtests.schemas import serialize_run
 
         account_id = run.get("account_id")
@@ -504,6 +524,37 @@ class BacktestService:
                 for tab in self.repository.list_chart_tabs(user_id, run["_id"])
             ]
         return result
+
+    def _backfill_blind_reference(self, run: dict, user_id: str) -> None:
+        """Recover the immutable chart reference for legacy ready blind runs."""
+        if (
+            not run.get("blind_mode")
+            or run.get("status") != "ready"
+            or run.get("normalized_reference_price") is not None
+        ):
+            return
+        snapshot = run.get("snapshot") or {}
+        object_key = snapshot.get("object_key")
+        if not object_key or run.get("start_utc_ms") is None:
+            return
+
+        frame = self.snapshot_store.read_snapshot(object_key)
+        replay_frame = frame[frame["time_ms"] >= int(run["start_utc_ms"])]
+        if replay_frame.empty:
+            return
+        reference_price = float(replay_frame.iloc[0]["open"])
+        if not math.isfinite(reference_price) or reference_price == 0:
+            return
+        if self.repository.set_missing_blind_reference(
+            user_id, run["_id"], reference_price
+        ):
+            run["normalized_reference_price"] = reference_price
+            return
+        current = self.repository.find_owned_run(user_id, run["_id"])
+        if current and current.get("normalized_reference_price") is not None:
+            run["normalized_reference_price"] = current[
+                "normalized_reference_price"
+            ]
 
     def get_available_candle_dates(
         self,

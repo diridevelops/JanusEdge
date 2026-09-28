@@ -23,6 +23,7 @@ export type CreateBacktestRunRequest = CreateManualBacktestRunRequest | {
   display_timezone: string;
   period_selection: 'random';
   period_months: BacktestRandomPeriodMonths;
+  blind_mode?: true;
 };
 
 export type BacktestRunStatus = 'selecting_period' | 'preparing' | 'ready' | 'deleting';
@@ -58,6 +59,8 @@ export interface BacktestRunSummary {
   display_timezone: string;
   period_selection?: BacktestPeriodSelection;
   period_months?: BacktestRandomPeriodMonths | null;
+  blind_mode?: boolean;
+  normalized_reference_price?: number | null;
   status: BacktestRunStatus;
   account_id: string | null;
   account_label: string | null;
@@ -145,6 +148,7 @@ export interface BacktestPreparationNotice {
   requested_end_date: string | null;
   period_selection?: BacktestPeriodSelection;
   period_months?: BacktestRandomPeriodMonths | null;
+  blind_mode?: boolean;
   outcome: BacktestPreparationOutcome;
   next_action: BacktestPreparationNextAction;
   message?: string;

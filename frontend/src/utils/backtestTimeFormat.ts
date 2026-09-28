@@ -1,18 +1,20 @@
 import {
   TickMarkType,
   type Time,
-  type TimeFormatterFn,
-  type TickMarkFormatter,
 } from 'lightweight-charts';
 
 type DateFormatStyle = 'year' | 'month' | 'day' | 'time' | 'timeWithSeconds' | 'tooltip';
 
 export interface BacktestTimeFormatters {
-  timeFormatter: TimeFormatterFn;
-  tickMarkFormatter: TickMarkFormatter;
+  timeFormatter: (time: Time | number) => string;
+  tickMarkFormatter: (
+    time: Time | number,
+    tickMarkType: TickMarkType,
+    locale?: string
+  ) => string | null;
 }
 
-function toEpochMilliseconds(time: Time): number | null {
+function toEpochMilliseconds(time: Time | number): number | null {
   if (typeof time === 'number') {
     const timeMs = time * 1_000;
     return Number.isFinite(timeMs) ? timeMs : null;
@@ -56,7 +58,10 @@ function getDateFormatOptions(style: DateFormatStyle): Intl.DateTimeFormatOption
 }
 
 /** Format chart time labels in the run's IANA timezone without shifting UTC data. */
-export function createBacktestTimeFormatters(timezone: string): BacktestTimeFormatters {
+export function createBacktestTimeFormatters(
+  timezone: string,
+  blindMode = false
+): BacktestTimeFormatters {
   let displayTimezone = timezone.trim() || 'UTC';
   try {
     new Intl.DateTimeFormat(undefined, { timeZone: displayTimezone });
@@ -66,12 +71,21 @@ export function createBacktestTimeFormatters(timezone: string): BacktestTimeForm
 
   const formatterCache = new Map<string, Intl.DateTimeFormat>();
   const getFormatter = (locale: string | undefined, style: DateFormatStyle) => {
-    const cacheKey = `${locale ?? ''}:${style}`;
+    const cacheKey = `${locale ?? ''}:${style}:${blindMode ? 'blind' : 'normal'}`;
     let formatter = formatterCache.get(cacheKey);
     if (!formatter) {
       formatter = new Intl.DateTimeFormat(locale || undefined, {
         timeZone: displayTimezone,
-        ...getDateFormatOptions(style),
+        ...(blindMode
+          ? style === 'time' || style === 'timeWithSeconds'
+            ? getDateFormatOptions(style)
+            : {
+              weekday: 'long',
+              ...(style === 'tooltip'
+                ? getDateFormatOptions('timeWithSeconds')
+                : {}),
+            }
+          : getDateFormatOptions(style)),
       });
       formatterCache.set(cacheKey, formatter);
     }

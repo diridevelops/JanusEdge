@@ -101,6 +101,31 @@ export function getDrawingIds(serializedState: string): string[] {
   }
 }
 
+/** Map numeric drawing anchor prices without changing the canonical payload. */
+export function transformDrawingPrices(
+  serializedState: string,
+  transform: (price: number) => number
+): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(serializedState);
+  } catch {
+    return serializedState;
+  }
+  if (!Array.isArray(parsed)) return serializedState;
+  const transformed = parsed.map((drawing) => {
+    if (!isRecord(drawing) || !Array.isArray(drawing.points)) return drawing;
+    return {
+      ...drawing,
+      points: drawing.points.map((point: unknown) => {
+        if (!isRecord(point) || typeof point.price !== 'number') return point;
+        return { ...point, price: transform(point.price) };
+      }),
+    };
+  });
+  return JSON.stringify(transformed);
+}
+
 /**
  * Merge an edited CandleKit display set into its full persisted set. Only the
  * ids that were present in the display snapshot may be replaced or removed;

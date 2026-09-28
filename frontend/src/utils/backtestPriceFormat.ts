@@ -1,3 +1,5 @@
+import type { BacktestCandle } from '../types/backtest.types';
+
 /** lightweight-charts price formatting for the Backtest instrument catalog. */
 export interface BacktestPriceFormat {
   type: 'price';
@@ -39,5 +41,37 @@ export function getBacktestPriceFormat(instrument: string): BacktestPriceFormat 
     type: 'price',
     precision,
     minMove: 10 ** -precision,
+  };
+}
+
+/** Convert a canonical price to the stable display scale used by Blind runs. */
+export function normalizeBacktestPrice(
+  price: number,
+  referencePrice: number
+): number {
+  if (!Number.isFinite(price)) {
+    throw new RangeError('Blind chart prices must be finite.');
+  }
+  if (!Number.isFinite(referencePrice) || referencePrice === 0) {
+    throw new RangeError('Blind chart reference price must be finite and non-zero.');
+  }
+  return 100 * price / referencePrice;
+}
+
+/** Normalize OHLC while retaining a valid high/low range for negative refs. */
+export function normalizeBacktestCandle(
+  candle: BacktestCandle,
+  referencePrice: number
+): BacktestCandle {
+  const open = normalizeBacktestPrice(candle.open, referencePrice);
+  const close = normalizeBacktestPrice(candle.close, referencePrice);
+  const transformedHigh = normalizeBacktestPrice(candle.high, referencePrice);
+  const transformedLow = normalizeBacktestPrice(candle.low, referencePrice);
+  return {
+    ...candle,
+    open,
+    high: Math.max(transformedHigh, transformedLow),
+    low: Math.min(transformedHigh, transformedLow),
+    close,
   };
 }

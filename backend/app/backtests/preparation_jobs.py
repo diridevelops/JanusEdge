@@ -60,6 +60,7 @@ class PreparationJobService:
         minimum_start_date: date,
         maximum_start_date: date,
         staging_prefix: str,
+        blind_mode: bool = False,
     ) -> dict:
         """Build the durable selection phase before replay bounds exist."""
         return create_random_selection_job_doc(
@@ -72,6 +73,7 @@ class PreparationJobService:
             minimum_start_date=minimum_start_date,
             maximum_start_date=maximum_start_date,
             staging_prefix=staging_prefix,
+            blind_mode=blind_mode,
         )
 
     def requeue(self, run_id, *, now) -> bool:

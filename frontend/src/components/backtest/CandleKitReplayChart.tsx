@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { ChevronsRight } from 'lucide-react';
 import {
   darkTheme,
@@ -19,6 +19,7 @@ import {
   filterDrawingsAtReplayCursor,
   getDrawingIds,
   normalizeSerializedDrawingState,
+  transformDrawingPrices,
   reconcileVisibleDrawingChanges,
 } from '../../utils/backtestDrawings';
 import {
@@ -28,6 +29,7 @@ import {
   waitForPendingPanelFlush,
 } from '../../utils/backtestPanelLifecycle';
 import { createBacktestTimeFormatters } from '../../utils/backtestTimeFormat';
+import { normalizeBacktestPrice } from '../../utils/backtestPriceFormat';
 
 const EMPTY_DATA: never[] = [];
 const CANDLEKIT_VERSION = '0.1.0';
@@ -56,6 +58,8 @@ interface CandleKitReplayChartProps {
   runId: string;
   intervalMinutes: number;
   displayTimezone: string;
+  blindMode: boolean;
+  normalizedReferencePrice: number | null;
   cursorTimeMs: number;
   registerDrawingFlusher: (
     tabId: string,
@@ -114,6 +118,8 @@ export function CandleKitReplayChart({
   runId,
   intervalMinutes,
   displayTimezone,
+  blindMode,
+  normalizedReferencePrice,
   cursorTimeMs,
   registerDrawingFlusher,
   onChartReady,
@@ -179,9 +185,19 @@ export function CandleKitReplayChart({
   }, [colors]);
 
   const timeFormatters = useMemo(
-    () => createBacktestTimeFormatters(displayTimezone),
-    [displayTimezone]
+    () => createBacktestTimeFormatters(displayTimezone, blindMode),
+    [blindMode, displayTimezone]
   );
+  const mapDrawingPrices = useCallback((serializedState: string, inverse = false) => {
+    if (!blindMode) return serializedState;
+    const referencePrice = normalizedReferencePrice;
+    if (referencePrice == null || !Number.isFinite(referencePrice) || referencePrice === 0) {
+      throw new Error('This Blind run is missing a valid normalized-price reference.');
+    }
+    return transformDrawingPrices(serializedState, (price) => inverse
+      ? price * referencePrice / 100
+      : normalizeBacktestPrice(price, referencePrice));
+  }, [blindMode, normalizedReferencePrice]);
   const chartOptions = useMemo(() => ({
     localization: { timeFormatter: timeFormatters.timeFormatter },
     timeScale: { tickMarkFormatter: timeFormatters.tickMarkFormatter },
@@ -225,16 +241,17 @@ export function CandleKitReplayChart({
       if (!isHydratedRef.current || suppressChangesRef.current) return;
       const visibleExport = sessionEngine.export();
       if (visibleExport === lastVisibleExportRef.current) return;
+      const canonicalVisibleExport = mapDrawingPrices(visibleExport, true);
 
       const authoritative = reconcileVisibleDrawingChanges(
         authoritativeStateRef.current,
-        visibleExport,
+        canonicalVisibleExport,
         visibleIdsRef.current
       );
       authoritativeStateRef.current = authoritative;
-      const filteredVisible = canonicalDrawingArray(
+      const filteredVisible = mapDrawingPrices(canonicalDrawingArray(
         filterDrawingsAtReplayCursor(authoritative, cursorTimeRef.current)
-      );
+      ));
       if (filteredVisible !== canonicalDrawingArray(visibleExport)) {
         suppressChangesRef.current = true;
         sessionEngine.import(filteredVisible);
@@ -260,9 +277,9 @@ export function CandleKitReplayChart({
         }
 
         const authoritative = normalizeSerializedDrawingState(savedState.serialized_state);
-        const visible = canonicalDrawingArray(
+        const visible = mapDrawingPrices(canonicalDrawingArray(
           filterDrawingsAtReplayCursor(authoritative, cursorTimeRef.current)
-        );
+        ));
         authoritativeStateRef.current = authoritative;
         visibleIdsRef.current = new Set(getDrawingIds(visible));
 
@@ -359,13 +376,14 @@ export function CandleKitReplayChart({
     runId,
     sessionKey,
     tabId,
+    mapDrawingPrices,
   ]);
 
   useEffect(() => {
     if (!engine || !isHydratedRef.current || cursorTimeMs === null) return;
-    const visible = canonicalDrawingArray(
+    const visible = mapDrawingPrices(canonicalDrawingArray(
       filterDrawingsAtReplayCursor(authoritativeStateRef.current, cursorTimeMs)
-    );
+    ));
     const nextVisibleIds = new Set(getDrawingIds(visible));
     if (visible !== engine.export()) {
       suppressChangesRef.current = true;
@@ -374,7 +392,7 @@ export function CandleKitReplayChart({
     }
     visibleIdsRef.current = nextVisibleIds;
     lastVisibleExportRef.current = engine.export();
-  }, [cursorTimeMs, engine, isHydrated]);
+  }, [cursorTimeMs, engine, isHydrated, mapDrawingPrices]);
 
   useEffect(() => {
     isMountedRef.current = true;

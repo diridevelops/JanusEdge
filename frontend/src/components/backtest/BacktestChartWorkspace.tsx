@@ -45,6 +45,8 @@ interface ChartPanelRuntime {
   instrument: string;
   displayTimezone: string;
   cursorTimeMs: number;
+  blindMode: boolean;
+  normalizedReferencePrice: number | null;
   registerDrawingFlusher: (
     tabId: string,
     flush: () => Promise<void> | void
@@ -77,6 +79,8 @@ function createChartPanelComponent(
         runId={runtime.runId}
         instrument={runtime.instrument}
         displayTimezone={runtime.displayTimezone}
+        blindMode={runtime.blindMode}
+        normalizedReferencePrice={runtime.normalizedReferencePrice}
         cursorTimeMs={runtime.cursorTimeMs}
         registerDrawingFlusher={runtime.registerDrawingFlusher}
         onIntervalChange={(_tabId, intervalMinutes) => {
@@ -234,6 +238,8 @@ export function BacktestChartWorkspace({
     runId: run.id,
     instrument: run.instrument,
     displayTimezone,
+    blindMode: Boolean(run.blind_mode),
+    normalizedReferencePrice: run.normalized_reference_price ?? null,
     cursorTimeMs,
     registerDrawingFlusher,
     onChartReady,
@@ -243,6 +249,8 @@ export function BacktestChartWorkspace({
     runId: run.id,
     instrument: run.instrument,
     displayTimezone,
+    blindMode: Boolean(run.blind_mode),
+    normalizedReferencePrice: run.normalized_reference_price ?? null,
     cursorTimeMs,
     registerDrawingFlusher,
     onChartReady,

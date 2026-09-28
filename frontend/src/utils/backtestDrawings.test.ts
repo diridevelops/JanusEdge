@@ -4,9 +4,24 @@ import {
   filterDrawingsAtReplayCursor,
   normalizeSerializedDrawingState,
   reconcileVisibleDrawingChanges,
+  transformDrawingPrices,
 } from './backtestDrawings';
 
 describe('filterDrawingsAtReplayCursor', () => {
+  it('normalizes drawing prices for display and retains canonical prices for saving', () => {
+    const stored = JSON.stringify([
+      { id: 'line', points: [{ time: 10, price: 25 }, { time: 11, price: 30 }] },
+    ]);
+    const displayed = transformDrawingPrices(stored, (price) => 100 * price / 25);
+    const restored = transformDrawingPrices(displayed, (price) => price * 25 / 100);
+
+    expect(JSON.parse(displayed)[0].points.map((point: { price: number }) => point.price))
+      .toEqual([100, 120]);
+    expect(JSON.parse(restored)[0].points.map((point: { price: number }) => point.price))
+      .toEqual([25, 30]);
+    expect(JSON.parse(stored)[0].points[0].price).toBe(25);
+  });
+
   it('normalizes empty contract payloads to CandleKit arrays', () => {
     expect(normalizeSerializedDrawingState(null)).toBe('[]');
     expect(normalizeSerializedDrawingState('{}')).toBe('[]');

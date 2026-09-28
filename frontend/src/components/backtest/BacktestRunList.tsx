@@ -94,7 +94,7 @@ export function BacktestRunList({
                     {formatNoticeOutcome(notice.outcome)}: {notice.instrument}
                   </h3>
                   <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
-                    {notice.requested_start_date && notice.requested_end_date
+                    {!notice.blind_mode && notice.requested_start_date && notice.requested_end_date
                       ? `Selected range: ${notice.requested_start_date} – ${notice.requested_end_date}`
                       : notice.period_selection === 'random' && notice.period_months
                         ? `${notice.period_months}-month random period`
@@ -176,15 +176,17 @@ export function BacktestRunList({
                         {run.instrument}
                       </h3>
                       <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
-                        {run.requested_start_date && run.requested_end_date
+                        {!run.blind_mode && run.requested_start_date && run.requested_end_date
                           ? `${run.requested_start_date} – ${run.requested_end_date}`
                           : isSelectingPeriod
                             ? `Selecting a random ${run.period_months ?? ''}-month period…`
                             : 'Period not available'}
                       </p>
-                      {run.account_label && (
+                      {(run.blind_mode || run.account_label) && (
                         <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                          Backtest account: {run.account_label}
+                          Backtest account: {run.blind_mode
+                            ? `Backtest ${run.instrument} blind (${run.id})`
+                            : run.account_label}
                         </p>
                       )}
                     </div>

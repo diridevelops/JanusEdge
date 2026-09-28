@@ -39,6 +39,7 @@ def create_run():
         display_timezone=payload.get("display_timezone"),
         period_selection=payload.get("period_selection"),
         period_months=payload.get("period_months"),
+        blind_mode=payload.get("blind_mode"),
     )
     return jsonify({"run": serialize_backtest_value(run)}), 202
 

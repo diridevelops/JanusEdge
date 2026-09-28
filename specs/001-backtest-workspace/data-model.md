@@ -27,6 +27,8 @@ One user-owned replay request and the saved one-minute candle selection for that
 | requested_end_date | local date/null | Inclusive manual or worker-selected calendar date; null while random selection is pending. |
 | period_selection | enum | `manual` or `random`. |
 | period_months | integer/null | Random duration in calendar months: 1, 3, 6, or 12; null for manual runs. |
+| blind_mode | boolean | Immutable run-creation option; defaults to false for existing and new non-blind runs. True requires random period selection. |
+| normalized_reference_price | number/null | For a ready blind run, the open of the first available candle at or after the replay start; null for non-blind or unresolved runs. |
 | selection_as_of_date | local date/null | Fixed “yesterday” cutoff captured in the configured display timezone when a random request is accepted. |
 | display_timezone | IANA timezone | Timezone used for random candidate dates, warm-up calculation, and conversion of selected date boundaries to UTC. |
 | warmup_start_date | local date | Calendar date one month before `requested_start_date`, clamped to the final valid day of that preceding month. |
@@ -54,6 +56,9 @@ Invariants:
 - One Backtest account per resolved run, enforced by a unique user_id/run_id association. Random selection does not create an account until a candidate start date with candles is found.
 - One durable BacktestPreparationJob per selecting-period, preparing, or ready run, enforced by a unique run_id association. Deletion removes the job during cleanup; after that, the run's `deleting` status remains the durable marker until the rest of the purge completes and the run record is removed last.
 - A random run remains in `selecting_period` with null dates and account until the worker finds a candle-bearing candidate and commits its final dates.
+- A blind run is immutable, requires `period_selection=random`, and retains raw candle/run values in storage and API responses; only rendered Backtest views apply the masking and normalization rules.
+- A ready blind run has one immutable `normalized_reference_price`, taken from the open of its first available replay-period candle. Warm-up and every interval use that same reference. A zero or non-finite reference prevents readiness and follows terminal failure cleanup; a negative reference uses the exact specified ratio even though it reverses normalized direction, with transformed candle highs/lows reordered to preserve a valid range.
+- Blind account labels contain the instrument and “blind”, omit dates, and use a short unique suffix when needed. Other runs retain their instrument/date-range labels.
 - The random selection cutoff is immutable across worker retries. Candidate starts are local dates from 2005-01-01 through the latest date whose clamped duration end is no later than the captured cutoff.
 - The selected inclusive end is the day before adding the configured calendar months with destination-month clamping. A probe verifies candles on the start date only; later selected-period gaps and empty dates continue through normal coverage and readiness rules.
 - A ready run always references one complete immutable snapshot spanning the requested context and replay boundaries and containing at least one candle in the selected replay period. Warm-up candles alone do not satisfy readiness.
@@ -123,11 +128,11 @@ The account selector record associated with exactly one BacktestRun. Store this 
 | user_id | ObjectId | Authenticated owner. |
 | workspace_mode | enum | backtest. Existing records default to real. |
 | backtest_run_id | ObjectId/string | Unique associated run. |
-| account_name | string | Stable system-generated value. |
-| display_name | string | Instrument and selected date range, with a short unique suffix when needed. |
+| account_name | string | System-generated account value. For blind runs, include instrument and “blind” and omit dates. |
+| display_name | string | Non-blind: instrument and selected date range. Blind: instrument and “blind” with no date. Both use a short unique suffix when needed. |
 | status | enum | active for a ready/preparing run; deleting while confirmed run cleanup is pending; removed when deletion completes. |
 
-A Backtest account is dedicated to one run and has no Real trades. Trade recording and simulated orders remain unavailable in this version. If Backtest trades are associated with this account, they are exclusively owned by this run for deletion purposes. When account status is `deleting`, the account and its trades may be hidden from Backtest trade-facing queries while cleanup is pending; this is not deletion completion. Deletion physically removes every trade linked by `trade_account_id` and all trade-owned dependent data, then removes the account. On completion, neither the account nor its trades or dependents remain in storage.
+A Backtest account is dedicated to one run and has no Real trades. Trade recording and simulated orders remain unavailable in this version. If Backtest trades are associated with this account, they are exclusively owned by this run for deletion purposes. When Backtest trade recording is implemented later, the Journal list derives blind presentation from the associated run: show weekday/time and normalized entry/exit prices for blind-run trades, while never displaying their complete dates or raw prices. When account status is `deleting`, the account and its trades may be hidden from Backtest trade-facing queries while cleanup is pending; this is not deletion completion. Deletion physically removes every trade linked by `trade_account_id` and all trade-owned dependent data, then removes the account. On completion, neither the account nor its trades or dependents remain in storage.
 
 ## ReplayCursor
 
@@ -253,8 +258,8 @@ Notices are visible on the run-list page until dismissed and do not cause failed
 ## Relationships
 
 - One user owns many BacktestRuns.
-- Each BacktestRun has exactly one BacktestAccount and one immutable BacktestCandleSnapshot.
-- Each preparing or ready BacktestRun has exactly one durable BacktestPreparationJob; completed jobs remain for the lifetime of their ready run. During deletion the job is physically removed as part of cleanup, while the run's `deleting` status remains the durable marker until all remaining resources are purged and the run record is removed last.
+- Each resolved BacktestRun has exactly one BacktestAccount and each ready run has one immutable BacktestCandleSnapshot. A random run has no account until its selection resolves.
+- Each selecting-period, preparing, or ready BacktestRun has exactly one durable BacktestPreparationJob; completed jobs remain for the lifetime of their ready run. During deletion the job is physically removed as part of cleanup, while the run's `deleting` status remains the durable marker until all remaining resources are purged and the run record is removed last.
 - Each BacktestAccount belongs to exactly one BacktestRun and may be referenced by zero or more trades through `trade_account_id`; those trades are removed with the account when that run is deleted.
 - Each BacktestRun has one durable ReplayCursor shared by all active chart tabs.
 - Each BacktestRun has zero or one ChartWorkspaceLayout before first open and exactly one after initialization, and may have zero or more BacktestPreparationNotices for completed failures/no-data outcomes.
