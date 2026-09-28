@@ -8,9 +8,9 @@ description: "Implementation backlog for the dockable Backtest chart workspace"
 
 **Prerequisites**: `plan.md` and `spec.md` are available. The project constitution remains an unratified Spec Kit placeholder and defines no project gates.
 
-**Scope**: This backlog carries forward implementation already recorded as complete and includes the replay chart follow-mode, chart-workspace UI refinements, run deletion, and the new one-month warm-up-history delta. It does not repeat the Real/Backtest separation, original run preparation, core replay transport, account integration, or initial drawing integration tasks. The old flat chart-tabs task is superseded by the dockable workspace work in User Story 3. These carry-forward notes reflect the prior task ledger, not a new code audit.
+**Scope**: This backlog carries forward implementation already recorded as complete and includes the replay chart follow-mode, chart-workspace UI refinements, run deletion, the one-month warm-up-history delta, and random replay-period selection. It does not repeat the Real/Backtest separation, original run preparation, core replay transport, account integration, or initial drawing integration tasks. The old flat chart-tabs task is superseded by the dockable workspace work in User Story 3. These carry-forward notes reflect the prior task ledger, not a new code audit.
 
-**Tests**: Focused backend and frontend tests for the versioned workspace contract, migration, panel lifecycle, and run deletion are recorded above. Warm-up-history backend and frontend tests are added below as implementation prerequisites. The full quickstart UI/browser scenario task remains open; no tests or browser checks were run for the current UI refinement.
+**Tests**: Focused backend and frontend tests for the versioned workspace contract, migration, panel lifecycle, run deletion, warm-up history, and random period selection are recorded below. The full quickstart UI/browser scenario task remains open until those end-to-end scenarios have been run.
 
 **Organization**: Preserve existing story phases and task statuses, then add the follow-mode enhancement, chart UI refinement, run-deletion story, and warm-up-history delta after the carried-forward backlog. User Stories 1, 2, and 4 have no new tasks for their original scope because their work is recorded as complete in the prior task list.
 
@@ -200,6 +200,27 @@ No new tasks in this plan delta; the prior task list records this story's implem
 - [X] T030 [US3] Persist and return the first eligible replay-source index with the ready run, initialize the saved cursor there, and reject cursor writes outside the selected replay interval while allowing candle reads from the full immutable context snapshot in `backend/app/backtests/schemas.py`, `backend/app/backtests/repository.py`, `backend/app/backtests/service.py`, and `backend/app/backtests/routes.py`.
 - [X] T031 [US3] Load pre-start candles as chart context while initializing the shared replay controller at the returned replay-start index; keep playback, step, seek, progress, and completion inside the selected replay period in `frontend/src/types/backtest.types.ts`, `frontend/src/api/backtests.api.ts`, `frontend/src/hooks/useBacktestReplay.ts`, and `frontend/src/components/backtest/CandleKitReplayChart.tsx`.
 
+---
+
+## Phase 14: User Story 7 - Select a random replay period (Priority: P1)
+
+**Goal**: Let users request a 1, 3, 6, or 12 calendar-month replay period whose start date is chosen randomly from dates with available candles, using a restart-safe bounded worker search.
+
+**Independent Test**: Use a fixed cutoff, controlled randomness, and fake candle-provider results to verify eligible date bounds, no-replacement sampling, the per-year probe limit, successful selection, exhaustion, provider errors, restart recovery, account creation timing, and deletion fencing. Confirm the form disables dates only in random mode and the manual request remains unchanged.
+
+### Tests
+
+- [X] T035 [US7] Add backend tests for the random create contract, timezone-yesterday cutoff, calendar-duration and latest-start boundaries, random year/date sampling without replacement, ten-probe-per-year exhaustion, provider-error classification, worker restart recovery, DST-local day filtering, deletion fencing, one-account creation, and normal preparation continuation in `backend/tests/test_backtests/test_random_period_selection.py` and `backend/tests/test_backtests/test_backtest_routes.py`.
+- [X] T036 [US7] Add frontend tests for duration choices, disabled date controls in random mode, unchanged manual request shape, pending selection status, and dismissible instrument/duration failure notices in `frontend/src/components/backtest/BacktestRunForm.test.tsx` and `frontend/src/components/backtest/BacktestRunList.test.tsx`.
+
+### Implementation
+
+- [X] T037 [US7] Add the random-selection request and pending run state; persist the fixed local-yesterday cutoff, eligible bounds, year/date attempts, and pending candidate; implement bounded COMB local-day probes, provider-error handling, selection recovery, post-hit date/account transition, and deletion fencing in `backend/app/backtests/schemas.py`, `backend/app/backtests/preparation_jobs.py`, `backend/app/backtests/repository.py`, `backend/app/backtests/service.py`, `backend/app/backtests/routes.py`, and `backend/app/backtests/worker.py`.
+- [X] T038 [US7] Add the random/manual mode selector and duration controls, disable manual dates only in random mode, preserve manual request payloads, display unresolved selection state and nullable dates/account, poll while selecting, and render duration-aware failure/deletion messages in `frontend/src/components/backtest/BacktestRunForm.tsx`, `frontend/src/components/backtest/BacktestRunList.tsx`, `frontend/src/pages/BacktestRunListPage.tsx`, `frontend/src/types/backtest.types.ts`, `frontend/src/utils/backtestRunDeletion.ts`, and `frontend/src/utils/backtestRunRequest.ts`.
+- [X] T039 [US7] Update the normative specification, architecture, data model, API contract, research decisions, implementation backlog, and quickstart scenarios for random period selection in `specs/001-backtest-workspace/spec.md`, `plan.md`, `data-model.md`, `contracts/backtest-api.md`, `research.md`, `tasks.md`, and `quickstart.md`.
+
+**Checkpoint**: Manual runs retain their request and preparation behavior. Random runs remain date/account-free while searching, resume from persisted attempts, either resolve into normal warm-up/preparation or emit a dismissible duration-aware failure, and are fenced by deletion.
+
 ## Dependencies & Execution Order
 
 ### Phase Dependencies
@@ -216,6 +237,7 @@ No new tasks in this plan delta; the prior task list records this story's implem
 - **US6 deletion (Phase 11)**: Depends on the existing run/account lifecycle from US2 and account association from US4. T021-T022 can be authored in parallel; T023 establishes the deletion fence and endpoint, after which T024 and T025 can proceed in parallel on backend cleanup/query filtering and frontend controls.
 - **Warm-up preparation (Phase 12)**: T026 validates date-window and selected-period readiness behavior before T027 implements it.
 - **Warm-up replay (Phase 13)**: T028 and T029 tests can be authored in parallel. T030 depends on the replay-start index produced by T027 and validated by T028. T031 depends on the backend response/cursor contract in T030 and the frontend behavior tests in T029.
+- **US7 random period selection (Phase 14)**: T035 and T036 establish backend and frontend contracts before T037-T038. T037 persists worker selection and resolves the run before account creation; T038 consumes the pending and resolved states. T039 captures the shipped behavior in the design and validation artifacts.
 
 ### User Story Dependencies
 
@@ -235,6 +257,7 @@ No new tasks in this plan delta; the prior task list records this story's implem
 - After those tests are in place, T005 and T007 can proceed in parallel on separate backend and frontend files against the already documented contract.
 - Within US5, complete T011 before T012; backend tests and frontend tests from US3 can run independently.
 - T026, T028, and T029 target separate backend or frontend test files and can be authored in parallel; implementation must wait for its corresponding tests.
+- T035 and T036 target separate backend and frontend test files and can be authored independently; implementation must wait for both contract test sets.
 
 ## Parallel Example: User Story 3
 
@@ -254,10 +277,11 @@ Task: T004 frontend workspace bootstrap and legacy conversion tests in frontend/
 5. Run headless automated checks after implementation. Keep T014 open until the remaining quickstart UI scenarios are completed.
 6. Complete User Story 6 before enabling any future Backtest trade-recording flow, so a run's dedicated account cannot outlive its run.
 7. Implement the warm-up history extension after tests define its calendar-date boundary, partial-availability behavior, and separation from replay-eligible candles.
+8. Implement random selection as a persisted worker phase before normal preparation; keep the manual request path unchanged and create the account only after a candle-bearing start date is found.
 
 ## Notes
 
-- This list contains implementation and validation work, not tasks to edit planning documents.
+- This list contains implementation and validation work; T039 is the explicit documentation update for the random-period feature.
 - All generated task IDs are sequential. `[P]` is used only where the tasks can work on separate files without waiting for unfinished implementation.
 - The previous task T034 for flat `/chart-tabs` persistence is superseded by T003-T010; do not implement a second flat layout source of truth.
 - T014 covers the full quickstart UI/browser validation matrix and remains unchecked because that complete matrix was not run as part of the current source and documentation update.

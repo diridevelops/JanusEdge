@@ -94,8 +94,17 @@ export function BacktestRunList({
                     {formatNoticeOutcome(notice.outcome)}: {notice.instrument}
                   </h3>
                   <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
-                    Selected range: {notice.requested_start_date} – {notice.requested_end_date}
+                    {notice.requested_start_date && notice.requested_end_date
+                      ? `Selected range: ${notice.requested_start_date} – ${notice.requested_end_date}`
+                      : notice.period_selection === 'random' && notice.period_months
+                        ? `${notice.period_months}-month random period`
+                        : notice.message}
                   </p>
+                  {notice.message && (
+                    <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
+                      {notice.message}
+                    </p>
+                  )}
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-2">
@@ -149,7 +158,9 @@ export function BacktestRunList({
         ) : (
           <div className="space-y-3">
             {runs.map((run) => {
+              const isSelectingPeriod = run.status === 'selecting_period';
               const isPreparing = run.status === 'preparing';
+              const isPending = isSelectingPeriod || isPreparing;
               const isDeleting = run.status === 'deleting';
               const percent = run.progress?.percent;
               const hasMeasuredProgress = typeof percent === 'number' && Number.isFinite(percent);
@@ -165,7 +176,11 @@ export function BacktestRunList({
                         {run.instrument}
                       </h3>
                       <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">
-                        {run.requested_start_date} – {run.requested_end_date}
+                        {run.requested_start_date && run.requested_end_date
+                          ? `${run.requested_start_date} – ${run.requested_end_date}`
+                          : isSelectingPeriod
+                            ? `Selecting a random ${run.period_months ?? ''}-month period…`
+                            : 'Period not available'}
                       </p>
                       {run.account_label && (
                         <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
@@ -176,7 +191,7 @@ export function BacktestRunList({
 
                     {!isDeleting && (
                       <div className="flex flex-wrap items-center gap-2">
-                        {isPreparing ? (
+                        {isPending ? (
                           <button
                             type="button"
                             onClick={() => void onRetryRun(run.id)}
@@ -186,7 +201,7 @@ export function BacktestRunList({
                             {retryingRunId === run.id
                               ? <Loader2 className="h-4 w-4 animate-spin" />
                               : <RefreshCw className="h-4 w-4" />}
-                            Retry preparation
+                            {isSelectingPeriod ? 'Retry period selection' : 'Retry preparation'}
                           </button>
                         ) : (
                           <button
@@ -219,13 +234,17 @@ export function BacktestRunList({
                   {isDeleting ? (
                     <p className="flex items-center gap-2 text-sm text-amber-700 dark:text-amber-300" role="status">
                       <Loader2 className="h-4 w-4 animate-spin" />
-                      Deletion in progress. The account, linked trades, and stored run data are being permanently removed.
+                      Deletion in progress. {run.account_id
+                        ? 'The account, linked trades, and stored run data are being permanently removed.'
+                        : 'The run and its stored data are being permanently removed.'}
                     </p>
-                  ) : isPreparing ? (
+                  ) : isPending ? (
                     <div>
                       <div className="mb-2 flex items-center justify-between gap-4 text-sm">
                         <span className="text-gray-700 dark:text-gray-300">
-                          {formatStage(run.progress?.stage ?? '')}
+                          {isSelectingPeriod
+                            ? `Selecting a random ${run.period_months ?? ''}-month period`
+                            : formatStage(run.progress?.stage ?? '')}
                         </span>
                         <span className="shrink-0 text-gray-500 dark:text-gray-400">
                           {hasMeasuredProgress ? `${Math.round(safePercent)}%` : 'Progress unavailable'}
@@ -234,7 +253,7 @@ export function BacktestRunList({
                       <div
                         className="h-2 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-700"
                         role="progressbar"
-                        aria-label={`Preparation progress for ${run.instrument}`}
+                        aria-label={`${isSelectingPeriod ? 'Period selection' : 'Preparation'} progress for ${run.instrument}`}
                         aria-valuemin={0}
                         aria-valuemax={100}
                         {...(hasMeasuredProgress ? { 'aria-valuenow': Math.round(safePercent) } : {})}

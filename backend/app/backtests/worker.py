@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import os
+import random
 import threading
 import time as time_module
 import uuid
 from datetime import date, datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from bson import ObjectId
 from flask import current_app, has_app_context
@@ -152,6 +154,7 @@ class BacktestWorker:
         repository=None,
         job_repository=None,
         snapshot_store=None,
+        random_source=None,
         worker_id: str | None = None,
         lease_seconds: int | None = None,
     ):
@@ -160,6 +163,7 @@ class BacktestWorker:
         self.repository = repository or BacktestRepository()
         self.job_repository = job_repository or PreparationJobRepository()
         self.snapshot_store = snapshot_store or SnapshotStore()
+        self.random_source = random_source or random.SystemRandom()
         self.worker_id = worker_id or f"{os.getpid()}-{uuid.uuid4().hex}"
         self.lease_seconds = int(
             lease_seconds
@@ -239,6 +243,15 @@ class BacktestWorker:
         try:
             if job.get("terminal_outcome"):
                 self._finish_outcome(leased_run, job, heartbeat)
+            elif job.get("selection"):
+                if job["selection"].get("status") in {"searching", "selected"}:
+                    selected = self._process_random_selection(
+                        job, leased_run, heartbeat
+                    )
+                    if selected is None:
+                        return True
+                    job, leased_run = selected
+                self._process_claimed(job, leased_run, heartbeat)
             else:
                 self._process_claimed(job, leased_run, heartbeat)
         except LeaseLostError:
@@ -247,6 +260,13 @@ class BacktestWorker:
             return True
         finally:
             heartbeat.stop()
+            current_run = self.repository.find_owned_run(
+                user_id_text, run_id
+            )
+            if current_run and current_run.get("status") == "deleting":
+                self.repository.release_preparation_lease(
+                    run_id, self.worker_id
+                )
         return True
 
     def _process_deleting_run(self, now) -> bool:
@@ -335,6 +355,294 @@ class BacktestWorker:
         )
         if not completed and self.repository.find_owned_run(user_id, run_id):
             raise LeaseLostError("Backtest deletion lease expired before completion.")
+
+    def _process_random_selection(
+        self, job: dict, run: dict, heartbeat
+    ) -> tuple[dict, dict] | None:
+        """Search persisted candidates and hand a hit to normal preparation."""
+        selection = dict(job["selection"])
+        if selection.get("status") == "selected":
+            return self._commit_selected_period(job, run, selection, heartbeat)
+
+        minimum = _as_date(selection["minimum_start_date"])
+        maximum = _as_date(selection["maximum_start_date"])
+        period_months = int(selection["period_months"])
+
+        while True:
+            heartbeat.check()
+            if selection.get("current_year") is None:
+                years_remaining = list(selection.get("years_remaining", []))
+                if not years_remaining:
+                    message = (
+                        "No start date with COMB one-minute candles was found "
+                        f"for a {period_months}-month period."
+                    )
+                    self._renew_or_lose(job, run, heartbeat)
+                    terminal_job = self.job_repository.mark_terminal(
+                        job["_id"],
+                        self.worker_id,
+                        now=_as_utc(self.clock()),
+                        outcome="no_data",
+                        terminal_message=message,
+                    )
+                    if terminal_job is None:
+                        raise LeaseLostError(
+                            "Selection lease expired before no-data cleanup."
+                        )
+                    self._finish_outcome(run, terminal_job, heartbeat)
+                    return None
+
+                selected_year = self.random_source.choice(years_remaining)
+                years_remaining.remove(selected_year)
+                selection.update(
+                    {
+                        "years_remaining": years_remaining,
+                        "current_year": selected_year,
+                        "tried_dates": [],
+                        "pending_date": None,
+                    }
+                )
+                self._save_selection_state(job, selection, heartbeat)
+
+            current_year = int(selection["current_year"])
+            year_start = max(minimum, date(current_year, 1, 1))
+            year_end = min(maximum, date(current_year, 12, 31))
+            tried_dates = list(selection.get("tried_dates", []))
+            candidates = [
+                day
+                for day in self._date_range(year_start, year_end)
+                if day.isoformat() not in tried_dates
+            ]
+            if not candidates:
+                selection.update(
+                    {"current_year": None, "tried_dates": [], "pending_date": None}
+                )
+                self._save_selection_state(job, selection, heartbeat)
+                continue
+
+            pending = selection.get("pending_date")
+            candidate_date = (
+                _as_date(pending)
+                if pending
+                else self.random_source.choice(candidates)
+            )
+            if pending is None:
+                selection["pending_date"] = candidate_date.isoformat()
+                self._save_selection_state(job, selection, heartbeat)
+
+            try:
+                has_candles = self._probe_local_date(
+                    run["instrument"],
+                    candidate_date,
+                    ZoneInfo(run["display_timezone"]),
+                    job,
+                    run,
+                    heartbeat,
+                )
+            except LeaseLostError:
+                raise
+            except Exception as exc:
+                self._renew_or_lose(job, run, heartbeat)
+                terminal_job = self.job_repository.mark_terminal(
+                    job["_id"],
+                    self.worker_id,
+                    now=_as_utc(self.clock()),
+                    outcome="failed",
+                    error_type=type(exc).__name__,
+                    terminal_message=(
+                        "Market-data preparation failed while searching for a "
+                        f"{period_months}-month random period."
+                    ),
+                )
+                if terminal_job is None:
+                    raise LeaseLostError(
+                        "Selection lease expired before failure cleanup."
+                    ) from exc
+                self._finish_outcome(run, terminal_job, heartbeat)
+                return None
+
+            if has_candles:
+                from app.backtests.service import _random_period_end
+
+                end_date = _random_period_end(candidate_date, period_months)
+                selection.update(
+                    {
+                        "status": "selected",
+                        "selected_start_date": candidate_date.isoformat(),
+                        "selected_end_date": end_date.isoformat(),
+                        "account_id": str(ObjectId()),
+                        "pending_date": None,
+                    }
+                )
+                self._save_selection_state(job, selection, heartbeat)
+                job["selection"] = selection
+                return self._commit_selected_period(
+                    job, run, selection, heartbeat
+                )
+
+            if candidate_date.isoformat() not in tried_dates:
+                tried_dates.append(candidate_date.isoformat())
+            selection["tried_dates"] = tried_dates
+            selection["pending_date"] = None
+            if len(tried_dates) >= 10:
+                selection["current_year"] = None
+                selection["tried_dates"] = []
+            self._save_selection_state(job, selection, heartbeat)
+
+    def _save_selection_state(self, job: dict, selection: dict, heartbeat) -> None:
+        current_run = self.repository.find_owned_run(
+            str(job["user_id"]), job["run_id"]
+        )
+        if current_run is None:
+            raise LeaseLostError("Backtest run was removed during selection.")
+        self._renew_or_lose(job, current_run, heartbeat)
+        if not self.job_repository.save_selection_state(
+            job["_id"],
+            self.worker_id,
+            selection=selection,
+            now=_as_utc(self.clock()),
+        ):
+            raise LeaseLostError("Backtest selection job lease was lost.")
+        job["selection"] = selection
+
+    def _probe_local_date(
+        self, instrument, local_date, timezone_info, job, run, heartbeat
+    ) -> bool:
+        """Probe all UTC dates intersecting one display-timezone calendar day."""
+        start_ms, end_ms = self._local_day_utc_bounds(local_date, timezone_info)
+        first_utc_date = datetime.fromtimestamp(
+            start_ms / 1000, tz=timezone.utc
+        ).date()
+        last_utc_date = datetime.fromtimestamp(
+            (end_ms - 1) / 1000, tz=timezone.utc
+        ).date()
+        for utc_date in self._date_range(first_utc_date, last_utc_date):
+            self._renew_or_lose(job, run, heartbeat)
+            result = self.provider.fetch_day(instrument, utc_date)
+            if (
+                not isinstance(result, dict)
+                or _as_date(result.get("utc_date")) != utc_date
+                or result.get("outcome") not in {"data", "empty"}
+                or not isinstance(result.get("candles"), list)
+            ):
+                raise ValueError("Downloader returned an invalid date result.")
+            candles = result["candles"]
+            if (result["outcome"] == "data") != bool(candles):
+                raise ValueError("Downloader date outcome disagrees with its candles.")
+            for candle in candles:
+                if not isinstance(candle, dict) or "time_ms" not in candle:
+                    raise ValueError("Downloader returned a malformed candle.")
+                try:
+                    timestamp = int(candle["time_ms"])
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        "Downloader returned a malformed candle timestamp."
+                    ) from exc
+                if start_ms <= timestamp < end_ms:
+                    return True
+        return False
+
+    @staticmethod
+    def _local_day_utc_bounds(local_date: date, timezone_info) -> tuple[int, int]:
+        """Use the same local-midnight conversion as the replay date window."""
+        from app.backtests.service import _as_utc_ms
+
+        return (
+            _as_utc_ms(local_date, timezone_info),
+            _as_utc_ms(local_date + timedelta(days=1), timezone_info),
+        )
+
+    def _commit_selected_period(
+        self, job: dict, run: dict, selection: dict, heartbeat
+    ) -> tuple[dict, dict]:
+        """Persist resolved bounds, create the account, and continue preparation."""
+        from app.backtests.service import (
+            _as_utc_ms,
+            _build_backtest_account_document,
+            _one_calendar_month_before,
+        )
+        from app.backtests.repository import _object_id
+
+        start_date = _as_date(selection["selected_start_date"])
+        end_date = _as_date(selection["selected_end_date"])
+        account_id = _object_id(selection.get("account_id"))
+        if account_id is None:
+            raise ValueError("Selected random period has no account id.")
+        timezone_info = ZoneInfo(run["display_timezone"])
+        start_utc_ms = _as_utc_ms(start_date, timezone_info)
+        end_utc_ms = _as_utc_ms(end_date + timedelta(days=1), timezone_info)
+        context_start_date = _one_calendar_month_before(start_date)
+        context_start_utc_ms = _as_utc_ms(context_start_date, timezone_info)
+        context_start_utc_date = datetime.fromtimestamp(
+            context_start_utc_ms / 1000, tz=timezone.utc
+        ).date()
+        end_utc_date = datetime.fromtimestamp(
+            (end_utc_ms - 1) / 1000, tz=timezone.utc
+        ).date()
+
+        self._renew_or_lose(job, run, heartbeat)
+        resolved_run = self.repository.resolve_random_selection(
+            str(run["user_id"]),
+            run["_id"],
+            self.worker_id,
+            account_id=account_id,
+            start_date=start_date,
+            end_date=end_date,
+            start_utc_ms=start_utc_ms,
+            end_utc_ms=end_utc_ms,
+            context_start_utc_ms=context_start_utc_ms,
+            now=_as_utc(self.clock()),
+        )
+        if resolved_run is None:
+            raise LeaseLostError("Selected period could not be committed.")
+
+        self._renew_or_lose(job, resolved_run, heartbeat)
+        user_oid = resolved_run["user_id"]
+        existing_account = mongo.db.trade_accounts.find_one(
+            {"user_id": user_oid, "backtest_run_id": resolved_run["_id"]}
+        )
+        if existing_account is not None and existing_account["_id"] != account_id:
+            raise RuntimeError("Run already has a different associated account.")
+        if existing_account is None:
+            account = _build_backtest_account_document(
+                user_id=user_oid,
+                run_id=resolved_run["_id"],
+                account_id=account_id,
+                instrument=resolved_run["instrument"],
+                start_date=start_date,
+                end_date=end_date,
+            )
+            mongo.db.trade_accounts.insert_one(account)
+
+        current_run = self.repository.find_owned_run(
+            str(user_oid), resolved_run["_id"]
+        )
+        if (
+            current_run is None
+            or current_run.get("status") != "preparing"
+            or current_run.get("account_id") != account_id
+        ):
+            mongo.db.trade_accounts.delete_one(
+                {
+                    "user_id": user_oid,
+                    "backtest_run_id": resolved_run["_id"],
+                }
+            )
+            raise LeaseLostError("Run deletion fenced selected-period creation.")
+
+        self._renew_or_lose(job, current_run, heartbeat)
+        committed_job = self.job_repository.commit_selected_period(
+            job["_id"],
+            self.worker_id,
+            start_date=start_date,
+            end_date=end_date,
+            context_start_utc_date=context_start_utc_date,
+            end_utc_date=end_utc_date,
+            now=_as_utc(self.clock()),
+        )
+        if committed_job is None:
+            raise LeaseLostError("Selected-period preparation job was lost.")
+        return committed_job, current_run
 
     def _process_claimed(self, job: dict, run: dict, heartbeat) -> None:
         run_id = run["_id"]
@@ -532,18 +840,34 @@ class BacktestWorker:
                     else job.get("instrument", "Unknown instrument")
                 ),
                 "requested_start_date": (
-                    run["requested_start_date"]
-                    if run
+                    run.get("requested_start_date")
+                    if run and run.get("requested_start_date") is not None
                     else job.get("requested_start_date", "")
                 ),
                 "requested_end_date": (
-                    run["requested_end_date"]
-                    if run
+                    run.get("requested_end_date")
+                    if run and run.get("requested_end_date") is not None
                     else job.get("requested_end_date", "")
                 ),
+                "period_selection": (
+                    run.get("period_selection", "manual")
+                    if run
+                    else "random" if job.get("selection") else "manual"
+                ),
+                "period_months": (
+                    run.get("period_months")
+                    if run
+                    else (job.get("selection") or {}).get("period_months")
+                ),
                 "outcome": "no_data" if no_data else "failed",
-                "next_action": "edit_range" if no_data else "start_new_run",
-                "message": (
+                "next_action": (
+                    "edit_range"
+                    if no_data
+                    and (run or {}).get("period_selection") != "random"
+                    else "start_new_run"
+                ),
+                "message": job.get("terminal_message")
+                or (
                     "No candles were available for the selected range."
                     if no_data
                     else "Market-data preparation failed."

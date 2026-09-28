@@ -15,7 +15,7 @@ import type {
   BacktestRunSummary,
 } from '../types/backtest.types';
 
-/** Lists Backtest runs and polls worker progress while a run is preparing. */
+/** Lists Backtest runs and polls while period selection/preparation/deletion is active. */
 export function BacktestRunListPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -78,7 +78,9 @@ export function BacktestRunListPage() {
   }, [refresh]);
 
   const hasPendingRun = runs.some(
-    (run) => run.status === 'preparing' || run.status === 'deleting'
+    (run) => run.status === 'selecting_period'
+      || run.status === 'preparing'
+      || run.status === 'deleting'
   );
   useEffect(() => {
     if (!hasPendingRun) return;
@@ -98,8 +100,10 @@ export function BacktestRunListPage() {
   function openNoticeAction(notice: BacktestPreparationNotice) {
     setFormInitialValues({
       instrument: notice.instrument,
-      startDate: notice.requested_start_date,
-      endDate: notice.requested_end_date,
+      startDate: notice.requested_start_date ?? '',
+      endDate: notice.requested_end_date ?? '',
+      periodSelection: notice.period_selection === 'random' ? 'random' : 'manual',
+      periodMonths: notice.period_months ?? 1,
     });
     setFormSeed((seed) => seed + 1);
     setIsFormOpen(true);

@@ -6,8 +6,12 @@ export function getBacktestRunDeletionConfirmation(
 ): string {
   return [
     `Permanently delete the ${run.instrument} Backtest run?`,
-    `Selected range: ${run.requested_start_date} through ${run.requested_end_date}.`,
-    `Dedicated account: ${run.account_label || run.account_id}.`,
+    run.requested_start_date && run.requested_end_date
+      ? `Selected range: ${run.requested_start_date} through ${run.requested_end_date}.`
+      : `Period: random ${run.period_months ?? ''}-month selection is still pending.`,
+    run.account_id
+      ? `Dedicated account: ${run.account_label || run.account_id}.`
+      : 'The run does not have an associated account yet.',
     'This also permanently removes the account, all linked trades, and the run’s stored replay data.',
   ].join('\n\n');
 }

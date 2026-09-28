@@ -33,7 +33,7 @@ export async function createBacktestRun(
   return response.data.run;
 }
 
-/** Fetch the user's preparing and ready runs. */
+/** Fetch the user's selecting, preparing, ready, and deleting runs. */
 export async function listBacktestRuns(): Promise<BacktestRunSummary[]> {
   const response = await apiClient.get<{ runs: BacktestRunSummary[] }>(
     '/backtest/runs'

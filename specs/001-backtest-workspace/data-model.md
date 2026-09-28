@@ -23,9 +23,12 @@ One user-owned replay request and the saved one-minute candle selection for that
 | id | ObjectId/string | Run identity. |
 | user_id | ObjectId | Authenticated owner. |
 | instrument | string | Exact supported Dukascopy instrument code. |
-| requested_start_date | local date | Inclusive user-selected calendar date; part of the one-year maximum in the configured display timezone. |
-| requested_end_date | local date | Inclusive user-selected calendar date; must precede the start date's one-year anniversary. |
-| display_timezone | IANA timezone | Timezone used to calculate the warm-up date and convert selected date boundaries to UTC. |
+| requested_start_date | local date/null | Inclusive manual or worker-selected calendar date; null while random selection is pending. |
+| requested_end_date | local date/null | Inclusive manual or worker-selected calendar date; null while random selection is pending. |
+| period_selection | enum | `manual` or `random`. |
+| period_months | integer/null | Random duration in calendar months: 1, 3, 6, or 12; null for manual runs. |
+| selection_as_of_date | local date/null | Fixed “yesterday” cutoff captured in the configured display timezone when a random request is accepted. |
+| display_timezone | IANA timezone | Timezone used for random candidate dates, warm-up calculation, and conversion of selected date boundaries to UTC. |
 | warmup_start_date | local date | Calendar date one month before `requested_start_date`, clamped to the final valid day of that preceding month. |
 | context_start_utc_ms | integer | Inclusive UTC instant at the start of `warmup_start_date`; earliest requested snapshot boundary. |
 | start_utc_ms | integer | Inclusive UTC start instant of the user-selected replay period. |
@@ -33,9 +36,9 @@ One user-owned replay request and the saved one-minute candle selection for that
 | source | enum | dukascopy. |
 | source_side | enum | COMB, represented as component-wise midpoint OHLC. |
 | source_interval_minutes | integer | Fixed at 1. |
-| status | enum | preparing, ready, or deleting. Failed/no-data runs are reported and deleted per the feature requirements. |
+| status | enum | selecting_period, preparing, ready, or deleting. Failed/no-data runs are reported and deleted per the feature requirements. |
 | progress | object | Current preparation stage and a percentage when measurable; otherwise indicates indeterminate progress. |
-| account_id | ObjectId | The single associated Backtest account. |
+| account_id | ObjectId/null | The single associated Backtest account; null until a random start date has been found. |
 | preparation_job_id | ObjectId/string | The durable worker job associated with this run. |
 | snapshot | object | Immutable snapshot metadata described below. Present when ready. |
 | coverage | object | Available candles, fully empty dates, and partial-gap summaries for the selected replay period only. Present when ready. |
@@ -48,12 +51,15 @@ One user-owned replay request and the saved one-minute candle selection for that
 Invariants:
 
 - Unique ownership and run identity. Every lookup and mutation filters by both user_id and run id.
-- One Backtest account per run, enforced by a unique user_id/run_id association.
-- One durable BacktestPreparationJob per preparing or ready run, enforced by a unique run_id association. Deletion removes the job during cleanup; after that, the run's `deleting` status remains the durable marker until the rest of the purge completes and the run record is removed last.
+- One Backtest account per resolved run, enforced by a unique user_id/run_id association. Random selection does not create an account until a candidate start date with candles is found.
+- One durable BacktestPreparationJob per selecting-period, preparing, or ready run, enforced by a unique run_id association. Deletion removes the job during cleanup; after that, the run's `deleting` status remains the durable marker until the rest of the purge completes and the run record is removed last.
+- A random run remains in `selecting_period` with null dates and account until the worker finds a candle-bearing candidate and commits its final dates.
+- The random selection cutoff is immutable across worker retries. Candidate starts are local dates from 2005-01-01 through the latest date whose clamped duration end is no later than the captured cutoff.
+- The selected inclusive end is the day before adding the configured calendar months with destination-month clamping. A probe verifies candles on the start date only; later selected-period gaps and empty dates continue through normal coverage and readiness rules.
 - A ready run always references one complete immutable snapshot spanning the requested context and replay boundaries and containing at least one candle in the selected replay period. Warm-up candles alone do not satisfy readiness.
 - `context_start_utc_ms` is calculated from the local calendar date one month before `requested_start_date`, with end-of-month clamping, before conversion to UTC. The selected replay date range and one-year validation do not include this extra month.
 - The snapshot never changes after the run is ready; refreshes create a new run and snapshot.
-- A preparing run may be retried or recovered after interruption without creating a second job, run, or account. Completed UTC-date checkpoints are durable; only an incomplete date may need to be fetched again.
+- A selecting-period or preparing run may be retried or recovered after interruption without creating a second job, run, or account. Random year order, tried dates, and a pending probe are durable; completed empty probes are not counted again. Completed preparation UTC-date checkpoints are durable; only an incomplete date may need to be fetched again.
 - A deleting run is non-playable and cannot transition to ready. Its status is a temporary durable cleanup marker, not a soft-delete outcome; the run record is removed only after all run-owned resources have been physically purged.
 - Once deletion is requested, its account and trades may be excluded from Backtest views while cleanup is pending. This interim hiding is not completion. Cleanup is limited to the account identified by this run and the trades linked to that account.
 - Completed deletion leaves no run, account, preparation/replay/workspace/drawing records, linked trades or trade-owned dependent data, or objects under the run's MinIO prefix. The worker verifies the run prefix is empty before removing the run record and its deletion marker.
@@ -70,15 +76,16 @@ Durable MongoDB job claimed by the separate preparation worker. MongoDB is both 
 | id | ObjectId/string | Job identity. |
 | user_id | ObjectId | Authenticated owner; matches the associated run. |
 | run_id | ObjectId/string | Unique associated run. |
-| state | enum | queued, running, or completed. |
+| state | enum | queued, running, completed, or cancelled. |
 | lease_owner | string/null | Worker identity currently holding the claim. |
 | lease_expires_at | UTC timestamp/null | Expiry after which another worker may atomically reclaim the job. |
 | attempt_count | integer | Number of worker claims. |
 | completed_utc_dates | array | Ordered checkpoints; each item records a UTC date, empty/data outcome, and staged MinIO object key when data exists. |
+| selection | object/null | Random-selection mode, fixed cutoff, eligible date bounds, remaining years, current year, tried dates, pending probe, selected dates, and stable account id. Present until random selection is committed. |
 | staging_prefix | string | Run-scoped MinIO prefix containing completed per-date results until final snapshot assembly. |
 | created_at / updated_at | UTC timestamps | Job lifecycle and checkpoint update times. |
 
-The worker atomically claims queued jobs or jobs with expired leases, renews its lease while working, writes non-empty date candles to MinIO, then persists the date outcome (including empty) in `completed_utc_dates`. Checkpoints cover UTC dates intersecting `[context_start_utc_ms, end_utc_ms)`; empty or partial warm-up dates are completed normally. On recovery it skips committed dates and may repeat only the current incomplete date. A completed job remains associated with its ready run. No-data and terminal provider failure create a notice, delete the run/account/job, and remove staged data. No-data is determined only by the selected replay period, so warm-up candles alone do not make a run ready. If the run enters `deleting`, the worker must stop preparation and resume idempotent deletion cleanup instead of publishing a snapshot or ready state.
+The worker atomically claims queued jobs or jobs with expired leases and renews its lease while working. A random job first chooses eligible years and dates without replacement, persists each pending candidate before probing it, and records empty attempts before moving on. It probes one COMB minute date result for every UTC date intersecting the candidate's local timezone day and counts a hit only for a candle inside that local day. It tries no more than ten distinct empty dates per year. Provider errors are terminal errors, not empty results. A hit commits the resolved dates, account id, and normal UTC replay/warm-up bounds before continuing through the regular preparation workflow. Normal preparation writes non-empty date candles to MinIO, then persists the date outcome (including empty) in `completed_utc_dates`. Checkpoints cover UTC dates intersecting `[context_start_utc_ms, end_utc_ms)`; empty or partial warm-up dates are completed normally. On recovery it resumes persisted selection state, skips committed dates, and may repeat only a pending candidate or current incomplete preparation date. A completed job remains associated with its ready run. No-data and terminal provider failure create a notice, delete the run/account/job, and remove staged data. No-data is determined only by the selected replay period, so warm-up candles alone do not make a run ready. If the run enters `deleting`, the worker must stop selection/preparation and resume idempotent deletion cleanup instead of creating an account or publishing a snapshot or ready state.
 
 ## BacktestCandleSnapshot
 

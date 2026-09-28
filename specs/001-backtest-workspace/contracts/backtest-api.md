@@ -39,6 +39,38 @@ Request:
 
 The backend validates the submitted instrument against the current catalog from the pinned downloader, along with the selected replay date range, timezone, and inclusive one-calendar-year limit. For a February 29 start, February 28 of the following year is the latest permitted end date. The selected local-day boundaries define the replay window. The backend also calculates a warm-up start one calendar month before the selected local start date, clamping to the final valid day of the preceding month, then converts the warm-up and selected replay boundaries to UTC. The user's dates and one-year limit are unchanged by this extra source interval. The API then creates the run, exactly one associated Backtest account, and one durable MongoDB preparation job. Preparation is handled by a separate worker process; the HTTP request does not run the download.
 
+The manual request above remains unchanged. Random selection instead sends:
+
+~~~json
+{
+  "instrument": "EUR-USD",
+  "display_timezone": "Europe/Rome",
+  "period_selection": "random",
+  "period_months": 3
+}
+~~~
+
+`period_months` must be 1, 3, 6, or 12; `start_date` and `end_date` are omitted. The backend captures yesterday in the configured display timezone when accepting the request, then creates a `selecting_period` run with null dates and no account and enqueues a durable selection job. Its initial response is:
+
+~~~json
+{
+  "run": {
+    "id": "run-id",
+    "instrument": "EUR-USD",
+    "period_selection": "random",
+    "period_months": 3,
+    "requested_start_date": null,
+    "requested_end_date": null,
+    "status": "selecting_period",
+    "account_id": null,
+    "account_label": null,
+    "progress": {"stage": "selecting_period", "percent": null}
+  }
+}
+~~~
+
+The worker chooses eligible years randomly without replacement and probes at most ten distinct random eligible dates per year. A probe fetches the UTC day or days intersecting that local date and accepts a candidate only when a COMB one-minute candle falls inside the exact replay local-day UTC bounds. After ten empty probes, it discards the year and selects another untried eligible year. It does not treat provider errors as empty days. On a hit, it persists the final local dates, creates the one date-labeled account, and enters the normal warm-up/preparation flow. The inclusive end is the day before adding the selected calendar months with month-end clamping. If every year is exhausted, the run/account/job are removed and a dismissible notice identifies the instrument and duration. A start-day hit does not guarantee candles later in the selected period; existing coverage, gap, and readiness rules still apply. The cutoff and attempts remain fixed/durable across worker restart, and deleting a selecting-period run fences account creation.
+
 Accepted response:
 
 ~~~json
@@ -62,15 +94,15 @@ Return 202 while preparation continues. Invalid input uses the app’s validatio
 
 ### GET /api/backtest/runs
 
-Returns the authenticated user’s preparing, ready, and deleting runs, newest first. Each list entry includes id, instrument, selected date range, generated account label, status, and preparation progress (`stage` plus a percentage when measurable, otherwise null). A deleting run is shown as pending cleanup and cannot be opened. The frontend polls this endpoint every five seconds while at least one run is preparing or deleting and stops when none are. Progress is read from MongoDB state updated by the worker. Failed/no-data records are not retained.
+Returns the authenticated user’s selecting-period, preparing, ready, and deleting runs, newest first. Each list entry includes id, instrument, period selection, nullable selected dates, nullable account label, status, and progress (`stage` plus a percentage when measurable, otherwise null). Until selection resolves, the frontend shows the instrument and selection status without dates or an account. A deleting run is shown as pending cleanup and cannot be opened. The frontend polls this endpoint every five seconds while at least one run is selecting-period, preparing, or deleting and stops when none are. Progress is read from MongoDB state updated by the worker. Failed/no-data records are not retained.
 
 ### GET /api/backtest/runs/{run_id}
 
-Returns the owned run detail, account label, selected replay-period coverage, warm-up coverage, saved cursor, and status. A preparing or deleting run remains on the list page and has no playable chart detail. When the run becomes ready, its persisted cursor is initialized to the snapshot index and timestamp of the first available candle at or after the selected replay start; this index can be greater than zero because the snapshot includes warm-up candles. Readiness requires at least one candle in the selected replay period. Chart workspace state is loaded through the dedicated chart-workspace routes below.
+Returns the owned run detail, nullable account label/dates while selection is pending, selected replay-period coverage, warm-up coverage, saved cursor, and status. A selecting-period, preparing, or deleting run remains on the list page and has no playable chart detail. When the run becomes ready, its persisted cursor is initialized to the snapshot index and timestamp of the first available candle at or after the selected replay start; this index can be greater than zero because the snapshot includes warm-up candles. Readiness requires at least one candle in the selected replay period. Chart workspace state is loaded through the dedicated chart-workspace routes below.
 
 ### DELETE /api/backtest/runs/{run_id}
 
-Permanently deletes an owned preparing or ready run. The frontend must require explicit confirmation before calling this endpoint and explain that the run's dedicated Backtest account and all trades linked to it will also be removed. The request has no user or account identifier; the server derives ownership and the one-to-one account association from the run record.
+Permanently deletes an owned selecting-period, preparing, or ready run. The frontend must require explicit confirmation before calling this endpoint and explain that the run's dedicated Backtest account, if created, and all trades linked to it will also be removed. The request has no user or account identifier; the server derives ownership and the one-to-one account association from the run record.
 
 Accepted response:
 
@@ -91,7 +123,7 @@ The worker treats `deleting` as a cancellation fence: preparation, replay-positi
 
 ### GET /api/backtest/notices
 
-Returns the authenticated user's undismissed no-data and failure notices, newest first. A notice includes its instrument, selected date range, outcome, and next action. Notices remain after the failed/no-data run and account are deleted.
+Returns the authenticated user's undismissed no-data and failure notices, newest first. Manual notices include their instrument and selected date range. Random-selection notices include their instrument and requested duration, even though no date range or account was resolved. Notices remain after the failed/no-data run and any account are deleted.
 
 ### DELETE /api/backtest/notices/{notice_id}
 

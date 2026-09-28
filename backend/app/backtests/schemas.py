@@ -11,7 +11,7 @@ from bson import ObjectId
 from app.utils.datetime_utils import utc_now
 
 
-RUN_STATUSES = frozenset({"preparing", "ready", "deleting"})
+RUN_STATUSES = frozenset({"selecting_period", "preparing", "ready", "deleting"})
 PRICE_MODE = "combined_midpoint"
 SOURCE_SIDE = "COMB"
 VOLUME_SEMANTICS = "two_sided_quote_liquidity"
@@ -56,9 +56,54 @@ def create_backtest_run_doc(
         "source_side": SOURCE_SIDE,
         "price_mode": PRICE_MODE,
         "volume_semantics": VOLUME_SEMANTICS,
+        "period_selection": "manual",
+        "period_months": None,
         "status": "preparing",
         "progress": {"stage": "downloading", "percent": None},
         "account_id": account_id,
+        "preparation_job_id": preparation_job_id,
+        "snapshot": None,
+        "coverage": None,
+        "warmup_coverage": None,
+        "replay_cursor": None,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+def create_selecting_period_run_doc(
+    *,
+    run_id: ObjectId,
+    user_id: ObjectId,
+    preparation_job_id: ObjectId,
+    instrument: str,
+    display_timezone: str,
+    period_months: int,
+    selection_as_of_date: date,
+) -> dict[str, Any]:
+    """Build a run that has no selected dates or account yet."""
+    now = utc_now()
+    return {
+        "_id": run_id,
+        "user_id": user_id,
+        "instrument": instrument,
+        "requested_start_date": None,
+        "requested_end_date": None,
+        "display_timezone": display_timezone,
+        "start_utc_ms": None,
+        "end_utc_ms": None,
+        "context_start_utc_ms": None,
+        "source": "dukascopy",
+        "source_interval_minutes": 1,
+        "source_side": SOURCE_SIDE,
+        "price_mode": PRICE_MODE,
+        "volume_semantics": VOLUME_SEMANTICS,
+        "period_selection": "random",
+        "period_months": period_months,
+        "selection_as_of_date": selection_as_of_date.isoformat(),
+        "status": "selecting_period",
+        "progress": {"stage": "selecting_period", "percent": None},
+        "account_id": None,
         "preparation_job_id": preparation_job_id,
         "snapshot": None,
         "coverage": None,
@@ -105,6 +150,57 @@ def create_preparation_job_doc(
             end_utc_date, time.min, tzinfo=timezone.utc
         ),
         "staging_prefix": staging_prefix,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+def create_random_selection_job_doc(
+    *,
+    job_id: ObjectId,
+    user_id: ObjectId,
+    run_id: ObjectId,
+    instrument: str,
+    period_months: int,
+    as_of_date: date,
+    minimum_start_date: date,
+    maximum_start_date: date,
+    staging_prefix: str,
+) -> dict[str, Any]:
+    """Build a durable selection job with a fixed cutoff and recovery state."""
+    now = utc_now()
+    return {
+        "_id": job_id,
+        "user_id": user_id,
+        "run_id": run_id,
+        "instrument": instrument,
+        "requested_start_date": None,
+        "requested_end_date": None,
+        "state": "queued",
+        "lease_owner": None,
+        "lease_expires_at": None,
+        "attempt_count": 0,
+        "completed_utc_dates": [],
+        "context_start_utc_date": None,
+        "next_utc_date": None,
+        "end_utc_date": None,
+        "staging_prefix": staging_prefix,
+        "selection": {
+            "status": "searching",
+            "as_of_date": as_of_date.isoformat(),
+            "period_months": period_months,
+            "minimum_start_date": minimum_start_date.isoformat(),
+            "maximum_start_date": maximum_start_date.isoformat(),
+            "years_remaining": list(
+                range(minimum_start_date.year, maximum_start_date.year + 1)
+            ),
+            "current_year": None,
+            "tried_dates": [],
+            "pending_date": None,
+            "selected_start_date": None,
+            "selected_end_date": None,
+            "account_id": None,
+        },
         "created_at": now,
         "updated_at": now,
     }

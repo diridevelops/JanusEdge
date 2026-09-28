@@ -48,7 +48,9 @@ class BacktestRepository(BaseRepository):
         return self.find_many(
             {
                 "user_id": ObjectId(user_id),
-                "status": {"$in": ["preparing", "ready", "deleting"]},
+                "status": {
+                    "$in": ["selecting_period", "preparing", "ready", "deleting"]
+                },
             },
             sort=[("created_at", -1), ("_id", -1)],
         )
@@ -68,7 +70,7 @@ class BacktestRepository(BaseRepository):
         return result.matched_count == 1
 
     def request_deletion(self, user_id: str, run_id, *, now) -> dict | None:
-        """Atomically turn an owned preparing/ready run into a cleanup marker."""
+        """Atomically turn an owned pending/ready run into a cleanup marker."""
         run_oid = _object_id(run_id)
         user_oid = _object_id(user_id)
         if run_oid is None or user_oid is None:
@@ -77,7 +79,9 @@ class BacktestRepository(BaseRepository):
             {
                 "_id": run_oid,
                 "user_id": user_oid,
-                "status": {"$in": ["preparing", "ready"]},
+                "status": {
+                    "$in": ["selecting_period", "preparing", "ready"]
+                },
             },
             {
                 "$set": {
@@ -273,7 +277,7 @@ class BacktestRepository(BaseRepository):
             {
                 "_id": run_oid,
                 "user_id": ObjectId(user_id),
-                "status": "preparing",
+                "status": {"$in": ["selecting_period", "preparing"]},
                 "preparation_lease_owner": worker_id,
                 "preparation_lease_expires_at": {"$gt": now},
             },
@@ -354,6 +358,66 @@ class BacktestRepository(BaseRepository):
         )
         return result.modified_count == 1
 
+    def resolve_random_selection(
+        self,
+        user_id: str,
+        run_id,
+        worker_id: str,
+        *,
+        account_id: ObjectId,
+        start_date,
+        end_date,
+        start_utc_ms: int,
+        end_utc_ms: int,
+        context_start_utc_ms: int,
+        now,
+    ) -> dict | None:
+        """Persist the chosen period and transition selection into preparation."""
+        run_oid = _object_id(run_id)
+        if run_oid is None:
+            return None
+        user_oid = ObjectId(user_id)
+        start_text = start_date.isoformat()
+        end_text = end_date.isoformat()
+        resolved = self.collection.find_one_and_update(
+            {
+                "_id": run_oid,
+                "user_id": user_oid,
+                "status": "selecting_period",
+                "preparation_lease_owner": worker_id,
+                "preparation_lease_expires_at": {"$gt": now},
+            },
+            {
+                "$set": {
+                    "requested_start_date": start_text,
+                    "requested_end_date": end_text,
+                    "start_utc_ms": start_utc_ms,
+                    "end_utc_ms": end_utc_ms,
+                    "context_start_utc_ms": context_start_utc_ms,
+                    "account_id": account_id,
+                    "status": "preparing",
+                    "progress": {"stage": "downloading", "percent": None},
+                    "updated_at": now,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        if resolved is not None:
+            return resolved
+        # Recovery may see a run already transitioned before its job checkpoint.
+        return self.collection.find_one(
+            {
+                "_id": run_oid,
+                "user_id": user_oid,
+                "status": "preparing",
+                "requested_start_date": start_text,
+                "requested_end_date": end_text,
+                "account_id": account_id,
+                "preparation_lease_owner": worker_id,
+                "preparation_lease_expires_at": {"$gt": now},
+            }
+        )
+
     def claim_preparation_lease(
         self,
         user_id,
@@ -374,7 +438,7 @@ class BacktestRepository(BaseRepository):
             {
                 "_id": run_oid,
                 "user_id": ObjectId(user_id),
-                "status": "preparing",
+                "status": {"$in": ["selecting_period", "preparing"]},
                 "$or": [
                     {"preparation_lease_expires_at": {"$lte": now}},
                     {"preparation_lease_expires_at": None},
@@ -402,7 +466,7 @@ class BacktestRepository(BaseRepository):
             {
                 "_id": run_oid,
                 "user_id": ObjectId(user_id),
-                "status": "preparing",
+                "status": {"$in": ["selecting_period", "preparing"]},
                 "preparation_lease_owner": worker_id,
                 "preparation_lease_expires_at": {"$gt": now},
             },
@@ -442,7 +506,7 @@ class BacktestRepository(BaseRepository):
             {
                 "_id": run_oid,
                 "user_id": user_oid,
-                "status": "preparing",
+                "status": {"$in": ["selecting_period", "preparing"]},
                 "preparation_lease_owner": worker_id,
                 "preparation_lease_expires_at": {"$gt": now},
             }
@@ -883,6 +947,65 @@ class PreparationJobRepository:
             )
         )
 
+    def save_selection_state(
+        self, job_id, worker_id: str, *, selection: dict, now
+    ) -> bool:
+        """Checkpoint candidate attempts under the live preparation lease."""
+        result = self.collection.update_one(
+            {
+                "_id": job_id,
+                "state": "running",
+                "lease_owner": worker_id,
+                "lease_expires_at": {"$gt": now},
+                "terminal_outcome": {"$exists": False},
+            },
+            {"$set": {"selection": selection, "updated_at": now}},
+        )
+        return result.matched_count == 1
+
+    def commit_selected_period(
+        self,
+        job_id,
+        worker_id: str,
+        *,
+        start_date,
+        end_date,
+        context_start_utc_date,
+        end_utc_date,
+        now,
+    ) -> dict | None:
+        """Convert a selected search job into its normal dated preparation job."""
+        from datetime import datetime, time, timezone
+
+        return self.collection.find_one_and_update(
+            {
+                "_id": job_id,
+                "state": "running",
+                "lease_owner": worker_id,
+                "lease_expires_at": {"$gt": now},
+                "terminal_outcome": {"$exists": False},
+                "selection.status": "selected",
+            },
+            {
+                "$set": {
+                    "requested_start_date": start_date.isoformat(),
+                    "requested_end_date": end_date.isoformat(),
+                    "context_start_utc_date": datetime.combine(
+                        context_start_utc_date, time.min, tzinfo=timezone.utc
+                    ),
+                    "next_utc_date": datetime.combine(
+                        context_start_utc_date, time.min, tzinfo=timezone.utc
+                    ),
+                    "end_utc_date": datetime.combine(
+                        end_utc_date, time.min, tzinfo=timezone.utc
+                    ),
+                    "selection.status": "committed",
+                    "updated_at": now,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+
     def mark_completed(self, job_id, worker_id: str, *, now) -> bool:
         result = self.collection.update_one(
             {
@@ -926,6 +1049,7 @@ class PreparationJobRepository:
         now,
         outcome: str,
         error_type: str | None = None,
+        terminal_message: str | None = None,
     ) -> dict | None:
         """Persist a terminal outcome only under the current live job lease."""
         from pymongo import ReturnDocument
@@ -942,6 +1066,7 @@ class PreparationJobRepository:
                 "$set": {
                     "terminal_outcome": outcome,
                     "terminal_error_type": error_type,
+                    "terminal_message": terminal_message,
                     "terminal_notice_id": ObjectId(),
                     "updated_at": now,
                 }

@@ -73,6 +73,83 @@ describe('Backtest run deletion controls', () => {
     expect(html).not.toContain('Delete run');
   });
 
+  it('shows instrument and selection status until a random period is resolved', () => {
+    const selectingRun: BacktestRunSummary = {
+      ...run,
+      requested_start_date: null,
+      requested_end_date: null,
+      account_id: null,
+      account_label: null,
+      period_selection: 'random',
+      period_months: 3,
+      status: 'selecting_period',
+      progress: { stage: 'selecting_period', percent: null },
+    };
+    const html = renderToStaticMarkup(
+      <BacktestRunList
+        runs={[selectingRun]}
+        notices={[]}
+        isLoading={false}
+        loadError={null}
+        retryingRunId={null}
+        deletingRunId={null}
+        dismissingNoticeId={null}
+        onCreateRun={() => undefined}
+        onRefresh={() => undefined}
+        onOpenRun={() => undefined}
+        onRetryRun={() => undefined}
+        onDeleteRun={() => undefined}
+        onNoticeAction={() => undefined}
+        onDismissNotice={() => undefined}
+      />
+    );
+
+    expect(html).toContain('EUR-USD');
+    expect(html).toContain('Selecting a random 3-month period');
+    expect(html).not.toContain('null – null');
+    expect(html).not.toContain('Backtest account:');
+    expect(html).not.toContain('Open replay');
+  });
+
+  it('shows a dismissible random-search failure with instrument and duration', () => {
+    const html = renderToStaticMarkup(
+      <BacktestRunList
+        runs={[]}
+        notices={[{
+          id: 'notice-1',
+          instrument: 'EUR-USD',
+          requested_start_date: null,
+          requested_end_date: null,
+          period_selection: 'random',
+          period_months: 6,
+          outcome: 'no_data',
+          next_action: 'start_new_run',
+          message: 'No start date with candles was found for a 6-month period.',
+          created_at: '2026-01-01T00:00:00Z',
+        }]}
+        isLoading={false}
+        loadError={null}
+        retryingRunId={null}
+        deletingRunId={null}
+        dismissingNoticeId={null}
+        onCreateRun={() => undefined}
+        onRefresh={() => undefined}
+        onOpenRun={() => undefined}
+        onRetryRun={() => undefined}
+        onDeleteRun={() => undefined}
+        onNoticeAction={() => undefined}
+        onDismissNotice={() => undefined}
+      />
+    );
+
+    expect(html).toContain('EUR-USD');
+    expect(html).toContain('6-month random period');
+    expect(html).toContain('No start date with candles was found');
+    expect(html).toContain('Start a new run');
+    expect(html).toContain('Dismiss EUR-USD preparation result');
+    expect(html).not.toContain('Selected range: –');
+  });
+
   it('shows list loading errors and exposes the refresh action', () => {
     const html = renderToStaticMarkup(
       <BacktestRunList

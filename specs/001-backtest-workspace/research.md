@@ -4,6 +4,16 @@ Research for the implementation plan was based on the active feature specificati
 
 ## Decisions
 
+### Random start-date selection for Backtest runs
+
+**Decision**: Keep random selection in the existing durable preparation job. At request time, capture the previous local calendar date in the user's configured display timezone as an immutable cutoff. The worker considers starts from 2005-01-01 through the latest start whose calendar duration (1, 3, 6, or 12 months, month-end clamped, inclusive end one day earlier) ends by that cutoff. It chooses eligible years randomly without replacement and probes up to ten distinct random dates per year without replacement. Each probe downloads COMB one-minute data for the UTC date or dates overlapping the candidate's local calendar day, then filters by that day's exact replay timezone bounds. Persist the year/date state and pending candidate before probing. A provider error is terminal; an empty result advances the search. Once a hit is durably recorded, the worker persists dates, creates the one date-labeled account, and continues through the existing warm-up and preparation path.
+
+**Rationale**: A durable worker avoids blocking the API while historical data is queried and lets the run list show `selecting_period`. Persisted cutoff and attempts make recovery deterministic with respect to the eligible window and prevent the worker from counting the same empty candidate twice after restart. The account remains absent until a candidate has been confirmed.
+
+**Trade-off**: Ten empty probes can discard a year that has candles on unsampled dates. Exhausting the bounded year list can therefore report no usable start even if some source data exists. This is the selected bounded-search behavior. A successful start-day probe only establishes that the replay begins on a data-bearing day; later gaps and empty days remain governed by the existing coverage and readiness rules.
+
+**Alternative considered**: Probe every date in each year until data is found. Rejected because a long sparse history could require thousands of synchronous provider calls in one worker attempt; the chosen ten-date cap bounds work per year and persists each attempt for recovery.
+
 ### 1. Use CandleKit’s React integration for the Backtest chart surface
 
 **Decision**: Use the published CandleKit 0.1.0 React entry for ChartView and its replay and drawing overlays, including ReplayControls and DrawingToolbar. Use CandleKit’s replay and synchronization engines through a narrow JanusEdge adapter.

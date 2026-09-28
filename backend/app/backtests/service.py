@@ -29,6 +29,7 @@ from app.backtests.schemas import (
     DRAWING_SCHEMA_VERSION,
     MAX_DRAWING_STATE_BYTES,
     create_backtest_run_doc,
+    create_selecting_period_run_doc,
     serialize_chart_workspace,
     serialize_drawing_state,
     validate_chart_workspace,
@@ -90,6 +91,56 @@ def _one_calendar_month_before(start_date: date) -> date:
     return date(year, month, min(start_date.day, last_day))
 
 
+def _add_calendar_months(start_date: date, months: int) -> date:
+    """Add calendar months, clamping the day to the destination month."""
+    month_index = start_date.year * 12 + start_date.month - 1 + months
+    year, month_zero = divmod(month_index, 12)
+    month = month_zero + 1
+    return date(
+        year,
+        month,
+        min(start_date.day, calendar.monthrange(year, month)[1]),
+    )
+
+
+def _random_period_end(start_date: date, period_months: int) -> date:
+    """Return the inclusive end immediately before the clamped duration end."""
+    return _add_calendar_months(start_date, period_months) - timedelta(days=1)
+
+
+def _latest_random_start(as_of_date: date, period_months: int) -> date:
+    """Find the latest start whose full inclusive duration ends by the cutoff."""
+    candidate = as_of_date
+    while _random_period_end(candidate, period_months) > as_of_date:
+        candidate -= timedelta(days=1)
+    return candidate
+
+
+def _build_backtest_account_document(
+    *, user_id: ObjectId, run_id: ObjectId, account_id: ObjectId,
+    instrument: str, start_date: date, end_date: date,
+) -> dict:
+    """Build the single date-labeled account associated with a selected run."""
+    account_label = (
+        f"Backtest {instrument} {start_date.isoformat()} to "
+        f"{end_date.isoformat()} ({run_id})"
+    )
+    account = create_trade_account_doc(
+        user_id=user_id,
+        account_name=account_label,
+        display_name=account_label,
+        source_platform="backtest",
+    )
+    account.update(
+        {
+            "_id": account_id,
+            "workspace_mode": "backtest",
+            "backtest_run_id": run_id,
+        }
+    )
+    return account
+
+
 def _as_utc_ms(local_date: date, timezone_info: ZoneInfo) -> int:
     local_midnight = datetime.combine(local_date, time.min).replace(
         tzinfo=timezone_info
@@ -124,11 +175,18 @@ def _reject_json_constant(value):
 class BacktestService:
     """Validate run requests and persist the run/account/job association."""
 
-    def __init__(self, repository=None, job_repository=None, snapshot_store=None):
+    def __init__(
+        self,
+        repository=None,
+        job_repository=None,
+        snapshot_store=None,
+        clock=None,
+    ):
         self.repository = repository or BacktestRepository()
         self.job_repository = job_repository or PreparationJobRepository()
         self.snapshot_store = snapshot_store or SnapshotStore()
         self.preparation_jobs = PreparationJobService(self.job_repository)
+        self.clock = clock or utc_now
 
     def get_instruments(self) -> list[str]:
         """Read the pinned downloader's currently supported instrument list."""
@@ -145,9 +203,11 @@ class BacktestService:
         *,
         user_id: str,
         instrument: str,
-        start_date: str,
-        end_date: str,
+        start_date: str | None,
+        end_date: str | None,
         display_timezone: str,
+        period_selection: str | None = None,
+        period_months: int | None = None,
     ) -> dict:
         """Validate and create one run, Backtest account, and durable job."""
         user_oid = _object_id(user_id)
@@ -164,6 +224,43 @@ class BacktestService:
         if instrument not in supported:
             raise ValidationError("Instrument is not in the current catalog.")
 
+        if not isinstance(display_timezone, str) or not display_timezone:
+            raise ValidationError("Display timezone is required.")
+        try:
+            timezone_info = ZoneInfo(display_timezone)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValidationError(
+                "Display timezone must be a valid IANA timezone."
+            ) from exc
+
+        selection = period_selection or "manual"
+        if selection == "random":
+            if (
+                isinstance(period_months, bool)
+                or not isinstance(period_months, int)
+                or period_months not in {1, 3, 6, 12}
+            ):
+                raise ValidationError(
+                    "period_months must be one of 1, 3, 6, or 12 for random selection."
+                )
+            if start_date is not None or end_date is not None:
+                raise ValidationError(
+                    "Manual date fields must be omitted for random selection."
+                )
+            return self._create_random_run(
+                user_oid=user_oid,
+                instrument=instrument,
+                display_timezone=display_timezone,
+                timezone_info=timezone_info,
+                period_months=period_months,
+            )
+        if selection != "manual":
+            raise ValidationError("period_selection must be 'random' when provided.")
+        if period_months is not None:
+            raise ValidationError(
+                "period_months is only supported for random period selection."
+            )
+
         start = _parse_date(start_date, "start_date")
         end = _parse_date(end_date, "end_date")
         if end < start:
@@ -173,14 +270,6 @@ class BacktestService:
             raise ValidationError(
                 "The selected date range cannot exceed one calendar year."
             )
-        if not isinstance(display_timezone, str) or not display_timezone:
-            raise ValidationError("Display timezone is required.")
-        try:
-            timezone_info = ZoneInfo(display_timezone)
-        except (ZoneInfoNotFoundError, ValueError) as exc:
-            raise ValidationError(
-                "Display timezone must be a valid IANA timezone."
-            ) from exc
 
         start_utc_ms = _as_utc_ms(start, timezone_info)
         context_start_date = _one_calendar_month_before(start)
@@ -196,24 +285,15 @@ class BacktestService:
         run_id = ObjectId()
         account_id = ObjectId()
         job_id = ObjectId()
-        unique_id = str(run_id)
-        account_label = (
-            f"Backtest {instrument} {start.isoformat()} to "
-            f"{end.isoformat()} ({unique_id})"
-        )
-        account = create_trade_account_doc(
+        account = _build_backtest_account_document(
             user_id=user_oid,
-            account_name=account_label,
-            display_name=account_label,
-            source_platform="backtest",
+            run_id=run_id,
+            account_id=account_id,
+            instrument=instrument,
+            start_date=start,
+            end_date=end,
         )
-        account.update(
-            {
-                "_id": account_id,
-                "workspace_mode": "backtest",
-                "backtest_run_id": run_id,
-            }
-        )
+        account_label = account["display_name"]
         run = create_backtest_run_doc(
             run_id=run_id,
             user_id=user_oid,
@@ -277,6 +357,75 @@ class BacktestService:
             "end_utc_ms": end_utc_ms,
         }
 
+    def _create_random_run(
+        self,
+        *,
+        user_oid: ObjectId,
+        instrument: str,
+        display_timezone: str,
+        timezone_info: ZoneInfo,
+        period_months: int,
+    ) -> dict:
+        """Create a pending run whose dates and account await worker selection."""
+        now = self.clock()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        as_of_date = now.astimezone(timezone_info).date() - timedelta(days=1)
+        minimum_start_date = date(2005, 1, 1)
+        maximum_start_date = _latest_random_start(as_of_date, period_months)
+        if maximum_start_date < minimum_start_date:
+            raise ValidationError(
+                "No random backtest period is available after January 1, 2005."
+            )
+
+        run_id = ObjectId()
+        job_id = ObjectId()
+        run = create_selecting_period_run_doc(
+            run_id=run_id,
+            user_id=user_oid,
+            preparation_job_id=job_id,
+            instrument=instrument,
+            display_timezone=display_timezone,
+            period_months=period_months,
+            selection_as_of_date=as_of_date,
+        )
+        job = self.preparation_jobs.build_for_random_selection(
+            job_id=job_id,
+            user_id=user_oid,
+            run_id=run_id,
+            instrument=instrument,
+            period_months=period_months,
+            as_of_date=as_of_date,
+            minimum_start_date=minimum_start_date,
+            maximum_start_date=maximum_start_date,
+            staging_prefix=f"backtests/{user_oid}/{run_id}/staging/",
+        )
+
+        inserted_run = False
+        try:
+            self.repository.create_run(run)
+            inserted_run = True
+            self.preparation_jobs.create(job)
+        except Exception:
+            if inserted_run:
+                self.repository.delete_owned_run(str(user_oid), run_id)
+            raise
+
+        return {
+            "id": run_id,
+            "instrument": instrument,
+            "requested_start_date": None,
+            "requested_end_date": None,
+            "display_timezone": display_timezone,
+            "period_selection": "random",
+            "period_months": period_months,
+            "status": "selecting_period",
+            "account_id": None,
+            "account_label": None,
+            "progress": run["progress"],
+            "created_at": run["created_at"],
+        }
+
     def list_runs(self, user_id: str) -> list[dict]:
         runs = self.repository.list_by_user(user_id)
         accounts = {
@@ -299,7 +448,7 @@ class BacktestService:
             raise NotFoundError("Backtest run not found.")
         if run.get("status") == "deleting":
             return {"id": str(run["_id"]), "status": "deleting"}
-        if run.get("status") not in {"preparing", "ready"}:
+        if run.get("status") not in {"selecting_period", "preparing", "ready"}:
             raise ConflictError("Backtest run cannot be deleted in its current state.")
 
         now = utc_now()
@@ -335,8 +484,13 @@ class BacktestService:
             raise NotFoundError("Backtest run not found.")
         from app.backtests.schemas import serialize_run
 
-        account = mongo.db.trade_accounts.find_one(
-            {"_id": run["account_id"], "user_id": ObjectId(user_id)}
+        account_id = run.get("account_id")
+        account = (
+            mongo.db.trade_accounts.find_one(
+                {"_id": account_id, "user_id": ObjectId(user_id)}
+            )
+            if account_id is not None
+            else None
         )
         result = serialize_run(run, account)
         result["tabs"] = []
@@ -651,7 +805,10 @@ class BacktestService:
 
     def retry_run(self, user_id: str, run_id) -> dict:
         run = self.repository.find_owned_run(user_id, run_id)
-        if run is None or run.get("status") != "preparing":
+        if run is None or run.get("status") not in {
+            "selecting_period",
+            "preparing",
+        }:
             raise NotFoundError("Backtest run not found.")
         if not self.preparation_jobs.requeue(run["_id"], now=utc_now()):
             raise ConflictError(

@@ -168,6 +168,40 @@ def test_run_list_reads_persisted_progress_and_retry_is_idempotent(
         ) == 1
 
 
+def test_random_run_request_returns_pending_selection_without_dates_or_account(
+    app, client, monkeypatch
+):
+    _patch_catalog(monkeypatch)
+    headers = _register(client, "backtest-random-period-api")
+
+    response = client.post(
+        "/api/backtest/runs",
+        json={
+            "instrument": "EUR-USD",
+            "display_timezone": "Europe/Rome",
+            "period_selection": "random",
+            "period_months": 3,
+        },
+        headers=headers,
+    )
+
+    assert response.status_code == 202
+    run = response.json["run"]
+    assert run["status"] == "selecting_period"
+    assert run["period_selection"] == "random"
+    assert run["period_months"] == 3
+    assert run["requested_start_date"] is None
+    assert run["requested_end_date"] is None
+    assert run["account_id"] is None
+
+    listed = client.get("/api/backtest/runs", headers=headers)
+    listed_run = next(
+        item for item in listed.json["runs"] if item["id"] == run["id"]
+    )
+    assert listed_run["status"] == "selecting_period"
+    assert listed_run["requested_start_date"] is None
+    assert listed_run["account_id"] is None
+
 def test_worker_reports_partial_and_empty_dates_and_keeps_ready_snapshot_immutable(
     app, client, monkeypatch
 ):

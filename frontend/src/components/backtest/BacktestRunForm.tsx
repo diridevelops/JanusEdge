@@ -1,15 +1,21 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { createBacktestRun, getBacktestInstruments } from '../../api/backtests.api';
-import type { BacktestRunSummary } from '../../types/backtest.types';
+import type {
+  BacktestRunSummary,
+  BacktestRandomPeriodMonths,
+} from '../../types/backtest.types';
 import {
   getBacktestDateRangeError,
   getLatestAllowedBacktestEndDate,
 } from '../../utils/backtestDates';
+import { buildCreateBacktestRunRequest } from '../../utils/backtestRunRequest';
 
 export interface BacktestRunFormValues {
   instrument: string;
   startDate: string;
   endDate: string;
+  periodSelection: 'manual' | 'random';
+  periodMonths: BacktestRandomPeriodMonths;
 }
 
 interface BacktestRunFormProps {
@@ -45,6 +51,12 @@ export function BacktestRunForm({
   const [instrument, setInstrument] = useState(initialValues?.instrument ?? '');
   const [startDate, setStartDate] = useState(initialValues?.startDate ?? '');
   const [endDate, setEndDate] = useState(initialValues?.endDate ?? '');
+  const [periodSelection, setPeriodSelection] = useState<'manual' | 'random'>(
+    initialValues?.periodSelection ?? 'manual'
+  );
+  const [periodMonths, setPeriodMonths] = useState<BacktestRandomPeriodMonths>(
+    initialValues?.periodMonths ?? 1
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -83,7 +95,8 @@ export function BacktestRunForm({
     () => getLatestAllowedBacktestEndDate(startDate),
     [startDate]
   );
-  const rangeError = startDate && endDate
+  const isRandomSelection = periodSelection === 'random';
+  const rangeError = !isRandomSelection && startDate && endDate
     ? getBacktestDateRangeError(startDate, endDate)
     : null;
 
@@ -99,7 +112,9 @@ export function BacktestRunForm({
       setFormError('Set a display timezone in Settings before creating a run.');
       return;
     }
-    const validationError = getBacktestDateRangeError(startDate, endDate);
+    const validationError = isRandomSelection
+      ? null
+      : getBacktestDateRangeError(startDate, endDate);
     if (validationError) {
       setFormError(validationError);
       return;
@@ -107,12 +122,15 @@ export function BacktestRunForm({
 
     setIsSubmitting(true);
     try {
-      const run = await createBacktestRun({
-        instrument,
-        start_date: startDate,
-        end_date: endDate,
-        display_timezone: displayTimezone,
-      });
+      const run = await createBacktestRun(
+        buildCreateBacktestRunRequest({
+          instrument,
+          startDate,
+          endDate,
+          periodSelection,
+          periodMonths,
+        }, displayTimezone)
+      );
       await onCreated(run);
     } catch (error) {
       setFormError(getRequestErrorMessage(error));
@@ -170,19 +188,59 @@ export function BacktestRunForm({
 
       <div className="grid gap-4 sm:grid-cols-2">
         <div>
+          <label htmlFor="backtest-period-selection" className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+            Period selection
+          </label>
+          <select
+            id="backtest-period-selection"
+            value={periodSelection}
+            onChange={(event) => {
+              setPeriodSelection(event.target.value as 'manual' | 'random');
+              setFormError(null);
+            }}
+            disabled={isSubmitting}
+            className="input-field"
+          >
+            <option value="manual">Choose dates</option>
+            <option value="random">Random period</option>
+          </select>
+        </div>
+        {isRandomSelection && (
+          <div>
+            <label htmlFor="backtest-period-months" className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+              Random period duration
+            </label>
+            <select
+              id="backtest-period-months"
+              value={periodMonths}
+              onChange={(event) => setPeriodMonths(Number(event.target.value) as BacktestRandomPeriodMonths)}
+              disabled={isSubmitting}
+              className="input-field"
+            >
+              <option value={1}>1 month</option>
+              <option value={3}>3 months</option>
+              <option value={6}>6 months</option>
+              <option value={12}>12 months</option>
+            </select>
+          </div>
+        )}
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div>
           <label htmlFor="backtest-start-date" className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
             Start date
           </label>
           <input
             id="backtest-start-date"
             type="date"
-            required
+            required={!isRandomSelection}
             value={startDate}
             onChange={(event) => {
               setStartDate(event.target.value);
               setFormError(null);
             }}
-            disabled={isSubmitting}
+            disabled={isSubmitting || isRandomSelection}
             className="input-field"
           />
         </div>
@@ -193,7 +251,7 @@ export function BacktestRunForm({
           <input
             id="backtest-end-date"
             type="date"
-            required
+            required={!isRandomSelection}
             min={startDate || undefined}
             max={latestAllowedEndDate ?? undefined}
             value={endDate}
@@ -201,7 +259,7 @@ export function BacktestRunForm({
               setEndDate(event.target.value);
               setFormError(null);
             }}
-            disabled={isSubmitting}
+            disabled={isSubmitting || isRandomSelection}
             aria-invalid={Boolean(rangeError)}
             aria-describedby={rangeError ? 'backtest-date-range-error' : 'backtest-date-range-help'}
             className="input-field"
@@ -209,7 +267,11 @@ export function BacktestRunForm({
         </div>
       </div>
 
-      {rangeError ? (
+      {isRandomSelection ? (
+        <p className="text-sm text-gray-500 dark:text-gray-400">
+          The worker will choose a start date with available one-minute candles. The period uses your configured display timezone.
+        </p>
+      ) : rangeError ? (
         <p id="backtest-date-range-error" role="alert" className="text-sm text-red-600 dark:text-red-400">
           {rangeError}
         </p>

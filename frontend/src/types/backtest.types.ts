@@ -8,14 +8,24 @@ export interface BacktestInstrumentCatalog {
   instruments: string[];
 }
 
-export interface CreateBacktestRunRequest {
+export type BacktestRandomPeriodMonths = 1 | 3 | 6 | 12;
+export type BacktestPeriodSelection = 'manual' | 'random';
+
+interface CreateManualBacktestRunRequest {
   instrument: string;
   start_date: string;
   end_date: string;
   display_timezone: string;
 }
 
-export type BacktestRunStatus = 'preparing' | 'ready' | 'deleting';
+export type CreateBacktestRunRequest = CreateManualBacktestRunRequest | {
+  instrument: string;
+  display_timezone: string;
+  period_selection: 'random';
+  period_months: BacktestRandomPeriodMonths;
+};
+
+export type BacktestRunStatus = 'selecting_period' | 'preparing' | 'ready' | 'deleting';
 export type BacktestPreparationOutcome = 'no_data' | 'failed';
 export type BacktestPreparationNextAction = 'edit_range' | 'start_new_run';
 
@@ -43,12 +53,14 @@ export interface BacktestPartialGapSummary {
 export interface BacktestRunSummary {
   id: string;
   instrument: string;
-  requested_start_date: string;
-  requested_end_date: string;
+  requested_start_date: string | null;
+  requested_end_date: string | null;
   display_timezone: string;
+  period_selection?: BacktestPeriodSelection;
+  period_months?: BacktestRandomPeriodMonths | null;
   status: BacktestRunStatus;
-  account_id: string;
-  account_label: string;
+  account_id: string | null;
+  account_label: string | null;
   progress: BacktestRunProgress | null;
   created_at: string;
 }
@@ -116,9 +128,9 @@ export interface BacktestChartWorkspaceSaveRequest {
 }
 
 export interface BacktestRunDetail extends BacktestRunSummary {
-  start_utc_ms: number;
-  end_utc_ms: number;
-  context_start_utc_ms: number;
+  start_utc_ms: number | null;
+  end_utc_ms: number | null;
+  context_start_utc_ms: number | null;
   coverage: BacktestRunCoverage | null;
   warmup_coverage: BacktestRunCoverage | null;
   snapshot: BacktestSnapshotMetadata | null;
@@ -129,10 +141,13 @@ export interface BacktestRunDetail extends BacktestRunSummary {
 export interface BacktestPreparationNotice {
   id: string;
   instrument: string;
-  requested_start_date: string;
-  requested_end_date: string;
+  requested_start_date: string | null;
+  requested_end_date: string | null;
+  period_selection?: BacktestPeriodSelection;
+  period_months?: BacktestRandomPeriodMonths | null;
   outcome: BacktestPreparationOutcome;
   next_action: BacktestPreparationNextAction;
+  message?: string;
   created_at: string;
 }
 
