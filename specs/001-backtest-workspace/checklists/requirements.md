@@ -35,8 +35,8 @@
 
 - Version one is limited to downloading and replaying completed one-minute candles for one instrument and date range.
 - Playback rates are explicitly defined as one, five, or twenty candles per second.
-- Each run creates one Backtest account; simulated orders and trade recording are deferred.
+- Each run creates one Backtest account; v1 includes simulated orders and trade recording during replay.
 - Run deletion is permanent, confirmed, available during preparation or after readiness, and physically removes only that run's dedicated account, linked trades and dependents, run data, and every object under its MinIO prefix.
 - A `deleting` run is only a temporary non-playable cleanup marker; interim hiding or a 202 response is not completion. Completion requires an empty run MinIO prefix and no run/account/trade/deletion-marker records.
 - Each run requests one calendar month of available pre-start chart history, but the selected dates alone define replay start/end, readiness, and playback bounds; missing warm-up data is allowed.
-- Real and Backtest activity remain separated; trade imports and manual trade creation are available only in Real mode.
+- Real and Backtest data remain separate; imported and manually created trades are Real-mode activity, while simulated orders and trades belong to their run's Backtest account.
