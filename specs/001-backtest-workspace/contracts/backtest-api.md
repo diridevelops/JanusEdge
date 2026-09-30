@@ -4,7 +4,7 @@ This contract describes the authenticated Flask API used by the React Backtest p
 
 ## Authentication and ownership
 
-All endpoints require the existing JWT bearer authentication. The backend derives user_id from the JWT and applies owner filtering to every run, preparation job, candle, account, trade, replay-position, deletion, and drawing operation. Request bodies never accept a user_id. Access to another user’s resource returns the same not-found behavior as an unknown id.
+All endpoints require the existing JWT bearer authentication. The backend derives user_id from the JWT and applies owner filtering to every run, preparation job, candle, account, trade, execution/fill, simulation operation, order, position, cost-profile, replay-position, deletion, and drawing operation. Request bodies never accept a user_id. Access to another user’s resource returns the same not-found behavior as an unknown id.
 
 Timestamps are UTC epoch milliseconds. Candle bars are returned in chronological order with one-minute source interval.
 
@@ -33,11 +33,13 @@ Request:
   "instrument": "EUR-USD",
   "start_date": "2026-01-01",
   "end_date": "2026-01-10",
-  "display_timezone": "Europe/Rome"
+  "display_timezone": "Europe/Rome",
+  "initial_balance_usd": 10000,
+  "risk_percent": 1.0
 }
 ~~~
 
-The backend validates the submitted instrument against the current catalog from the pinned downloader, along with the selected replay date range, timezone, and inclusive one-calendar-year limit. For a February 29 start, February 28 of the following year is the latest permitted end date. The selected local-day boundaries define the replay window. The backend also calculates a warm-up start one calendar month before the selected local start date, clamping to the final valid day of the preceding month, then converts the warm-up and selected replay boundaries to UTC. The user's dates and one-year limit are unchanged by this extra source interval. The API then creates the run, exactly one associated Backtest account, and one durable MongoDB preparation job. Preparation is handled by a separate worker process; the HTTP request does not run the download.
+The backend validates the submitted instrument against the current catalog from the pinned downloader, along with the selected replay date range, timezone, and inclusive one-calendar-year limit. `initial_balance_usd` and `risk_percent` are optional and default to 10,000 and 1.0; both must be finite and positive, and risk percent cannot exceed 100. For a February 29 start, February 28 of the following year is the latest permitted end date. The selected local-day boundaries define the replay window. The backend also calculates a warm-up start one calendar month before the selected local start date, clamping to the final valid day of the preceding month, then converts the warm-up and selected replay boundaries to UTC. The user's dates and one-year limit are unchanged by this extra source interval. The API then creates the run, exactly one associated Backtest account, and one durable MongoDB preparation job. Preparation is handled by a separate worker process; the HTTP request does not run the download.
 
 The manual request above remains unchanged. Random selection instead sends:
 
@@ -46,11 +48,13 @@ The manual request above remains unchanged. Random selection instead sends:
   "instrument": "EUR-USD",
   "display_timezone": "Europe/Rome",
   "period_selection": "random",
-  "period_months": 3
+  "period_months": 3,
+  "initial_balance_usd": 10000,
+  "risk_percent": 1.0
 }
 ~~~
 
-`period_months` must be 1, 3, 6, or 12; `start_date` and `end_date` are omitted. The backend captures yesterday in the configured display timezone when accepting the request, then creates a `selecting_period` run with null dates and no account and enqueues a durable selection job. Its initial response is:
+`period_months` must be 1, 3, 6, or 12; `start_date` and `end_date` are omitted. Balance and risk fields use the same defaults and validation as a manual run. The backend captures yesterday in the configured display timezone when accepting the request, then creates a `selecting_period` run with null dates and no account and enqueues a durable selection job. Its initial response is:
 
 ~~~json
 {
@@ -59,6 +63,9 @@ The manual request above remains unchanged. Random selection instead sends:
     "instrument": "EUR-USD",
     "period_selection": "random",
     "period_months": 3,
+    "initial_balance_usd": 10000,
+    "risk_percent": 1.0,
+    "current_balance_usd": 10000,
     "requested_start_date": null,
     "requested_end_date": null,
     "status": "selecting_period",
@@ -92,6 +99,9 @@ Accepted response:
   "run": {
     "id": "run-id",
     "instrument": "EUR-USD",
+    "initial_balance_usd": 10000,
+    "risk_percent": 1.0,
+    "current_balance_usd": 10000,
     "status": "preparing",
     "account_id": "account-id",
     "progress": {
@@ -108,15 +118,15 @@ Return 202 while preparation continues. Invalid input uses the app’s validatio
 
 ### GET /api/backtest/runs
 
-Returns the authenticated user’s selecting-period, preparing, ready, and deleting runs, newest first. Each list entry includes id, instrument, period selection, nullable selected dates, nullable account label, status, and progress (`stage` plus a percentage when measurable, otherwise null); it includes `blind_mode` for new records, treating a missing value on legacy records as false. Until selection resolves, the frontend shows the instrument and selection status without dates or an account. For blind runs, the frontend omits dates and ranges in every run-list state and the account label contains “blind” without dates. The API continues returning canonical run dates and prices; this is rendered-UI masking, not API redaction. A deleting run is shown as pending cleanup and cannot be opened. The frontend polls this endpoint every five seconds while at least one run is selecting-period, preparing, or deleting and stops when none are. Progress is read from MongoDB state updated by the worker. Failed/no-data records are not retained.
+Returns the authenticated user’s selecting-period, preparing, ready, complete, and deleting runs, newest first. Each list entry includes id, instrument, period selection, nullable selected dates, nullable account label, status, and progress (`stage` plus a percentage when measurable, otherwise null); it includes `blind_mode` for new records, treating a missing value on legacy records as false. Until selection resolves, the frontend shows the instrument and selection status without dates or an account. For blind runs, the frontend omits dates and ranges in every run-list state and the account label contains “blind” without dates. The API continues returning canonical run dates and prices; this is rendered-UI masking, not API redaction. A deleting run is shown as pending cleanup and cannot be opened. The frontend polls this endpoint every five seconds while at least one run is selecting-period, preparing, or deleting and stops when none are. Progress is read from MongoDB state updated by the worker. Failed/no-data records are not retained.
 
 ### GET /api/backtest/runs/{run_id}
 
-Returns the owned run detail, nullable account label/dates while selection is pending, selected replay-period coverage, warm-up coverage, saved cursor, `blind_mode`, `normalized_reference_price` (for ready blind runs), and status. A selecting-period, preparing, or deleting run remains on the list page and has no playable chart detail. When the run becomes ready, its persisted cursor is initialized to the snapshot index and timestamp of the first available candle at or after the selected replay start; this index can be greater than zero because the snapshot includes warm-up candles. Readiness requires at least one candle in the selected replay period. The frontend uses the fixed reference for blind chart display, hides complete dates/raw prices, and formats all displayed replay times, including the current cursor timestamp, as local weekday/time; source candle responses remain canonical. Chart workspace state is loaded through the dedicated chart-workspace routes below.
+Returns the owned run detail, nullable account label/dates while selection is pending, immutable `instrument_metadata`, immutable `initial_balance_usd` and `risk_percent`, current balance (initial balance plus committed net cash effect of fills, with each execution cost counted once and partial exits reflected; unrealized P&L excluded), selected replay-period coverage, warm-up coverage, saved cursor, `blind_mode`, `normalized_reference_price` (for ready blind runs), simulation summary, and status. A selecting-period, preparing, or deleting run remains on the list page and has no playable chart detail. A ready or complete run is inspectable. When the run becomes ready, its persisted cursor is initialized to the snapshot index and timestamp of the first available candle at or after the selected replay start; this index can be greater than zero because the snapshot includes warm-up candles. Readiness requires at least one candle in the selected replay period. The frontend uses the fixed reference for blind chart display, hides complete dates/raw prices, and formats all displayed replay times, including the current cursor timestamp, as local weekday/time; source candle responses remain canonical. Chart workspace state is loaded through the dedicated chart-workspace routes below.
 
 ### DELETE /api/backtest/runs/{run_id}
 
-Permanently deletes an owned selecting-period, preparing, or ready run. The frontend must require explicit confirmation before calling this endpoint and explain that the run's dedicated Backtest account, if created, and all trades linked to it will also be removed. The request has no user or account identifier; the server derives ownership and the one-to-one account association from the run record.
+Permanently deletes an owned selecting-period, preparing, ready, or complete run. The frontend must require explicit confirmation before calling this endpoint and explain that the run's dedicated Backtest account, if created, all simulated orders/fills/open positions, and all closed trades linked to it will also be removed. The request has no user or account identifier; the server derives ownership and the one-to-one account association from the run record.
 
 Accepted response:
 
@@ -131,7 +141,7 @@ Accepted response:
 
 Return 202 after the durable run state changes to `deleting`; this means cleanup was accepted, not that deletion completed. The run immediately becomes non-playable, and the associated account and trades may be excluded from Backtest views while cleanup is pending, but hiding them is only an interim state. A repeated request while cleanup is pending returns the same pending state. A missing or non-owned run returns the standard 404 behavior.
 
-The worker treats `deleting` as a cancellation fence: preparation, replay-position writes, chart-workspace writes, and drawing writes return the existing conflict error for a run that is being deleted and cannot publish or mutate that run. It resumes cleanup after restart and physically removes every object under the run's MinIO prefix, including staged and immutable candle objects and any unreferenced objects, then verifies the prefix is empty. It also removes the preparation job, replay cursor, chart tabs/workspace, drawings, every trade linked to the dedicated account (including trade-owned dependent records and files), and the account. Remove the run record carrying the `deleting` marker only after all associated MongoDB records and MinIO objects are physically gone. The run disappearing from `GET /api/backtest/runs` is the completion signal; do not report success while cleanup is pending or resources are merely hidden. Cleanup is idempotent. It must not delete another run's or any Real account's records, even when labels or instruments match. User-initiated deletion does not create a preparation-failure notice.
+The worker treats `deleting` as a cancellation fence: preparation, replay, simulation, chart-workspace, and drawing writes return the existing conflict error for a run that is being deleted and cannot publish or mutate that run. It resumes cleanup after restart and physically removes every object under the run's MinIO prefix, including staged and immutable candle objects and any unreferenced objects, then verifies the prefix is empty. It also removes the preparation job, replay cursor, all simulation control/operation/order/fill/position/cost data, every Execution tagged to this run whether or not it has a Trade link, chart tabs/workspace, drawings, every trade linked to the dedicated account (including trade-owned dependent records and files), and the account. Remove the run record carrying the `deleting` marker only after all associated MongoDB records and MinIO objects are physically gone. The run disappearing from `GET /api/backtest/runs` is the completion signal; do not report success while cleanup is pending or resources are merely hidden. Cleanup is idempotent. It must not delete another run's or any Real account's records, even when labels or instruments match. User-initiated deletion does not create a preparation-failure notice.
 
 ## Preparation result notices
 
@@ -284,13 +294,14 @@ Request:
 {
   "source_candle_index": 1234,
   "time_ms": 1767308400000,
-  "expected_revision": 8
+  "expected_revision": 8,
+  "client_operation_id": "op-uuid"
 }
 ~~~
 
-The server validates that the run is ready and the index/time pair matches the immutable snapshot. A valid replay cursor MUST be at or after `snapshot.replay_start_source_index` and no later than the last candle in the selected replay period; warm-up indexes are not valid cursor positions. When expected_revision matches, it accepts any valid replay cursor, including an intentional step-back, and increments the revision. A stale revision returns 409. The client clamps a seek before the selected replay start to the first eligible replay candle, serializes/coalesces writes so an older in-flight request cannot overwrite a later selection, and flushes on pause, seek, and route exit.
+The server validates that the run is ready and the index/time pair matches the immutable snapshot. A valid replay cursor MUST be at or after `snapshot.replay_start_source_index` and no later than the last candle in the selected replay period; warm-up indexes are not valid cursor positions. Forward movement MUST use `POST /simulation/advance` so each intervening source candle is processed in order. This endpoint permits only a backward step/seek before an order has ever been accepted in the current reset generation. Once an order is accepted, backward movement returns 409 until an explicit confirmed reset. A stale revision returns 409. The client clamps a seek before the selected replay start to the first eligible replay candle and sends unique operation ids so an older/retried request cannot overwrite a later selection.
 
-When a run first becomes ready, the server persists `source_candle_index: replay_start_source_index`, the first eligible replay candle’s `time_ms`, and revision zero in the same run-document update that changes status to ready. The frontend uses this stored cursor and starts playback paused. All snapshot candles before this index are loaded as historical chart context but do not contribute to replay progress, forward/backward stepping, seeking, or completion.
+When a run first becomes ready, the server persists `source_candle_index: replay_start_source_index`, the first eligible replay candle’s `time_ms`, and revision zero in the same run-document update that changes status to ready. The frontend uses this stored cursor and starts playback paused. All snapshot candles before this index are loaded as historical chart context but do not contribute to replay progress, forward/backward stepping, seeking, or completion. Accepted order and candle-advance operations share a run-level compare-and-swap sequence; the run cursor, committed sequence, and final `complete` status change atomically.
 
 ## Persist drawing state
 
@@ -325,11 +336,90 @@ Request:
 
 The server validates interval limits, ownership, payload size, and JSON shape, then upserts the opaque exported string by user/run/interval. CandleKit 0.1.0 exports drawings as a JSON array; the API also accepts a JSON object-shaped empty state. Return the persisted payload and incremented revision. A revision conflict returns 409 so another open tab cannot silently overwrite a newer drawing set. An empty drawing set is a valid saved state. Preserve replay-aware drawing visibility if provided by the pinned CandleKit artifact; otherwise the frontend filters drawings with any time anchor later than the replay cursor and shows them again when all anchors are at or before it. This fallback does not use drawing creation or edit time and does not alter the persisted payload.
 
+## Simulation orders, execution, and account results
+
+Cursor movement, order, cancel, manual-close, protection-modification, cost, and advance mutations require authentication, owner/run filtering, a ready run, the run-level simulation CAS revision, and a unique client-generated `client_operation_id`. Reset is available on ready or complete runs. Repeating the same key with the same request returns the stored result; reusing it with a different request returns 409. Simulation effects are durable and become visible only when the operation sequence is committed on the run. A pending operation is resumed idempotently after restart. Every command is fenced when deletion begins.
+
+### GET /api/backtest/runs/{run_id}/simulation
+
+Returns current simulation state: committed cursor and operation sequence, reset generation, whether a mutation/reset cleanup is pending, whether backward navigation is locked, immutable initial balance and risk percentage, current balance, current versioned costs, working orders, fills, open positions, realized closed-trade summaries, and whether the run is ready or complete. Each open-position result includes its stable position id, side, remaining lots, weighted entry price, current stop-loss/take-profit prices and order ids, and derived `unrealized_pnl_usd` marked at the latest revealed candle close before hypothetical exit costs. Use the run's frozen instrument metadata and latest completed immutable quote-to-USD rate no later than the mark candle close. Unrealized P&L is display-only; it does not alter current balance or closed-trade analytics. The position id is the scope for that indicator's protection and close actions. Indicator sets are presentation state, not persisted user drawings. Results are bounded/paginated where collections can grow. Order/position/cost results select the latest version at or below the committed sequence and current generation; fills and closed Trades are filtered by committed sequence/generation. A complete run remains inspectable.
+
+### POST /api/backtest/runs/{run_id}/simulation/orders
+
+Submits one protected entry order. Both protective prices are required. Example auto-sized market request:
+
+~~~json
+{
+  "client_operation_id": "op-uuid",
+  "expected_revision": 12,
+  "side": "buy",
+  "order_type": "market",
+  "auto_size": true,
+  "stop_loss": 1.082,
+  "take_profit": 1.09
+}
+~~~
+
+`auto_size` is required in every entry request. The USD risk budget is current balance multiplied by run Risk% and divided by 100. The order-panel default stop distance is that budget divided by the instrument's USD pip value for one standard lot (`pip_size * contract_size * quote_to_usd_rate`), using frozen pip/contract metadata and the latest completed quote-to-USD conversion rate no later than the current cursor candle close; multiply the pips by pip size for a price offset. With `auto_size: true`, omit `lots`; the service calculates lots from the selected entry-to-stop distance, frozen pair metadata, as-of quote-to-USD rate, and active execution costs, then rounds down to a 0.001-lot increment. Preview lots update when entry or stop moves. If even the minimum lot would exceed the budget, reject without accepting the order. With `auto_size: false`, `lots` is required, positive in 0.001 increments, and at least 0.001; the response still reports projected USD risk and risk percent. The order-panel checkbox defaults to enabled. The request snapshots the current risk budget, sizing reference price, conversion rate, and sizing mode; a later balance change does not resize an already accepted working order. Report preview risk using the sizing reference, then recalculate actual initial risk from the executed fill price and event-time conversion after fill; an opening gap can make actual risk differ from preview. All entries require both finite stop-loss and take-profit prices at instrument precision, on the correct sides of the entry (long: stop below and target above; short: target below and stop above), after blind display values are converted to canonical prices. Do not require prices to be positive: the blind normalization reference and source price may be negative. Market orders use the close of the current revealed candle as their preview/reference price but remain pending until the next available unrevealed source-candle index and fill at that candle's open with active costs. They cannot fill against candle N or inspect fill-candle high/low/close. Limit requests require a finite `entry_price` at instrument precision and become eligible only on a later unrevealed candle; the future candle's high-low range must reach the limit price to trigger a fill. A gap opening through the limit without the candle range reaching it does not fill. When touched, the order fills at exactly the submitted `entry_price`, without price improvement. Spread/slippage amounts on a limit fill are accounted for separately under FR-045 and do not change the recorded fill price. If there is no later available candle because the run is at its final candle, reject with a conflict/validation error and do not accept an unfillable order. Only ready runs accept orders; complete runs require reset first. On the first order for a non-USD quote currency, reject if its immutable conversion series has no completed observation at or before the current cursor close.
+
+Example manual-size limit request:
+
+~~~json
+{
+  "client_operation_id": "op-uuid",
+  "expected_revision": 13,
+  "side": "sell",
+  "order_type": "limit",
+  "entry_price": 1.09,
+  "auto_size": false,
+  "lots": 0.1,
+  "stop_loss": 1.095,
+  "take_profit": 1.08
+}
+~~~
+
+All user-facing order price inputs use the run's displayed price scale. For non-blind runs, this is the canonical source-price scale. For blind runs, the client submits normalized values and the backend maps them to canonical prices with `canonicalPrice = displayedPrice × normalized_reference_price / 100` before validation and persistence. API responses may retain canonical values; the blind Backtest UI must normalize every displayed value before rendering it.
+
+### POST /api/backtest/runs/{run_id}/simulation/orders/{order_id}/cancel
+
+Cancels an owned pending entry order by operation key/revision. Filled orders and protective exits cannot be canceled through this entry-order action. The original order remains in history with cancelled status.
+
+### POST /api/backtest/runs/{run_id}/simulation/positions/{position_id}/close
+
+Manually closes the full remaining quantity of one owned open position at the close of the currently revealed cursor candle. Request contains `client_operation_id` and `expected_revision`; it does not advance the cursor. The fill uses the active cost profile and the latest completed immutable quote-to-USD conversion rate no later than the candle-close event. The same committed operation records a filled `manual_close` BacktestOrder, appends the closing Execution, cancels both linked stop-loss/take-profit OCO orders, updates the closed Trade/account result, and makes the position no longer open. Repeating the same operation id returns the original result. This action is unavailable for a closed position or a complete run.
+
+### PUT /api/backtest/runs/{run_id}/simulation/positions/{position_id}/protection
+
+Moves the active stop-loss, take-profit, or both on one owned open simulated position. The request contains `client_operation_id`, `expected_revision`, and at least one of `stop_loss` or `take_profit`; omitted levels remain unchanged. Prices must be finite, at instrument precision, and not already crossed at the current revealed close (long stop below and target above that close; short stop above and target below). The updated protection becomes eligible on the next available unrevealed one-minute candle and cannot use prior/current-candle high, low, or close. The OCO relationship remains intact and original initial risk/R-analysis basis is unchanged. A changed stop idempotently ensures a user tag named `stop-moved` exists; if absent, create it in the system `General` category. If the tag already exists, reuse it. Store the tag id with the open position and apply it to the conventional Journal Trade when the position fully closes. A target-only change does not add this tag. The response returns current protection prices, immutable initial risk, and tag state. A closed position cannot be modified.
+
+The chart's BE action uses this endpoint for exactly one position, setting `stop_loss` to that position's weighted entry price; the ordinary side/crossed-price validation and next-candle activation rules still apply. Disable BE if the entry price has already been crossed by the current revealed close. Dragging a stop or target submits only that selected position's changed level.
+
+The chart's X action uses the close endpoint above for exactly one position. It closes the selected position at the current revealed candle close; it does not close sibling positions that were opened by other entries.
+
+### PUT /api/backtest/runs/{run_id}/simulation/costs
+
+Replaces the per-run cost profile using nonnegative `total_spread_pips`, `slippage_pips`, and `commission_usd_per_lot_per_side`, plus operation key/revision. The response contains a new profile revision. Before the first edit, revision zero defaults all values to zero and the UI identifies costs as excluded. Buy/sell fills apply half the configured total spread on their respective side; slippage is adverse; commission is USD per lot per side. Only future fills use the new profile. Each fill retains the revision and exact applied costs. Cost changes are unavailable after complete until reset.
+
+### POST /api/backtest/runs/{run_id}/simulation/advance
+
+Advances to a later source candle index, for play, forward step, or forward seek. Request includes `target_source_index`, `client_operation_id`, and `expected_revision`. The target must be strictly later than the committed cursor, match an available snapshot candle, and not exceed the last replay-period candle; backward movement uses the guarded replay-position route. The service processes every available one-minute candle after the current cursor through the target in immutable snapshot order, including all pending fills, protective exits, costs, and position changes. No source candle is skipped because the UI made a jump; missing timestamps do not synthesize bars. Existing protective orders are checked on each eligible candle. Entry-fill candle range is not used for that entry's bracket. If both the stop and target of one OCO bracket are touched in one candle, the stop fills first. Simultaneous fills/order eligibility use persisted submission sequence, then stable order id as tie-break.
+
+When the target is the final eligible replay-period candle, the operation first processes that candle, cancels remaining pending entry orders, closes remaining open positions at the final candle close with configured costs, persists resulting closed trades, and atomically marks the run `complete`. Completion is inspectable; further order submissions, cursor movement, and cost changes return conflict until reset or deletion.
+
+### POST /api/backtest/runs/{run_id}/simulation/reset
+
+Requires explicit `confirmed: true`, a unique operation key, and expected revision. The reset is idempotent. Its run-level CAS commit increments reset generation, clears the backward-navigation lock, preserves the latest cost profile and immutable initial balance/risk settings, resets derived current balance to the initial balance, sets status back to `ready`, and restores the first eligible replay-period cursor. Old-generation orders, fills/allocation Executions, positions, analytics outputs, and fully closed simulated Trades become invisible at that commit and are then physically removed idempotently; the internal operation-id journal is retained so retries remain idempotent. The run's pending-operation gate blocks new mutations until cleanup finishes. This action is available for ready or complete runs. A reset interrupted during cleanup resumes safely after restart, and retrying by operation key returns the same reset result.
+
+### Forex conversion and closed Trade visibility
+
+Every closing fill preserves native quote-currency P&L. A `quote_to_usd_rate` is USD per one unit of the instrument's quote currency at that exit; USD-quoted instruments use 1. Initial risk uses the corresponding entry-event rate. Use the latest completed immutable one-minute conversion candle with close time no later than the fill event; direct or inverse conversion series must be pinned with the run snapshot. Because OHLC does not reveal the exact intra-minute trigger time, timestamp wick/gap fills at the triggering candle's opening instant, manual close at the current cursor candle's close, and timestamp final forced closes at the final candle's close. Each extended `Execution` fill stores its own event rate and native/USD realized amounts; the conventional Trade stores exact aggregate gross/net totals. Do not use the Trade model's single scalar rate to recompute a Backtest trade's multiple exit conversions. If no valid as-of rate exists, reject the affected order/close operation with a clear error; do not commit its candle advance or state change and never substitute a scalar latest rate or 1 for non-USD quote currency. Once a position fully closes, create one ordinary `Trade` with `status=closed` under the run's dedicated Backtest account and stable simulation id. Partially open exposure remains in simulation state and does not appear in Journal/closed-only analytics. Backtest Journal and analytics can then use existing closed-trade account scoping; Blind presentation is derived from the linked run.
+
 ## Status and error behavior
 
-- Preparing and ready are the normal retained run statuses. `deleting` is a temporary, non-playable state retained only while confirmed cleanup is pending.
+- Selecting-period and preparing represent durable preparation; ready is playable; complete is retained, inspectable, and read-only; `deleting` is a temporary, non-playable state retained only while confirmed cleanup is pending.
 - Interrupted preparation stays preparing. A separate worker claims durable MongoDB jobs with expiring leases; after a worker restart or lease expiry, the job resumes from the last completed UTC-date checkpoint. Manual retry requeues the same job.
 - Failed and no-data runs are reported and then deleted with their account.
+- A complete run rejects orders, cursor movement, and cost updates until reset. Reset preserves its cost profile and clears only that run's simulated data and closed simulated trades.
 - Confirmed user deletion removes the dedicated account and its linked trades, while a durable `deleting` run state fences writes and lets the worker finish idempotent cleanup after restart.
 - Invalid input and out-of-range requests use the existing validation error shape.
 - Unknown or non-owned run resources return not found.
