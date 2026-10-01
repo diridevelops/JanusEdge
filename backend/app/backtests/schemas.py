@@ -23,6 +23,13 @@ MAX_DRAWING_STATE_BYTES = 1_048_576
 CHART_WORKSPACE_SCHEMA_VERSION = 1
 CHART_WORKSPACE_LAYOUT_ENGINE = "flexlayout-react"
 BACKTEST_CHART_PANEL_TYPE = "backtest-chart"
+DEFAULT_INITIAL_BALANCE_USD = 10_000.0
+DEFAULT_RISK_PERCENT = 1.0
+DEFAULT_SIMULATION_EXECUTION_COSTS = {
+    "total_spread_pips": 0.0,
+    "slippage_pips": 0.0,
+    "commission_usd_per_lot_per_side": 0.0,
+}
 
 
 def create_backtest_run_doc(
@@ -39,6 +46,10 @@ def create_backtest_run_doc(
     end_utc_ms: int,
     context_start_utc_ms: int,
     blind_mode: bool = False,
+    initial_balance_usd: float = DEFAULT_INITIAL_BALANCE_USD,
+    risk_percent: float = DEFAULT_RISK_PERCENT,
+    execution_costs: dict[str, float] | None = None,
+    instrument_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a preparing run document with stable source semantics."""
     now = utc_now()
@@ -61,6 +72,13 @@ def create_backtest_run_doc(
         "period_months": None,
         "blind_mode": blind_mode,
         "normalized_reference_price": None,
+        "initial_balance_usd": initial_balance_usd,
+        "current_balance_usd": initial_balance_usd,
+        "risk_percent": risk_percent,
+        "execution_costs": dict(
+            execution_costs or DEFAULT_SIMULATION_EXECUTION_COSTS
+        ),
+        "instrument_metadata": instrument_metadata,
         "status": "preparing",
         "progress": {"stage": "downloading", "percent": None},
         "account_id": account_id,
@@ -84,6 +102,10 @@ def create_selecting_period_run_doc(
     period_months: int,
     selection_as_of_date: date,
     blind_mode: bool = False,
+    initial_balance_usd: float = DEFAULT_INITIAL_BALANCE_USD,
+    risk_percent: float = DEFAULT_RISK_PERCENT,
+    execution_costs: dict[str, float] | None = None,
+    instrument_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build a run that has no selected dates or account yet."""
     now = utc_now()
@@ -106,6 +128,13 @@ def create_selecting_period_run_doc(
         "period_months": period_months,
         "blind_mode": blind_mode,
         "normalized_reference_price": None,
+        "initial_balance_usd": initial_balance_usd,
+        "current_balance_usd": initial_balance_usd,
+        "risk_percent": risk_percent,
+        "execution_costs": dict(
+            execution_costs or DEFAULT_SIMULATION_EXECUTION_COSTS
+        ),
+        "instrument_metadata": instrument_metadata,
         "selection_as_of_date": selection_as_of_date.isoformat(),
         "status": "selecting_period",
         "progress": {"stage": "selecting_period", "percent": None},
@@ -249,6 +278,9 @@ def serialize_run(run: dict, account: dict | None = None) -> dict:
     result = serialize_backtest_value(run)
     result.setdefault("blind_mode", bool(run.get("blind_mode", False)))
     result.setdefault("normalized_reference_price", None)
+    result.setdefault("initial_balance_usd", DEFAULT_INITIAL_BALANCE_USD)
+    result.setdefault("current_balance_usd", result["initial_balance_usd"])
+    result.setdefault("risk_percent", DEFAULT_RISK_PERCENT)
     if result["blind_mode"]:
         # Older linked accounts may still have a date-bearing persisted label.
         run_id = result.get("id", run.get("_id"))

@@ -28,6 +28,9 @@ from app.backtests.snapshot_store import SnapshotStore
 from app.backtests.schemas import (
     DEFAULT_CANDLEKIT_VERSION,
     DRAWING_SCHEMA_VERSION,
+    DEFAULT_INITIAL_BALANCE_USD,
+    DEFAULT_RISK_PERCENT,
+    DEFAULT_SIMULATION_EXECUTION_COSTS,
     MAX_DRAWING_STATE_BYTES,
     create_backtest_run_doc,
     create_selecting_period_run_doc,
@@ -35,6 +38,7 @@ from app.backtests.schemas import (
     serialize_drawing_state,
     validate_chart_workspace,
 )
+from app.market_data.symbol_mapper import get_forex_instrument
 
 
 def fetch_instrument_codes():
@@ -121,6 +125,8 @@ def _build_backtest_account_document(
     *, user_id: ObjectId, run_id: ObjectId, account_id: ObjectId,
     instrument: str, start_date: date, end_date: date,
     blind_mode: bool = False,
+    initial_balance_usd: float = DEFAULT_INITIAL_BALANCE_USD,
+    risk_percent: float = DEFAULT_RISK_PERCENT,
 ) -> dict:
     """Build the run's unique account label without dates when blind."""
     if blind_mode:
@@ -135,12 +141,15 @@ def _build_backtest_account_document(
         account_name=account_label,
         display_name=account_label,
         source_platform="backtest",
+        starting_balance_usd=initial_balance_usd,
+        risk_percent=risk_percent,
     )
     account.update(
         {
             "_id": account_id,
             "workspace_mode": "backtest",
             "backtest_run_id": run_id,
+            "current_balance_usd": initial_balance_usd,
         }
     )
     return account
@@ -157,6 +166,112 @@ def _require_nonnegative_int(value, field_name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ValidationError(f"{field_name} must be a nonnegative integer.")
     return value
+
+
+def _positive_finite_number(value, field_name: str) -> float:
+    """Validate a JSON numeric balance/risk setting without accepting bools."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValidationError(f"{field_name} must be a finite positive number.")
+    try:
+        number = float(value)
+    except (OverflowError, ValueError) as exc:
+        raise ValidationError(
+            f"{field_name} must be a finite positive number."
+        ) from exc
+    if not math.isfinite(number) or number <= 0:
+        raise ValidationError(f"{field_name} must be a finite positive number.")
+    return number
+
+
+def _nonnegative_finite_number(value, field_name: str) -> float:
+    """Validate a JSON numeric execution-cost setting without accepting bools."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValidationError(f"{field_name} must be a finite nonnegative number.")
+    try:
+        number = float(value)
+    except (OverflowError, ValueError) as exc:
+        raise ValidationError(
+            f"{field_name} must be a finite nonnegative number."
+        ) from exc
+    if not math.isfinite(number) or number < 0:
+        raise ValidationError(f"{field_name} must be a finite nonnegative number.")
+    return number
+
+
+def _validated_execution_costs(value) -> dict[str, float]:
+    if value is None:
+        return dict(DEFAULT_SIMULATION_EXECUTION_COSTS)
+    if not isinstance(value, dict):
+        raise ValidationError("execution_costs must be an object.")
+    expected = set(DEFAULT_SIMULATION_EXECUTION_COSTS)
+    missing = expected - value.keys()
+    extra = value.keys() - expected
+    if missing or extra:
+        raise ValidationError(
+            "execution_costs must include total_spread_pips, slippage_pips, "
+            "and commission_usd_per_lot_per_side only."
+        )
+    return {
+        field: _nonnegative_finite_number(
+            value[field], f"execution_costs.{field}"
+        )
+        for field in DEFAULT_SIMULATION_EXECUTION_COSTS
+    }
+
+
+def _freeze_instrument_metadata(instrument: str, user_id: ObjectId) -> dict:
+    """Snapshot the user's validated forex sizing rules onto a run.
+
+    Replays remain available for catalog instruments without configured
+    trading metadata, but simulated order entry can then reject them with a
+    clear unsupported-instrument response rather than inventing contract
+    sizes or precision.
+    """
+    user = mongo.db.users.find_one(
+        {"_id": user_id}, {"symbol_mappings": 1}
+    )
+    forex = get_forex_instrument(
+        instrument,
+        raw_symbol=instrument.replace("-", "/").replace("_", "/"),
+        symbol_mappings=(user or {}).get("symbol_mappings"),
+    )
+    if forex is None:
+        return {
+            "instrument": instrument,
+            "instrument_type": "unsupported",
+            "supported_for_simulation": False,
+        }
+    try:
+        base_currency = str(forex["base_currency"]).upper()
+        quote_currency = str(forex["quote_currency"]).upper()
+        pip_size = _positive_finite_number(forex["pip_size"], "pip_size")
+        price_precision = forex["price_precision"]
+        contract_size = _positive_finite_number(
+            forex["contract_size"], "contract_size"
+        )
+    except (KeyError, TypeError) as exc:
+        raise ValidationError(
+            "The configured instrument sizing metadata is incomplete."
+        ) from exc
+    if (
+        len(base_currency) != 3
+        or len(quote_currency) != 3
+        or isinstance(price_precision, bool)
+        or not isinstance(price_precision, int)
+        or not 0 <= price_precision <= 15
+    ):
+        raise ValidationError("The configured instrument metadata is invalid.")
+    return {
+        "instrument": instrument,
+        "instrument_type": "forex",
+        "supported_for_simulation": True,
+        "base_currency": base_currency,
+        "quote_currency": quote_currency,
+        "pip_size": pip_size,
+        "price_precision": price_precision,
+        "contract_size": contract_size,
+        "pip_value_per_standard_lot": pip_size * contract_size,
+    }
 
 
 def _parse_interval_minutes(value) -> int:
@@ -214,11 +329,22 @@ class BacktestService:
         period_selection: str | None = None,
         period_months: int | None = None,
         blind_mode: bool | None = None,
+        initial_balance_usd: float = DEFAULT_INITIAL_BALANCE_USD,
+        risk_percent: float = DEFAULT_RISK_PERCENT,
+        execution_costs: dict | None = None,
     ) -> dict:
         """Validate and create one run, Backtest account, and durable job."""
         user_oid = _object_id(user_id)
         if user_oid is None:
             raise ValidationError("Authenticated user id is invalid.")
+
+        initial_balance_usd = _positive_finite_number(
+            initial_balance_usd, "initial_balance_usd"
+        )
+        risk_percent = _positive_finite_number(risk_percent, "risk_percent")
+        if risk_percent > 100:
+            raise ValidationError("risk_percent cannot exceed 100.")
+        execution_costs = _validated_execution_costs(execution_costs)
 
         if not isinstance(instrument, str) or not instrument:
             raise ValidationError("Instrument is required.")
@@ -229,6 +355,7 @@ class BacktestService:
             raise
         if instrument not in supported:
             raise ValidationError("Instrument is not in the current catalog.")
+        instrument_metadata = _freeze_instrument_metadata(instrument, user_oid)
 
         if not isinstance(display_timezone, str) or not display_timezone:
             raise ValidationError("Display timezone is required.")
@@ -263,6 +390,10 @@ class BacktestService:
                 timezone_info=timezone_info,
                 period_months=period_months,
                 blind_mode=blind_mode,
+                initial_balance_usd=initial_balance_usd,
+                risk_percent=risk_percent,
+                execution_costs=execution_costs,
+                instrument_metadata=instrument_metadata,
             )
         if selection != "manual":
             raise ValidationError("period_selection must be 'random' when provided.")
@@ -305,6 +436,8 @@ class BacktestService:
             start_date=start,
             end_date=end,
             blind_mode=blind_mode,
+            initial_balance_usd=initial_balance_usd,
+            risk_percent=risk_percent,
         )
         account_label = account["display_name"]
         run = create_backtest_run_doc(
@@ -320,6 +453,10 @@ class BacktestService:
             end_utc_ms=end_utc_ms,
             context_start_utc_ms=context_start_utc_ms,
             blind_mode=blind_mode,
+            initial_balance_usd=initial_balance_usd,
+            risk_percent=risk_percent,
+            execution_costs=execution_costs,
+            instrument_metadata=instrument_metadata,
         )
         staging_prefix = f"backtests/{user_oid}/{run_id}/staging/"
         job = self.preparation_jobs.build_for_run(
@@ -370,6 +507,11 @@ class BacktestService:
             "context_start_utc_ms": context_start_utc_ms,
             "end_utc_ms": end_utc_ms,
             "blind_mode": blind_mode,
+            "initial_balance_usd": initial_balance_usd,
+            "current_balance_usd": initial_balance_usd,
+            "risk_percent": risk_percent,
+            "execution_costs": execution_costs,
+            "instrument_metadata": instrument_metadata,
         }
 
     def _create_random_run(
@@ -381,6 +523,10 @@ class BacktestService:
         timezone_info: ZoneInfo,
         period_months: int,
         blind_mode: bool = False,
+        initial_balance_usd: float = DEFAULT_INITIAL_BALANCE_USD,
+        risk_percent: float = DEFAULT_RISK_PERCENT,
+        execution_costs: dict | None = None,
+        instrument_metadata: dict | None = None,
     ) -> dict:
         """Create a pending run whose dates and account await worker selection."""
         now = self.clock()
@@ -405,6 +551,10 @@ class BacktestService:
             period_months=period_months,
             selection_as_of_date=as_of_date,
             blind_mode=blind_mode,
+            initial_balance_usd=initial_balance_usd,
+            risk_percent=risk_percent,
+            execution_costs=execution_costs,
+            instrument_metadata=instrument_metadata,
         )
         job = self.preparation_jobs.build_for_random_selection(
             job_id=job_id,
@@ -438,6 +588,14 @@ class BacktestService:
             "period_selection": "random",
             "period_months": period_months,
             "blind_mode": blind_mode,
+            "initial_balance_usd": initial_balance_usd,
+            "current_balance_usd": initial_balance_usd,
+            "risk_percent": risk_percent,
+            "execution_costs": (
+                execution_costs
+                or dict(DEFAULT_SIMULATION_EXECUTION_COSTS)
+            ),
+            "instrument_metadata": instrument_metadata,
             "status": "selecting_period",
             "account_id": None,
             "account_label": None,
@@ -467,7 +625,12 @@ class BacktestService:
             raise NotFoundError("Backtest run not found.")
         if run.get("status") == "deleting":
             return {"id": str(run["_id"]), "status": "deleting"}
-        if run.get("status") not in {"selecting_period", "preparing", "ready"}:
+        if run.get("status") not in {
+            "selecting_period",
+            "preparing",
+            "ready",
+            "complete",
+        }:
             raise ConflictError("Backtest run cannot be deleted in its current state.")
 
         now = utc_now()

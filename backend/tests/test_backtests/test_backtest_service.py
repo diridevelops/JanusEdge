@@ -30,6 +30,9 @@ def _new_run(
     start_date="2026-03-29",
     end_date="2026-03-29",
     display_timezone="Europe/Rome",
+    initial_balance_usd=10_000,
+    risk_percent=1.0,
+    execution_costs=None,
 ):
     return service.create_run(
         user_id="507f1f77bcf86cd799439011",
@@ -37,6 +40,9 @@ def _new_run(
         start_date=start_date,
         end_date=end_date,
         display_timezone=display_timezone,
+        initial_balance_usd=initial_balance_usd,
+        risk_percent=risk_percent,
+        execution_costs=execution_costs,
     )
 
 
@@ -90,6 +96,118 @@ def test_create_run_converts_inclusive_display_dates_to_utc_day_bounds(
     assert datetime.fromtimestamp(
         run["end_utc_ms"] / 1000, tz=timezone.utc
     ) == datetime(2026, 3, 29, 22, 0, tzinfo=timezone.utc)
+
+
+def test_create_run_persists_default_balance_and_risk_on_run_and_account(
+    app, backtest_service
+):
+    with app.app_context():
+        result = _new_run(backtest_service)
+        run = mongo.db.backtest_runs.find_one({"_id": result["id"]})
+        account = mongo.db.trade_accounts.find_one({"_id": result["account_id"]})
+
+    assert run["initial_balance_usd"] == 10_000
+    assert run["current_balance_usd"] == 10_000
+    assert run["risk_percent"] == 1.0
+    assert account["starting_balance_usd"] == 10_000
+    assert account["current_balance_usd"] == 10_000
+    assert account["risk_percent"] == 1.0
+    assert result["initial_balance_usd"] == 10_000
+    assert result["risk_percent"] == 1.0
+    assert run["instrument_metadata"] == {
+        "instrument": "EUR-USD",
+        "instrument_type": "forex",
+        "supported_for_simulation": True,
+        "base_currency": "EUR",
+        "quote_currency": "USD",
+        "pip_size": 0.0001,
+        "price_precision": 5,
+        "contract_size": 100_000.0,
+        "pip_value_per_standard_lot": 10.0,
+    }
+
+
+def test_create_run_persists_custom_balance_and_risk(app, backtest_service):
+    with app.app_context():
+        result = _new_run(
+            backtest_service,
+            initial_balance_usd=25_000.5,
+            risk_percent=2.5,
+        )
+        run = mongo.db.backtest_runs.find_one({"_id": result["id"]})
+        account = mongo.db.trade_accounts.find_one({"_id": result["account_id"]})
+
+    assert run["initial_balance_usd"] == 25_000.5
+    assert run["risk_percent"] == 2.5
+    assert account["starting_balance_usd"] == 25_000.5
+    assert account["risk_percent"] == 2.5
+
+
+def test_create_run_persists_custom_execution_costs(app, backtest_service):
+    costs = {
+        "total_spread_pips": 1.2,
+        "slippage_pips": 0.4,
+        "commission_usd_per_lot_per_side": 2.5,
+    }
+    with app.app_context():
+        result = _new_run(backtest_service, execution_costs=costs)
+        run = mongo.db.backtest_runs.find_one({"_id": result["id"]})
+
+    assert run["execution_costs"] == costs
+    assert result["execution_costs"] == costs
+
+
+@pytest.mark.parametrize(
+    "costs",
+    [
+        {"total_spread_pips": -0.1, "slippage_pips": 0, "commission_usd_per_lot_per_side": 0},
+        {"total_spread_pips": True, "slippage_pips": 0, "commission_usd_per_lot_per_side": 0},
+        {"total_spread_pips": float("nan"), "slippage_pips": 0, "commission_usd_per_lot_per_side": 0},
+    ],
+)
+def test_create_run_rejects_invalid_execution_costs_without_side_effects(
+    app, backtest_service, costs
+):
+    with app.app_context(), pytest.raises(ValidationError):
+        _new_run(backtest_service, execution_costs=costs)
+
+    assert mongo.db.backtest_runs.count_documents({}) == 0
+    assert mongo.db.trade_accounts.count_documents(
+        {"backtest_run_id": {"$exists": True}}
+    ) == 0
+    assert mongo.db.backtest_preparation_jobs.count_documents({}) == 0
+
+
+@pytest.mark.parametrize(
+    ("balance", "risk"),
+    [
+        (0, 1),
+        (-1, 1),
+        (float("nan"), 1),
+        (float("inf"), 1),
+        (10_000, 0),
+        (10_000, -1),
+        (10_000, 100.01),
+        (10_000, float("nan")),
+        (10_000, float("inf")),
+        (True, 1),
+    ],
+)
+def test_create_run_rejects_invalid_balance_or_risk_without_side_effects(
+    app, backtest_service, balance, risk
+):
+    with app.app_context(), pytest.raises(ValidationError):
+        _new_run(
+            backtest_service,
+            initial_balance_usd=balance,
+            risk_percent=risk,
+        )
+
+    assert mongo.db.backtest_runs.count_documents({}) == 0
+    assert mongo.db.trade_accounts.count_documents(
+        {"backtest_run_id": {"$exists": True}}
+    ) == 0
+    assert mongo.db.backtest_preparation_jobs.count_documents({}) == 0
 
 
 @pytest.mark.parametrize(

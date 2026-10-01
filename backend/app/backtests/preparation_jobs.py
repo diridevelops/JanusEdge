@@ -6,6 +6,10 @@ from datetime import date
 
 from bson import ObjectId
 
+from app.backtests.fx_conversion import (
+    build_conversion_spec,
+    quote_currency_from_instrument,
+)
 from app.backtests.repository import PreparationJobRepository
 from app.backtests.schemas import (
     create_preparation_job_doc,
@@ -31,9 +35,10 @@ class PreparationJobService:
         context_start_utc_date: date,
         end_utc_date: date,
         staging_prefix: str,
+        quote_currency: str | None = None,
     ) -> dict:
         """Build a BSON-safe job with durable UTC-date recovery bounds."""
-        return create_preparation_job_doc(
+        document = create_preparation_job_doc(
             job_id=job_id,
             user_id=user_id,
             run_id=run_id,
@@ -43,6 +48,9 @@ class PreparationJobService:
             context_start_utc_date=context_start_utc_date,
             end_utc_date=end_utc_date,
             staging_prefix=staging_prefix,
+        )
+        return self._include_fx_conversion(
+            document, instrument=instrument, quote_currency=quote_currency
         )
 
     def create(self, document: dict) -> ObjectId:
@@ -61,9 +69,10 @@ class PreparationJobService:
         maximum_start_date: date,
         staging_prefix: str,
         blind_mode: bool = False,
+        quote_currency: str | None = None,
     ) -> dict:
         """Build the durable selection phase before replay bounds exist."""
-        return create_random_selection_job_doc(
+        document = create_random_selection_job_doc(
             job_id=job_id,
             user_id=user_id,
             run_id=run_id,
@@ -75,6 +84,20 @@ class PreparationJobService:
             staging_prefix=staging_prefix,
             blind_mode=blind_mode,
         )
+        return self._include_fx_conversion(
+            document, instrument=instrument, quote_currency=quote_currency
+        )
 
     def requeue(self, run_id, *, now) -> bool:
         return self.repository.requeue(run_id, now=now)
+
+    @staticmethod
+    def _include_fx_conversion(
+        document: dict, *, instrument: str, quote_currency: str | None
+    ) -> dict:
+        """Persist the conversion source contract before a worker claims the job."""
+        currency = quote_currency or quote_currency_from_instrument(instrument)
+        spec = build_conversion_spec(currency)
+        if spec is not None:
+            document["fx_conversion"] = spec
+        return document

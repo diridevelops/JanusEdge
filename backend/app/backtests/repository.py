@@ -98,7 +98,7 @@ class BacktestRepository(BaseRepository):
         return result.modified_count == 1
 
     def request_deletion(self, user_id: str, run_id, *, now) -> dict | None:
-        """Atomically turn an owned pending/ready run into a cleanup marker."""
+        """Atomically turn an owned deletable run into a cleanup marker."""
         run_oid = _object_id(run_id)
         user_oid = _object_id(user_id)
         if run_oid is None or user_oid is None:
@@ -108,7 +108,12 @@ class BacktestRepository(BaseRepository):
                 "_id": run_oid,
                 "user_id": user_oid,
                 "status": {
-                    "$in": ["selecting_period", "preparing", "ready"]
+                    "$in": [
+                        "selecting_period",
+                        "preparing",
+                        "ready",
+                        "complete",
+                    ]
                 },
             },
             {
@@ -687,6 +692,284 @@ class BacktestRepository(BaseRepository):
             },
         )
         return cursor if result.matched_count == 1 else None
+
+    def ensure_simulation_control(self, user_id: str, run_id) -> dict | None:
+        """Initialize/complete the bounded CAS fields on an owned ready run."""
+        run_oid = _object_id(run_id)
+        user_oid = _object_id(user_id)
+        if run_oid is None or user_oid is None:
+            return None
+        query = {
+            "_id": run_oid,
+            "user_id": user_oid,
+            "status": {"$in": ["ready", "complete"]},
+        }
+        defaults = {
+            "committed_sequence": 0,
+            "control_revision": 0,
+            "reset_generation": 0,
+            "has_accepted_order": False,
+            "pending_operation_id": None,
+        }
+        run = self.collection.find_one(query)
+        if run is None:
+            return None
+        control = run.get("simulation_control")
+        if not isinstance(control, dict):
+            self.collection.update_one(
+                {
+                    **query,
+                    "$or": [
+                        {"simulation_control": {"$exists": False}},
+                        {"simulation_control": None},
+                    ],
+                },
+                {
+                    "$set": {
+                        "simulation_control": defaults,
+                        "updated_at": utc_now(),
+                    }
+                },
+            )
+        else:
+            for field_name, value in defaults.items():
+                if field_name in control:
+                    continue
+                self.collection.update_one(
+                    {
+                        **query,
+                        f"simulation_control.{field_name}": {"$exists": False},
+                    },
+                    {
+                        "$set": {
+                            f"simulation_control.{field_name}": value,
+                            "updated_at": utc_now(),
+                        }
+                    },
+                )
+        return self.collection.find_one(query)
+
+    def reserve_simulation_operation(
+        self,
+        user_id: str,
+        run_id,
+        *,
+        operation_id,
+        kind: str,
+        sequence: int,
+        reset_generation: int,
+        expected_revision: int,
+        now=None,
+    ) -> dict | None:
+        """Claim the run gate with one owner-scoped compare-and-swap."""
+        run_oid = _object_id(run_id)
+        user_oid = _object_id(user_id)
+        operation_oid = _object_id(operation_id)
+        if run_oid is None or user_oid is None or operation_oid is None:
+            return None
+        allowed_statuses = ["ready", "complete"] if kind == "reset" else ["ready"]
+        query = {
+            "_id": run_oid,
+            "user_id": user_oid,
+            "status": {"$in": allowed_statuses},
+            "simulation_control.committed_sequence": sequence - 1,
+            "simulation_control.control_revision": expected_revision,
+            "simulation_control.reset_generation": reset_generation,
+            "$or": [
+                {"simulation_control.pending_operation_id": None},
+                {"simulation_control.pending_operation_id": {"$exists": False}},
+            ],
+        }
+        if kind == "rewind":
+            query["simulation_control.has_accepted_order"] = {"$ne": True}
+        now = now or utc_now()
+        result = self.collection.update_one(
+            query,
+            {
+                "$set": {
+                    "simulation_control.pending_operation_id": operation_oid,
+                    "updated_at": now,
+                },
+                "$inc": {"simulation_control.control_revision": 1},
+            },
+        )
+        if result.matched_count != 1:
+            return None
+        return self.collection.find_one({"_id": run_oid, "user_id": user_oid})
+
+    def commit_simulation_operation(
+        self,
+        user_id: str,
+        run_id,
+        *,
+        operation_id,
+        sequence: int,
+        reset_generation: int,
+        control_revision: int,
+        run_updates: dict | None = None,
+        accepted_order: bool = False,
+        allow_complete: bool = False,
+        now=None,
+    ) -> bool:
+        """Publish staged effects and clear the gate in the same run CAS."""
+        run_oid = _object_id(run_id)
+        user_oid = _object_id(user_id)
+        operation_oid = _object_id(operation_id)
+        if run_oid is None or user_oid is None or operation_oid is None:
+            return False
+        updates = dict(run_updates or {})
+        if "simulation_control" in updates or any(
+            key.startswith("simulation_control.") for key in updates
+        ):
+            raise ValueError("run_updates cannot mutate simulation_control.")
+        if updates.get("status", "ready") not in {"ready", "complete"}:
+            raise ValueError(
+                "Simulation commits may only leave a run ready or complete."
+            )
+        now = now or utc_now()
+        query = {
+            "_id": run_oid,
+            "user_id": user_oid,
+            "status": {"$in": ["ready", "complete"]}
+            if allow_complete
+            else "ready",
+            "simulation_control.pending_operation_id": operation_oid,
+            "simulation_control.committed_sequence": sequence - 1,
+            "simulation_control.reset_generation": reset_generation,
+            "simulation_control.control_revision": control_revision,
+        }
+        set_values = {
+            **updates,
+            "simulation_control.committed_sequence": sequence,
+            "simulation_control.pending_operation_id": None,
+            "updated_at": now,
+        }
+        if accepted_order:
+            set_values["simulation_control.has_accepted_order"] = True
+        result = self.collection.update_one(query, {"$set": set_values})
+        return result.matched_count == 1
+
+    def begin_simulation_reset(
+        self,
+        user_id: str,
+        run_id,
+        *,
+        operation_id,
+        sequence: int,
+        previous_generation: int,
+        control_revision: int,
+        run_updates: dict | None = None,
+        now=None,
+    ) -> bool:
+        """Commit a new reset generation while retaining the cleanup gate."""
+        run_oid = _object_id(run_id)
+        user_oid = _object_id(user_id)
+        operation_oid = _object_id(operation_id)
+        if run_oid is None or user_oid is None or operation_oid is None:
+            return False
+        updates = dict(run_updates or {})
+        if "simulation_control" in updates or any(
+            key.startswith("simulation_control.") for key in updates
+        ):
+            raise ValueError("run_updates cannot mutate simulation_control.")
+        updates["status"] = "ready"
+        now = now or utc_now()
+        query = {
+            "_id": run_oid,
+            "user_id": user_oid,
+            "status": {"$in": ["ready", "complete"]},
+            "simulation_control.pending_operation_id": operation_oid,
+            "simulation_control.committed_sequence": sequence - 1,
+            "simulation_control.reset_generation": previous_generation,
+            "simulation_control.control_revision": control_revision,
+        }
+        set_values = {
+            **updates,
+            "simulation_control.committed_sequence": sequence,
+            "simulation_control.reset_generation": previous_generation + 1,
+            "simulation_control.has_accepted_order": False,
+            # Keep this operation as the gate until its old generation is purged.
+            "simulation_control.pending_operation_id": operation_oid,
+            "updated_at": now,
+        }
+        result = self.collection.update_one(query, {"$set": set_values})
+        if result.matched_count == 1:
+            return True
+        # A retry after a crash between the CAS and operation-journal update
+        # recognizes the already-applied generation transition.
+        run = self.collection.find_one(
+            {
+                "_id": run_oid,
+                "user_id": user_oid,
+                "simulation_control.pending_operation_id": operation_oid,
+                "simulation_control.committed_sequence": sequence,
+                "simulation_control.reset_generation": previous_generation + 1,
+            }
+        )
+        return run is not None
+
+    def finish_simulation_reset(
+        self,
+        user_id: str,
+        run_id,
+        *,
+        operation_id,
+        sequence: int,
+        reset_generation: int,
+        now=None,
+    ) -> bool:
+        """Release the mutation gate only after reset cleanup has completed."""
+        run_oid = _object_id(run_id)
+        user_oid = _object_id(user_id)
+        operation_oid = _object_id(operation_id)
+        if run_oid is None or user_oid is None or operation_oid is None:
+            return False
+        result = self.collection.update_one(
+            {
+                "_id": run_oid,
+                "user_id": user_oid,
+                "status": "ready",
+                "simulation_control.pending_operation_id": operation_oid,
+                "simulation_control.committed_sequence": sequence,
+                "simulation_control.reset_generation": reset_generation,
+            },
+            {
+                "$set": {
+                    "simulation_control.pending_operation_id": None,
+                    "updated_at": now or utc_now(),
+                }
+            },
+        )
+        return result.matched_count == 1
+
+    def list_pending_simulation_runs(
+        self, *, user_id: str | None = None, run_id=None, limit: int = 100
+    ) -> list[dict]:
+        """Find runs with a durable operation gate for worker recovery."""
+        if limit < 1:
+            return []
+        query = {
+            "status": {"$in": ["ready", "complete"]},
+            "simulation_control.pending_operation_id": {
+                "$exists": True,
+                "$ne": None,
+            },
+        }
+        if user_id is not None:
+            user_oid = _object_id(user_id)
+            if user_oid is None:
+                return []
+            query["user_id"] = user_oid
+        if run_id is not None:
+            run_oid = _object_id(run_id)
+            if run_oid is None:
+                return []
+            query["_id"] = run_oid
+        return list(
+            self.collection.find(query)
+            .sort([("updated_at", 1), ("_id", 1)])
+            .limit(min(limit, 100))
+        )
 
     def find_drawing_state(
         self, user_id: str, run_id, interval_minutes: int

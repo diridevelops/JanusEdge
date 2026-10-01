@@ -11,6 +11,15 @@ import type {
   BacktestRunDetail,
   BacktestRunSummary,
   BacktestSaveDrawingsRequest,
+  BacktestSimulationAdvanceRequest,
+  BacktestSimulationCancelOrderRequest,
+  BacktestSimulationClosePositionRequest,
+  BacktestSimulationModifyProtectionRequest,
+  BacktestSimulationOperationResponse,
+  BacktestSimulationResetRequest,
+  BacktestSimulationRewindRequest,
+  BacktestSimulationState,
+  BacktestSimulationSubmitOrderRequest,
   CreateBacktestRunRequest,
 } from '../types/backtest.types';
 
@@ -163,6 +172,103 @@ export async function saveBacktestDrawingState(
     `/backtest/runs/${encodeURIComponent(runId)}/drawings`,
     drawingState,
     { params: { interval_minutes: intervalMinutes } }
+  );
+  return response.data;
+}
+
+/** Load current committed orders, fills, positions, costs, and account state. */
+export async function getBacktestSimulationState(
+  runId: string
+): Promise<BacktestSimulationState> {
+  const response = await apiClient.get<BacktestSimulationState>(
+    `/backtest/runs/${encodeURIComponent(runId)}/simulation`
+  );
+  return response.data;
+}
+
+/** Submit a protected market or limit order using the run's current revision. */
+export async function submitBacktestSimulationOrder(
+  runId: string,
+  request: BacktestSimulationSubmitOrderRequest
+): Promise<BacktestSimulationOperationResponse> {
+  const response = await apiClient.post<BacktestSimulationOperationResponse>(
+    `/backtest/runs/${encodeURIComponent(runId)}/simulation/orders`,
+    request
+  );
+  return response.data;
+}
+
+/** Cancel one owned pending entry order. */
+export async function cancelBacktestSimulationOrder(
+  runId: string,
+  orderId: string,
+  request: BacktestSimulationCancelOrderRequest
+): Promise<BacktestSimulationOperationResponse> {
+  const response = await apiClient.post<BacktestSimulationOperationResponse>(
+    `/backtest/runs/${encodeURIComponent(runId)}/simulation/orders/${encodeURIComponent(orderId)}/cancel`,
+    request
+  );
+  return response.data;
+}
+
+/** Close one open position at the currently revealed candle close. */
+export async function closeBacktestSimulationPosition(
+  runId: string,
+  positionId: string,
+  request: BacktestSimulationClosePositionRequest
+): Promise<BacktestSimulationOperationResponse> {
+  const response = await apiClient.post<BacktestSimulationOperationResponse>(
+    `/backtest/runs/${encodeURIComponent(runId)}/simulation/positions/${encodeURIComponent(positionId)}/close`,
+    request
+  );
+  return response.data;
+}
+
+/** Change one or both protection levels on a single open position. */
+export async function modifyBacktestSimulationProtection(
+  runId: string,
+  positionId: string,
+  request: BacktestSimulationModifyProtectionRequest
+): Promise<BacktestSimulationOperationResponse> {
+  const response = await apiClient.put<BacktestSimulationOperationResponse>(
+    `/backtest/runs/${encodeURIComponent(runId)}/simulation/positions/${encodeURIComponent(positionId)}/protection`,
+    request
+  );
+  return response.data;
+}
+
+/** Process every available source candle through the requested index. */
+export async function advanceBacktestSimulation(
+  runId: string,
+  request: BacktestSimulationAdvanceRequest
+): Promise<BacktestSimulationOperationResponse> {
+  const response = await apiClient.post<BacktestSimulationOperationResponse>(
+    `/backtest/runs/${encodeURIComponent(runId)}/simulation/advance`,
+    request
+  );
+  return response.data;
+}
+
+/** Rewind before any entry is accepted in the current simulation generation. */
+export async function rewindBacktestSimulation(
+  runId: string,
+  request: BacktestSimulationRewindRequest
+): Promise<BacktestSimulationOperationResponse> {
+  const response = await apiClient.post<BacktestSimulationOperationResponse>(
+    `/backtest/runs/${encodeURIComponent(runId)}/simulation/rewind`,
+    request
+  );
+  return response.data;
+}
+
+/** Confirm and reset a ready or complete run to its first replay candle. */
+export async function resetBacktestSimulation(
+  runId: string,
+  request: BacktestSimulationResetRequest
+): Promise<BacktestSimulationOperationResponse> {
+  const response = await apiClient.post<BacktestSimulationOperationResponse>(
+    `/backtest/runs/${encodeURIComponent(runId)}/simulation/reset`,
+    request
   );
   return response.data;
 }

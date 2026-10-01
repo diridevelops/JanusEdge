@@ -12,6 +12,27 @@ class ExecutionRepository(BaseRepository):
 
     collection_name = "executions"
 
+    @staticmethod
+    def _with_published_simulations(query: dict) -> dict:
+        """Hide fills whose durable simulation operation has not committed."""
+        return {
+            "$and": [
+                query,
+                {
+                    "$or": [
+                        {"backtest_run_id": {"$exists": False}},
+                        {"simulation_committed": True},
+                    ]
+                },
+            ]
+        }
+
+    def find_by_id(self, doc_id: str) -> dict | None:
+        """Return an execution only after its Backtest fill is published."""
+        return self.collection.find_one(
+            self._with_published_simulations({"_id": ObjectId(doc_id)})
+        )
+
     def find_by_trade(
         self, trade_id: str
     ) -> List[dict]:
@@ -25,7 +46,9 @@ class ExecutionRepository(BaseRepository):
             List of execution documents sorted by timestamp.
         """
         return self.find_many(
-            {"trade_id": ObjectId(trade_id)},
+            self._with_published_simulations(
+                {"trade_id": ObjectId(trade_id)}
+            ),
             sort=[("timestamp", 1)],
         )
 
@@ -52,7 +75,7 @@ class ExecutionRepository(BaseRepository):
         if filters:
             query.update(filters)
         return self.find_many(
-            query,
+            self._with_published_simulations(query),
             sort=[("timestamp", -1)],
             skip=skip,
             limit=limit,
@@ -65,7 +88,7 @@ class ExecutionRepository(BaseRepository):
         query = {"user_id": ObjectId(user_id)}
         if filters:
             query.update(filters)
-        return self.count(query)
+        return self.count(self._with_published_simulations(query))
 
     def find_by_batch(
         self, batch_id: str
@@ -114,6 +137,8 @@ class ExecutionRepository(BaseRepository):
         if not trade_ids:
             return []
         return self.find_many(
-            {"trade_id": {"$in": list(trade_ids)}},
+            self._with_published_simulations(
+                {"trade_id": {"$in": list(trade_ids)}}
+            ),
             sort=[("timestamp", 1)],
         )

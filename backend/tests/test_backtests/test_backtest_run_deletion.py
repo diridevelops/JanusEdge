@@ -139,6 +139,29 @@ def test_delete_is_owner_scoped_and_returns_pending_until_worker_purges(
         assert stored_account["status"] == "deleting"
 
 
+def test_complete_run_can_be_marked_for_permanent_deletion(app, client, monkeypatch):
+    from app.backtests.worker import BacktestWorker
+
+    _, headers = _register(client, "run-delete-complete")
+    run = _create_run(client, headers, monkeypatch)
+    run_oid = ObjectId(run["id"])
+    with app.app_context():
+        mongo.db.backtest_runs.update_one(
+            {"_id": run_oid}, {"$set": {"status": "complete"}}
+        )
+
+    accepted = client.delete(
+        f"/api/backtest/runs/{run['id']}", headers=headers
+    )
+    assert accepted.status_code == 202
+    assert accepted.json["run"]["status"] == "deleting"
+
+    with app.app_context():
+        clock = _Clock()
+        assert BacktestWorker(clock=clock, worker_id="purge-complete").process_one()
+        assert mongo.db.backtest_runs.find_one({"_id": run_oid}) is None
+
+
 def test_worker_physically_removes_run_account_trades_and_every_minio_object(
     app, client, monkeypatch
 ):
@@ -151,8 +174,12 @@ def test_worker_physically_removes_run_account_trades_and_every_minio_object(
     run_oid = ObjectId(run["id"])
     user_oid = ObjectId(owner_id)
     account_oid = ObjectId(run["account_id"])
+    other_run_oid = ObjectId()
     trade_oid = ObjectId()
+    other_trade_oid = ObjectId()
     media_oid = ObjectId()
+    stop_moved_tag_id = ObjectId()
+    tag_category_id = ObjectId()
     prefix = f"backtests/{owner_id}/{run['id']}/"
     media_key = f"trades/{owner_id}/{trade_oid}/evidence.png"
 
@@ -187,12 +214,117 @@ def test_worker_physically_removes_run_account_trades_and_every_minio_object(
                 "_id": trade_oid,
                 "user_id": user_oid,
                 "trade_account_id": account_oid,
+                "backtest_run_id": run_oid,
+                "simulation_generation": 0,
                 "status": "closed",
                 "import_batch_id": None,
+                "tag_ids": [stop_moved_tag_id],
             }
         )
         mongo.db.executions.insert_one(
-            {"_id": ObjectId(), "trade_id": trade_oid}
+            {
+                "_id": ObjectId(),
+                "trade_id": trade_oid,
+                "user_id": user_oid,
+                "backtest_run_id": run_oid,
+                "reset_generation": 0,
+                "backtest_order_id": ObjectId(),
+            }
+        )
+        mongo.db.tag_categories.insert_one(
+            {
+                "_id": tag_category_id,
+                "user_id": user_oid,
+                "name": "General",
+                "system_key": "general",
+            }
+        )
+        mongo.db.tags.insert_one(
+            {
+                "_id": stop_moved_tag_id,
+                "user_id": user_oid,
+                "name": "stop-moved",
+                "category_id": tag_category_id,
+            }
+        )
+        mongo.db.trades.insert_one(
+            {
+                "_id": other_trade_oid,
+                "user_id": user_oid,
+                "trade_account_id": ObjectId(),
+                "backtest_run_id": other_run_oid,
+                "simulation_generation": 0,
+                "status": "closed",
+                "import_batch_id": None,
+                "tag_ids": [stop_moved_tag_id],
+            }
+        )
+        mongo.db.executions.insert_one(
+            {
+                "_id": ObjectId(),
+                "trade_id": other_trade_oid,
+                "user_id": user_oid,
+                "backtest_run_id": other_run_oid,
+                "reset_generation": 0,
+                "backtest_order_id": ObjectId(),
+            }
+        )
+
+        for collection_name, document in (
+            (
+                "backtest_simulation_operations",
+                {
+                    "sequence": 1,
+                    "client_operation_id": "run-delete-op",
+                    "state": "committed",
+                },
+            ),
+            (
+                "backtest_simulation_orders",
+                {
+                    "reset_generation": 0,
+                    "order_id": ObjectId(),
+                    "entity_version": 1,
+                    "operation_sequence": 1,
+                },
+            ),
+            (
+                "backtest_simulation_positions",
+                {
+                    "reset_generation": 0,
+                    "position_id": ObjectId(),
+                    "entity_version": 1,
+                    "operation_sequence": 1,
+                },
+            ),
+            (
+                "backtest_simulation_cost_profiles",
+                {
+                    "revision": 0,
+                    "operation_sequence": 0,
+                },
+            ),
+        ):
+            mongo.db[collection_name].insert_one(
+                {"user_id": user_oid, "run_id": run_oid, **document}
+            )
+        mongo.db.executions.insert_one(
+            {
+                "_id": ObjectId(),
+                "user_id": user_oid,
+                "backtest_run_id": run_oid,
+                "reset_generation": 0,
+                "backtest_order_id": ObjectId(),
+            }
+        )
+        mongo.db.backtest_simulation_operations.insert_one(
+            {
+                "user_id": user_oid,
+                "run_id": other_run_oid,
+                "sequence": 1,
+                "client_operation_id": "other-run-op",
+                "state": "committed",
+            }
         )
         mongo.db.media.insert_one(
             {
@@ -232,6 +364,32 @@ def test_worker_physically_removes_run_account_trades_and_every_minio_object(
         assert mongo.db.trade_accounts.find_one({"_id": account_oid}) is None
         assert mongo.db.trades.find_one({"_id": trade_oid}) is None
         assert mongo.db.executions.count_documents({"trade_id": trade_oid}) == 0
+        assert mongo.db.trades.find_one({"_id": other_trade_oid})["tag_ids"] == [
+            stop_moved_tag_id
+        ]
+        assert mongo.db.executions.count_documents(
+            {"trade_id": other_trade_oid}
+        ) == 1
+        assert mongo.db.tags.find_one({"_id": stop_moved_tag_id}) is not None
+        assert mongo.db.tag_categories.find_one({"_id": tag_category_id}) is not None
+        for collection_name in (
+            "backtest_simulation_operations",
+            "backtest_simulation_orders",
+            "backtest_simulation_positions",
+            "backtest_simulation_cost_profiles",
+        ):
+            assert mongo.db[collection_name].count_documents(
+                {"user_id": user_oid, "run_id": run_oid}
+            ) == 0
+        assert mongo.db.backtest_simulation_operations.count_documents(
+            {"user_id": user_oid, "run_id": other_run_oid}
+        ) == 1
+        assert mongo.db.executions.count_documents(
+            {"user_id": user_oid, "backtest_run_id": run_oid}
+        ) == 0
+        assert mongo.db.executions.count_documents(
+            {"user_id": user_oid, "backtest_run_id": other_run_oid}
+        ) == 1
         assert mongo.db.media.find_one({"_id": media_oid}) is None
         assert mongo.db.backtest_preparation_jobs.count_documents(
             {"run_id": run_oid}

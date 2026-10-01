@@ -129,7 +129,12 @@ export function createBacktestReplayDataSource(
  */
 export function createCandleKitControlsAdapter(
   controller: ReplayController,
-  sortedCandleTimes: readonly number[]
+  sortedCandleTimes: readonly number[],
+  gatedActions?: {
+    onAdvance: (selectedIndex: number, timeMs: number) => Promise<void>;
+    onRewind: (selectedIndex: number, timeMs: number) => Promise<void>;
+    canRewind: () => boolean;
+  }
 ): ReplayController {
   const firstEligibleTime = sortedCandleTimes[0];
   function boundState(state: ReturnType<ReplayController['getState']>) {
@@ -142,6 +147,133 @@ export function createCandleKitControlsAdapter(
       ...state,
       window: { ...state.window, from: firstEligibleTime },
     };
+  }
+
+  if (gatedActions) {
+    let playing = false;
+    let pending = false;
+    let speed = 1;
+    let timer: number | null = null;
+    const subscribers = new Set<Parameters<ReplayController['subscribe']>[0]>();
+    let unsubscribeTarget: (() => void) | null = null;
+
+    const currentState = () => {
+      const state = boundState(controller.getState());
+      return state.status === 'ready' ? { ...state, playing } : state;
+    };
+    const notify = () => {
+      const state = currentState();
+      subscribers.forEach((callback) => callback(state));
+    };
+    const stopTimer = () => {
+      if (timer !== null) window.clearTimeout(timer);
+      timer = null;
+    };
+    const pause = () => {
+      stopTimer();
+      playing = false;
+      controller.pause();
+      notify();
+    };
+    const moveToIndex = async (index: number) => {
+      if (pending || index < 0 || index >= sortedCandleTimes.length) return;
+      const targetTime = sortedCandleTimes[index];
+      if (targetTime === undefined) return;
+      const state = controller.getState();
+      if (state.status !== 'ready') return;
+      const currentIndex = sortedCandleTimes.indexOf(state.cursor.ts);
+      if (currentIndex === index) return;
+      if (currentIndex > index && !gatedActions.canRewind()) return;
+      pending = true;
+      try {
+        if (index > currentIndex) await gatedActions.onAdvance(index, targetTime);
+        else await gatedActions.onRewind(index, targetTime);
+        controller.pause();
+        controller.seek(targetTime);
+      } catch {
+        pause();
+      } finally {
+        pending = false;
+        notify();
+      }
+    };
+    const tick = async () => {
+      if (!playing || pending) return;
+      const state = controller.getState();
+      if (state.status !== 'ready') {
+        pause();
+        return;
+      }
+      const currentIndex = sortedCandleTimes.indexOf(state.cursor.ts);
+      if (currentIndex < 0 || currentIndex >= sortedCandleTimes.length - 1) {
+        pause();
+        return;
+      }
+      await moveToIndex(currentIndex + 1);
+      if (playing) {
+        timer = window.setTimeout(() => void tick(), Math.max(25, 1000 / speed));
+      }
+    };
+
+    return new Proxy(controller, {
+      get(target, property, receiver) {
+        if (property === 'getState') return currentState;
+        if (property === 'subscribe') {
+          return (callback: Parameters<ReplayController['subscribe']>[0]) => {
+            subscribers.add(callback);
+            if (!unsubscribeTarget) {
+              unsubscribeTarget = target.subscribe(() => notify());
+            }
+            callback(currentState());
+            return () => {
+              subscribers.delete(callback);
+              if (subscribers.size === 0) {
+                unsubscribeTarget?.();
+                unsubscribeTarget = null;
+              }
+            };
+          };
+        }
+        if (property === 'play') {
+          return () => {
+            if (playing) return;
+            playing = true;
+            notify();
+            void tick();
+          };
+        }
+        if (property === 'pause') return pause;
+        if (property === 'setSpeed') {
+          return (multiplier: number) => {
+            if (Number.isFinite(multiplier) && multiplier > 0) speed = multiplier;
+            target.setSpeed(multiplier);
+            notify();
+          };
+        }
+        if (property === 'seek') {
+          return (timeMs: number) => {
+            pause();
+            const nextTime = findFirstCandleTimeAtOrAfter(sortedCandleTimes, timeMs);
+            const snapped = nextTime ?? sortedCandleTimes[sortedCandleTimes.length - 1];
+            if (snapped === undefined) return;
+            void moveToIndex(sortedCandleTimes.indexOf(snapped));
+          };
+        }
+        if (property === 'step') {
+          return (direction: 1 | -1) => {
+            pause();
+            const state = target.getState();
+            if (state.status !== 'ready') return;
+            const currentIndex = sortedCandleTimes.indexOf(state.cursor.ts);
+            const nextIndex = currentIndex + direction;
+            if (direction === -1 && !gatedActions.canRewind()) return;
+            void moveToIndex(nextIndex);
+          };
+        }
+        const value: unknown = Reflect.get(target, property, receiver);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
   }
 
   return new Proxy(controller, {

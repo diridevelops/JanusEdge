@@ -227,3 +227,42 @@ class TradeRepository(BaseRepository):
         return [
             build_trade_fingerprint(trade) for trade in trades
         ]
+
+    def find_backtest_simulation_trades(
+        self,
+        user_id: str,
+        run_id,
+        reset_generation: int | None = None,
+    ) -> List[dict]:
+        """Find closed or soft-deleted simulation trades owned by one run.
+
+        This intentionally filters by run and (for reset) generation rather
+        than account, so cleanup remains correct if an account association is
+        missing or repaired independently.
+        """
+        query = {
+            "user_id": ObjectId(user_id),
+            "backtest_run_id": (
+                run_id if isinstance(run_id, ObjectId) else ObjectId(str(run_id))
+            ),
+        }
+        if reset_generation is not None:
+            query["simulation_generation"] = reset_generation
+        return self.find_many(query, sort=[("_id", 1)])
+
+    def count_backtest_simulation_trades(
+        self,
+        user_id: str,
+        run_id,
+        reset_generation: int | None = None,
+    ) -> int:
+        """Count remaining owner-scoped simulation trades after cleanup."""
+        query = {
+            "user_id": ObjectId(user_id),
+            "backtest_run_id": (
+                run_id if isinstance(run_id, ObjectId) else ObjectId(str(run_id))
+            ),
+        }
+        if reset_generation is not None:
+            query["simulation_generation"] = reset_generation
+        return self.count(query)

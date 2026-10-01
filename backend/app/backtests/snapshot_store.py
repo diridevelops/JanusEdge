@@ -14,6 +14,7 @@ from app.utils.datetime_utils import utc_now
 
 
 _CANDLE_COLUMNS = ("time_ms", "open", "high", "low", "close", "volume")
+_FX_COLUMNS = ("time_ms", "open", "high", "low", "close")
 
 
 def _utc_midnight(value: date) -> datetime:
@@ -70,12 +71,40 @@ class SnapshotStore:
             after_write(key)
         return key
 
+    def write_staged_conversion_date(
+        self,
+        user_id,
+        run_id,
+        quote_currency: str,
+        utc_date: date,
+        candles: list[dict],
+        *,
+        before_write=None,
+        after_write=None,
+    ) -> str | None:
+        """Stage one immutable conversion-pair date under its run namespace."""
+        if not candles:
+            return None
+        payload = self._fx_parquet_bytes(candles)
+        checksum = hashlib.sha256(payload).hexdigest()
+        key = (
+            f"backtests/{user_id}/{run_id}/staging/fx/"
+            f"{quote_currency.upper()}/{utc_date.isoformat()}/{checksum}.parquet"
+        )
+        if before_write is not None:
+            before_write()
+        self._put(key, payload)
+        if after_write is not None:
+            after_write(key)
+        return key
+
     def assemble_snapshot(
         self,
         *,
         user_id,
         run: dict,
         completed_dates: list[dict],
+        fx_conversion: dict | None = None,
         before_publish=None,
         after_publish=None,
     ) -> tuple[dict, dict]:
@@ -163,6 +192,14 @@ class SnapshotStore:
         warmup_coverage = self._coverage(
             warmup_frame, warmup_empty_dates, warmup_gap_summary
         )
+        fx_series = self._assemble_fx_conversion(
+            user_id=user_id,
+            run_id=run_id,
+            run=run,
+            conversion=fx_conversion,
+            before_publish=before_publish,
+            after_publish=after_publish,
+        )
         fetched_at = utc_now()
         snapshot = {
             "object_key": object_key,
@@ -200,10 +237,32 @@ class SnapshotStore:
             "partial_gap_summary": gap_summary,
             "fetched_at": fetched_at,
         }
+        if fx_series:
+            snapshot["fx_conversion_series"] = fx_series
         return snapshot, coverage
 
     def read_snapshot(self, object_key: str) -> pd.DataFrame:
         return self._read_parquet(object_key)
+
+    def read_fx_conversion_series(
+        self, snapshot: dict, quote_currency: str
+    ) -> list[dict]:
+        """Read the pinned one-minute conversion observations for a quote."""
+        currency = str(quote_currency).strip().upper()
+        ref = next(
+            (
+                item
+                for item in snapshot.get("fx_conversion_series", [])
+                if str(item.get("quote_currency", "")).upper() == currency
+            ),
+            None,
+        )
+        if not ref or not ref.get("object_key"):
+            return []
+        frame = self._read_parquet(
+            ref["object_key"], columns=list(_FX_COLUMNS)
+        ).sort_values("time_ms", kind="stable")
+        return frame.to_dict(orient="records")
 
     def read_snapshot_day(self, snapshot: dict, utc_date: str) -> pd.DataFrame:
         """Read one immutable day partition, with legacy snapshot fallback."""
@@ -307,6 +366,80 @@ class SnapshotStore:
         buffer = BytesIO()
         frame.to_parquet(buffer, index=False)
         return buffer.getvalue()
+
+    @staticmethod
+    def _fx_parquet_bytes(candles: list[dict]) -> bytes:
+        frame = pd.DataFrame(candles, columns=list(_FX_COLUMNS))
+        buffer = BytesIO()
+        frame.to_parquet(buffer, index=False)
+        return buffer.getvalue()
+
+    def _assemble_fx_conversion(
+        self,
+        *,
+        user_id,
+        run_id,
+        run: dict,
+        conversion: dict | None,
+        before_publish=None,
+        after_publish=None,
+    ) -> list[dict]:
+        """Publish a content-addressed quote conversion series for this run."""
+        if not conversion:
+            return []
+        currency = str(conversion.get("quote_currency", "")).upper()
+        if not currency or currency == "USD":
+            return []
+
+        frames = []
+        for checkpoint in conversion.get("completed_utc_dates", []):
+            object_key = checkpoint.get("object_key")
+            if object_key:
+                frames.append(
+                    self._read_parquet(
+                        object_key, columns=list(_FX_COLUMNS)
+                    )
+                )
+        if frames:
+            frame = pd.concat(frames, ignore_index=True)
+            frame = frame.drop_duplicates(subset=["time_ms"], keep="first")
+            frame = frame.sort_values("time_ms", kind="stable")
+            frame = frame[
+                (frame["time_ms"] >= int(run.get("context_start_utc_ms", run["start_utc_ms"])))
+                & (frame["time_ms"] < int(run["end_utc_ms"]))
+            ].reset_index(drop=True)
+        else:
+            frame = pd.DataFrame(columns=list(_FX_COLUMNS))
+
+        payload = self._fx_parquet_bytes(frame.to_dict(orient="records"))
+        checksum = hashlib.sha256(payload).hexdigest()
+        object_key = (
+            f"backtests/{user_id}/{run_id}/snapshot/fx/"
+            f"{currency}/{checksum}.parquet"
+        )
+        if before_publish is not None:
+            before_publish()
+        self._put(object_key, payload)
+        if after_publish is not None:
+            after_publish(object_key)
+
+        times = [int(value) for value in frame["time_ms"].tolist()]
+        return [
+            {
+                "quote_currency": currency,
+                "instrument": conversion.get("instrument"),
+                "direction": conversion.get("direction"),
+                "interval_minutes": 1,
+                "source_start_utc_ms": int(
+                    run.get("context_start_utc_ms", run["start_utc_ms"])
+                ),
+                "source_end_utc_ms": int(run["end_utc_ms"]),
+                "source_first_time_ms": times[0] if times else None,
+                "source_last_time_ms": times[-1] if times else None,
+                "candle_count": len(times),
+                "object_key": object_key,
+            }
+        ]
 
     def _write_snapshot_days(
         self,

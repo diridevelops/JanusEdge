@@ -27,6 +27,7 @@ import {
   createReplayPositionWriter,
 } from '../utils/backtestReplay';
 import {
+  getBacktestDisplayPricePrecision,
   getBacktestPriceFormat,
   normalizeBacktestCandle,
 } from '../utils/backtestPriceFormat';
@@ -116,7 +117,8 @@ function waitForCursor(
  */
 export function useBacktestReplay(
   run: BacktestRunDetail,
-  tabs: readonly BacktestChartTab[]
+  tabs: readonly BacktestChartTab[],
+  options: { simulationDriven?: boolean } = {}
 ) {
   // The controller is run-scoped, so a route parameter change must replace it.
   const controller = useMemo(
@@ -162,8 +164,17 @@ export function useBacktestReplay(
       chartControllersRef.current.delete(tabId);
       return;
     }
+    const currentRun = runRef.current;
+    const priceFormat = getBacktestPriceFormat(currentRun.instrument);
+    const displayPrecision = getBacktestDisplayPricePrecision(
+      currentRun.instrument,
+      Boolean(currentRun.blind_mode),
+      currentRun.normalized_reference_price
+    );
     chart.getSeries().applyOptions({
-      priceFormat: getBacktestPriceFormat(runRef.current.instrument),
+      priceFormat: displayPrecision === priceFormat.precision
+        ? priceFormat
+        : { type: 'price', precision: displayPrecision, minMove: 10 ** -displayPrecision },
     });
     chartControllersRef.current.set(tabId, chart);
     const snapshot = snapshotsRef.current.get(tabId);
@@ -289,7 +300,7 @@ export function useBacktestReplay(
       () => setCursorSaveError('Could not save the replay position. Reload the run to recover the latest revision.'),
       () => setCursorSaveError(null)
     );
-    writerRef.current = writer;
+    writerRef.current = options.simulationDriven ? null : writer;
 
     const source = createBacktestReplayDataSource(
       runDetail.id,
@@ -338,7 +349,7 @@ export function useBacktestReplay(
         if (!isReadyState(latestState)
           || lastProcessedCursorRef.current === latestState.cursor.ts) return;
         const sourceBars = rebuildAtCursor(latestState.cursor.ts);
-        if (sourceBars.length > 0) enqueueCursorSave(latestState.cursor.ts);
+        if (!options.simulationDriven && sourceBars.length > 0) enqueueCursorSave(latestState.cursor.ts);
         if (!latestState.playing) void writer.flush();
       });
     });
@@ -360,8 +371,10 @@ export function useBacktestReplay(
       } else {
         rebuildAtCursor(event.ts);
       }
-      enqueueCursorSave(event.ts);
-      if (!state.playing) void writer.flush();
+      if (!options.simulationDriven) {
+        enqueueCursorSave(event.ts);
+        if (!state.playing) void writer.flush();
+      }
     });
 
     async function loadReplay() {
@@ -479,6 +492,7 @@ export function useBacktestReplay(
     loadAttempt,
     rebuildAtCursor,
     run,
+    options.simulationDriven,
   ]);
 
   useEffect(() => {

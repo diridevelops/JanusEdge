@@ -44,6 +44,21 @@ export function getBacktestPriceFormat(instrument: string): BacktestPriceFormat 
   };
 }
 
+/** Return the smallest display precision that preserves a Blind run's raw tick. */
+export function getBacktestDisplayPricePrecision(
+  instrument: string,
+  blindMode: boolean,
+  referencePrice: number | null | undefined
+): number {
+  const rawPrecision = getBacktestPriceFormat(instrument).precision;
+  if (!blindMode || !Number.isFinite(referencePrice) || referencePrice === 0) {
+    return rawPrecision;
+  }
+  const displayedTick = (10 ** -rawPrecision) * Math.abs(100 / Number(referencePrice));
+  if (!Number.isFinite(displayedTick) || displayedTick <= 0) return rawPrecision;
+  return Math.min(12, Math.max(rawPrecision, Math.ceil(-Math.log10(displayedTick) - 1e-12)));
+}
+
 /** Convert a canonical price to the stable display scale used by Blind runs. */
 export function normalizeBacktestPrice(
   price: number,

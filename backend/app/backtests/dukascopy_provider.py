@@ -58,6 +58,15 @@ class DukascopyProvider:
             "candles": deduplicated,
         }
 
+    def fetch_conversion_day(self, instrument: str, utc_date: date) -> dict:
+        """Fetch COMB one-minute data for a quote-to-USD conversion pair.
+
+        Conversion sources use the same midpoint and UTC-date contract as the
+        instrument series. Direction (direct or inverse) is metadata carried
+        by the preparation job and is applied only when resolving an event rate.
+        """
+        return self.fetch_day(instrument, utc_date)
+
     @staticmethod
     def _normalize_frame(frame: pd.DataFrame, utc_date: date) -> list[dict]:
         required_columns = {

@@ -17,6 +17,11 @@ export interface BacktestRunFormValues {
   periodSelection: 'manual' | 'random';
   periodMonths: BacktestRandomPeriodMonths;
   blindMode: boolean;
+  initialBalanceUsd: number;
+  riskPercent: number;
+  totalSpreadPips: number;
+  slippagePips: number;
+  commissionUsdPerLotPerSide: number;
 }
 
 interface BacktestRunFormProps {
@@ -59,6 +64,21 @@ export function BacktestRunForm({
     initialValues?.periodMonths ?? 1
   );
   const [blindMode, setBlindMode] = useState(initialValues?.blindMode ?? false);
+  const [initialBalanceUsd, setInitialBalanceUsd] = useState(
+    String(initialValues?.initialBalanceUsd ?? 10_000)
+  );
+  const [riskPercent, setRiskPercent] = useState(
+    String(initialValues?.riskPercent ?? 1)
+  );
+  const [totalSpreadPips, setTotalSpreadPips] = useState(
+    String(initialValues?.totalSpreadPips ?? 0)
+  );
+  const [slippagePips, setSlippagePips] = useState(
+    String(initialValues?.slippagePips ?? 0)
+  );
+  const [commissionUsdPerLotPerSide, setCommissionUsdPerLotPerSide] = useState(
+    String(initialValues?.commissionUsdPerLotPerSide ?? 0)
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -114,6 +134,31 @@ export function BacktestRunForm({
       setFormError('Set a display timezone in Settings before creating a run.');
       return;
     }
+    const parsedInitialBalance = Number(initialBalanceUsd);
+    if (!Number.isFinite(parsedInitialBalance) || parsedInitialBalance <= 0) {
+      setFormError('Initial balance must be a finite positive USD amount.');
+      return;
+    }
+    const parsedRiskPercent = Number(riskPercent);
+    if (
+      !Number.isFinite(parsedRiskPercent)
+      || parsedRiskPercent <= 0
+      || parsedRiskPercent > 100
+    ) {
+      setFormError('Risk must be greater than 0% and no more than 100%.');
+      return;
+    }
+    const parsedExecutionCosts = [
+      totalSpreadPips,
+      slippagePips,
+      commissionUsdPerLotPerSide,
+    ].map((value) => value.trim() ? Number(value) : Number.NaN);
+    if (!parsedExecutionCosts.every(
+      (value) => Number.isFinite(value) && value >= 0
+    )) {
+      setFormError('Execution costs must be finite, nonnegative values.');
+      return;
+    }
     const validationError = isRandomSelection
       ? null
       : getBacktestDateRangeError(startDate, endDate);
@@ -132,6 +177,11 @@ export function BacktestRunForm({
           periodSelection,
           periodMonths,
           blindMode,
+          initialBalanceUsd: parsedInitialBalance,
+          riskPercent: parsedRiskPercent,
+          totalSpreadPips: parsedExecutionCosts[0]!,
+          slippagePips: parsedExecutionCosts[1]!,
+          commissionUsdPerLotPerSide: parsedExecutionCosts[2]!,
         }, displayTimezone)
       );
       await onCreated(run);
@@ -244,6 +294,111 @@ export function BacktestRunForm({
         />
         Blind mode
       </label>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div>
+          <label htmlFor="backtest-initial-balance" className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+            Initial balance (USD)
+          </label>
+          <input
+            id="backtest-initial-balance"
+            type="number"
+            inputMode="decimal"
+            step="any"
+            required
+            value={initialBalanceUsd}
+            onChange={(event) => {
+              setInitialBalanceUsd(event.target.value);
+              setFormError(null);
+            }}
+            disabled={isSubmitting}
+            className="input-field"
+          />
+        </div>
+        <div>
+          <label htmlFor="backtest-risk-percent" className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+            Risk per entry (%)
+          </label>
+          <input
+            id="backtest-risk-percent"
+            type="number"
+            inputMode="decimal"
+            min="0"
+            max="100"
+            step="any"
+            required
+            value={riskPercent}
+            onChange={(event) => {
+              setRiskPercent(event.target.value);
+              setFormError(null);
+            }}
+            disabled={isSubmitting}
+            className="input-field"
+          />
+        </div>
+      </div>
+
+      <fieldset className="space-y-3 rounded-lg border border-gray-200 p-4 dark:border-gray-700">
+        <legend className="px-1 text-sm font-semibold text-gray-900 dark:text-gray-100">
+          Simulation execution costs
+        </legend>
+        <p className="text-xs text-gray-500 dark:text-gray-400">
+          These assumptions are fixed for this run and apply to simulated fills.
+        </p>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <label htmlFor="backtest-cost-spread" className="text-sm font-medium text-gray-700 dark:text-gray-300">
+            Total spread (pips)
+            <input
+              id="backtest-cost-spread"
+              type="number"
+              min="0"
+              step="any"
+              required
+              value={totalSpreadPips}
+              onChange={(event) => {
+                setTotalSpreadPips(event.currentTarget.value);
+                setFormError(null);
+              }}
+              disabled={isSubmitting}
+              className="input-field mt-1"
+            />
+          </label>
+          <label htmlFor="backtest-cost-slippage" className="text-sm font-medium text-gray-700 dark:text-gray-300">
+            Slippage (pips)
+            <input
+              id="backtest-cost-slippage"
+              type="number"
+              min="0"
+              step="any"
+              required
+              value={slippagePips}
+              onChange={(event) => {
+                setSlippagePips(event.currentTarget.value);
+                setFormError(null);
+              }}
+              disabled={isSubmitting}
+              className="input-field mt-1"
+            />
+          </label>
+          <label htmlFor="backtest-cost-commission" className="text-sm font-medium text-gray-700 dark:text-gray-300">
+            Commission (USD / lot / side)
+            <input
+              id="backtest-cost-commission"
+              type="number"
+              min="0"
+              step="any"
+              required
+              value={commissionUsdPerLotPerSide}
+              onChange={(event) => {
+                setCommissionUsdPerLotPerSide(event.currentTarget.value);
+                setFormError(null);
+              }}
+              disabled={isSubmitting}
+              className="input-field mt-1"
+            />
+          </label>
+        </div>
+      </fieldset>
 
       <div className="grid gap-4 sm:grid-cols-2">
         <div>

@@ -1680,6 +1680,40 @@ class TradeService:
             )
         return len(trades)
 
+    def delete_backtest_simulation_trades(
+        self,
+        user_id: str,
+        run_id,
+        *,
+        reset_generation: int | None = None,
+        before_each=None,
+    ) -> int:
+        """Permanently remove simulated trades owned by a run generation.
+
+        Trade deletion goes through the regular cascade so linked executions
+        and media are removed before the trade document. Tag ids are stored on
+        the trade itself; deleting the trade clears those references without
+        deleting reusable user-owned tags or their categories.
+        """
+        trades = self.trade_repo.find_backtest_simulation_trades(
+            user_id, run_id, reset_generation
+        )
+        for trade in trades:
+            if before_each is not None:
+                before_each()
+            self._delete_trade_document(user_id, trade)
+            if before_each is not None:
+                before_each()
+
+        remaining = self.trade_repo.count_backtest_simulation_trades(
+            user_id, run_id, reset_generation
+        )
+        if remaining:
+            raise RuntimeError(
+                "Backtest simulation cleanup left trade records behind."
+            )
+        return len(trades)
+
     def _delete_trade_document(self, user_id: str, trade: dict) -> None:
         """Remove a trade and its owned records only after media is purged."""
         trade_id = str(trade["_id"])

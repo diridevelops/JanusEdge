@@ -33,6 +33,15 @@ function formatNoticeOutcome(outcome: BacktestPreparationNotice['outcome']): str
   return outcome === 'no_data' ? 'No candle data found' : 'Preparation failed';
 }
 
+function formatUsd(value: number | undefined): string | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  return new Intl.NumberFormat(undefined, {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 2,
+  }).format(value);
+}
+
 /** Run cards, progress, and dismissible preparation outcome notices. */
 export function BacktestRunList({
   runs,
@@ -187,6 +196,12 @@ export function BacktestRunList({
                           Backtest account: {run.blind_mode
                             ? `Backtest ${run.instrument} blind (${run.id})`
                             : run.account_label}
+                        </p>
+                      )}
+                      {(formatUsd(run.initial_balance_usd) || run.risk_percent != null) && (
+                        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                          Initial balance: {formatUsd(run.initial_balance_usd) ?? '—'}
+                          {' · '}Risk per entry: {run.risk_percent ?? 1}%
                         </p>
                       )}
                     </div>

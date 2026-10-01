@@ -30,6 +30,10 @@ import {
 } from '../../utils/backtestPanelLifecycle';
 import { createBacktestTimeFormatters } from '../../utils/backtestTimeFormat';
 import { normalizeBacktestPrice } from '../../utils/backtestPriceFormat';
+import { BacktestBracketPreview } from './BacktestBracketPreview';
+import { BacktestPositionOverlay } from './BacktestPositionOverlay';
+import { useBacktestSimulationChartUi } from './BacktestSimulationContext';
+import { useChartApi } from '@getcandlekit/charts/react';
 
 const EMPTY_DATA: never[] = [];
 const CANDLEKIT_VERSION = '0.1.0';
@@ -110,6 +114,66 @@ function getLoadError(error: unknown): string {
   return error instanceof Error && error.message.trim()
     ? error.message
     : 'Could not load saved drawings.';
+}
+
+function BacktestSimulationChartLayer() {
+  const ui = useBacktestSimulationChartUi();
+  const { controller } = useChartApi();
+  const [, setScaleRevision] = useState(0);
+
+  useEffect(() => {
+    const chart = controller.getChart();
+    let frame = 0;
+    const update = () => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => setScaleRevision((revision) => revision + 1));
+    };
+    chart.timeScale().subscribeVisibleLogicalRangeChange(update);
+    const element = chart.chartElement();
+    element.addEventListener('pointermove', update);
+    element.addEventListener('wheel', update, { passive: true });
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update);
+    observer?.observe(element);
+    return () => {
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(update);
+      element.removeEventListener('pointermove', update);
+      element.removeEventListener('wheel', update);
+      window.cancelAnimationFrame(frame);
+      observer?.disconnect();
+    };
+  }, [controller]);
+
+  if (!ui) return null;
+  const series = controller.getSeries();
+  const priceToCoordinate = (price: number) => series.priceToCoordinate(price);
+  const coordinateToPrice = (y: number) => series.coordinateToPrice(y);
+
+  return (
+    <>
+      {ui.positions.length > 0 && (
+        <BacktestPositionOverlay
+          positions={ui.positions}
+          pricePrecision={ui.pricePrecision}
+          currentClose={ui.currentClose}
+          priceToCoordinate={priceToCoordinate}
+          coordinateToPrice={coordinateToPrice}
+          onMoveStop={ui.onMoveStop}
+          onMoveTarget={ui.onMoveTarget}
+          onBreakEven={ui.onBreakEven}
+          onClose={ui.onClose}
+          disabled={ui.disabled}
+        />
+      )}
+      {ui.preview.visible && (
+        <BacktestBracketPreview
+          {...ui.preview}
+          priceToCoordinate={priceToCoordinate}
+          coordinateToPrice={coordinateToPrice}
+          showActionBar={false}
+        />
+      )}
+    </>
+  );
 }
 
 /** A CandleKit chart with per-run/interval drawings and replay-aware visibility. */
@@ -463,6 +527,7 @@ export function CandleKitReplayChart({
         {isHydrated && currentSaveState.status !== 'conflict' && (
           <DrawingToolbar className="ck-toolbar backtest-drawing-toolbar" />
         )}
+        <BacktestSimulationChartLayer />
       </ChartView>
       <CandleKitReplayFollowButton
         isFollowing={isFollowing}

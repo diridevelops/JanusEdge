@@ -13,15 +13,29 @@ const baseValues: BacktestRunFormValues = {
   periodSelection: 'manual',
   periodMonths: 1,
   blindMode: false,
+  initialBalanceUsd: 10_000,
+  riskPercent: 1,
+  totalSpreadPips: 0,
+  slippagePips: 0,
+  commissionUsdPerLotPerSide: 0,
+};
+
+const defaultExecutionCosts = {
+  total_spread_pips: 0,
+  slippage_pips: 0,
+  commission_usd_per_lot_per_side: 0,
 };
 
 describe('Backtest run period selection form', () => {
-  it('keeps the manual creation request shape unchanged', () => {
+  it('sends balance and risk with a manual run request', () => {
     expect(buildCreateBacktestRunRequest(baseValues, 'Europe/Rome')).toEqual({
       instrument: 'EUR-USD',
       start_date: '2026-01-05',
       end_date: '2026-01-06',
       display_timezone: 'Europe/Rome',
+      initial_balance_usd: 10_000,
+      risk_percent: 1,
+      execution_costs: defaultExecutionCosts,
     });
   });
 
@@ -35,10 +49,13 @@ describe('Backtest run period selection form', () => {
       display_timezone: 'Europe/Rome',
       period_selection: 'random',
       period_months: 6,
+      initial_balance_usd: 10_000,
+      risk_percent: 1,
+      execution_costs: defaultExecutionCosts,
     });
   });
 
-  it('preserves legacy manual and random request shapes when Blind mode is off', () => {
+  it('preserves manual and random request shapes when Blind mode is off', () => {
     expect(buildCreateBacktestRunRequest({
       ...baseValues,
       blindMode: false,
@@ -47,6 +64,9 @@ describe('Backtest run period selection form', () => {
       start_date: '2026-01-05',
       end_date: '2026-01-06',
       display_timezone: 'Europe/Rome',
+      initial_balance_usd: 10_000,
+      risk_percent: 1,
+      execution_costs: defaultExecutionCosts,
     });
     expect(buildCreateBacktestRunRequest({
       ...baseValues,
@@ -58,6 +78,9 @@ describe('Backtest run period selection form', () => {
       display_timezone: 'Europe/Rome',
       period_selection: 'random',
       period_months: 6,
+      initial_balance_usd: 10_000,
+      risk_percent: 1,
+      execution_costs: defaultExecutionCosts,
     });
   });
 
@@ -73,6 +96,9 @@ describe('Backtest run period selection form', () => {
       period_selection: 'random',
       period_months: 3,
       blind_mode: true,
+      initial_balance_usd: 10_000,
+      risk_percent: 1,
+      execution_costs: defaultExecutionCosts,
     });
   });
 
@@ -87,6 +113,9 @@ describe('Backtest run period selection form', () => {
       period_selection: 'random',
       period_months: 1,
       blind_mode: true,
+      initial_balance_usd: 10_000,
+      risk_percent: 1,
+      execution_costs: defaultExecutionCosts,
     });
   });
 
@@ -174,5 +203,48 @@ describe('Backtest run period selection form', () => {
 
     expect(html).toContain('<option value="random" selected="">Random period</option>');
     expect(html).not.toMatch(/id="backtest-period-selection"[^>]*disabled=""/);
+  });
+
+  it('sends custom balance and risk for random runs', () => {
+    expect(buildCreateBacktestRunRequest({
+      ...baseValues,
+      periodSelection: 'random',
+      initialBalanceUsd: 50_000,
+      riskPercent: 1.75,
+      totalSpreadPips: 1.2,
+      slippagePips: 0.4,
+      commissionUsdPerLotPerSide: 2.5,
+    }, 'Europe/Rome')).toEqual({
+      instrument: 'EUR-USD',
+      display_timezone: 'Europe/Rome',
+      period_selection: 'random',
+      period_months: 1,
+      initial_balance_usd: 50_000,
+      risk_percent: 1.75,
+      execution_costs: {
+        total_spread_pips: 1.2,
+        slippage_pips: 0.4,
+        commission_usd_per_lot_per_side: 2.5,
+      },
+    });
+  });
+
+  it('defaults balance and risk to USD 10,000 and 1 percent and exposes settings', () => {
+    const html = renderToStaticMarkup(
+      <BacktestRunForm
+        displayTimezone="UTC"
+        initialValues={baseValues}
+        onCancel={() => undefined}
+        onCreated={() => undefined}
+      />
+    );
+
+    expect(html).toMatch(/id="backtest-initial-balance"[^>]*value="10000"/);
+    expect(html).toMatch(/id="backtest-risk-percent"[^>]*value="1"/);
+    expect(html).toMatch(/id="backtest-cost-spread"[^>]*value="0"/);
+    expect(html).toMatch(/id="backtest-cost-slippage"[^>]*value="0"/);
+    expect(html).toMatch(/id="backtest-cost-commission"[^>]*value="0"/);
+    expect(html).toContain('Initial balance (USD)');
+    expect(html).toContain('Risk per entry (%)');
   });
 });

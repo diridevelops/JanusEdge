@@ -15,10 +15,19 @@ from bson import ObjectId
 from flask import current_app, has_app_context
 
 from app.backtests.dukascopy_provider import DukascopyProvider
+from app.backtests.fx_conversion import (
+    build_conversion_spec,
+    quote_currency_from_instrument,
+)
 from app.backtests.repository import (
     BacktestRepository,
     PreparationJobRepository,
 )
+from app.backtests.schemas import (
+    DEFAULT_INITIAL_BALANCE_USD,
+    DEFAULT_RISK_PERCENT,
+)
+from app.backtests.simulation_repository import BacktestSimulationRepository
 from app.backtests.snapshot_store import SnapshotStore
 from app.extensions import mongo
 from app.utils.datetime_utils import utc_now
@@ -182,7 +191,7 @@ class BacktestWorker:
             return True
         candidate = self.job_repository.find_candidate(now=now)
         if candidate is None:
-            return False
+            return self._recover_simulation_operations()
 
         job_id = candidate["_id"]
         user_id = candidate["user_id"]
@@ -270,6 +279,30 @@ class BacktestWorker:
                 )
         return True
 
+    def _recover_simulation_operations(self) -> bool:
+        """Resume durable simulation effects when preparation queues are idle.
+
+        Keep this lazy so preparation-only worker startup does not need to
+        construct simulation dependencies until operation recovery is needed.
+        """
+        simulation_repository = BacktestSimulationRepository()
+        if not simulation_repository.list_recoverable_operations(limit=1):
+            return False
+
+        from app.backtests.simulation_effects import BacktestSimulationEffects
+        from app.backtests.simulation_service import SimulationService
+
+        effects = BacktestSimulationEffects(
+            simulation_repository=simulation_repository
+        )
+        service = SimulationService(
+            simulation_repository=simulation_repository,
+            effect_handler=effects.apply_operation,
+            cleanup_handler=effects.cleanup_generation,
+        )
+        result = service.resume_pending_operations(limit=100)
+        return result["completed"] > 0
+
     def _process_deleting_run(self, now) -> bool:
         """Resume one confirmed deletion before claiming preparation work."""
         candidate = self.repository.find_deletion_candidate(now=now)
@@ -331,15 +364,25 @@ class BacktestWorker:
             )
 
         trade_service = TradeService()
+        heartbeat.check()
+        trade_service.delete_backtest_simulation_trades(
+            user_id, run_id, before_each=heartbeat.check
+        )
         for account_id in sorted(account_ids, key=str):
             heartbeat.check()
             trade_service.delete_backtest_account_trades(
                 user_id, account_id, before_each=heartbeat.check
             )
+        heartbeat.check()
+        BacktestSimulationRepository().delete_run_data(user_id, run_id)
+
         remaining_trade_count = mongo.db.trades.count_documents(
             {
                 "user_id": run["user_id"],
-                "trade_account_id": {"$in": list(account_ids)},
+                "$or": [
+                    {"trade_account_id": {"$in": list(account_ids)}},
+                    {"backtest_run_id": run_id},
+                ],
             }
         )
         if remaining_trade_count:
@@ -613,6 +656,13 @@ class BacktestWorker:
                 start_date=start_date,
                 end_date=end_date,
                 blind_mode=bool(resolved_run.get("blind_mode", False)),
+                initial_balance_usd=(
+                    resolved_run.get("initial_balance_usd")
+                    or DEFAULT_INITIAL_BALANCE_USD
+                ),
+                risk_percent=(
+                    resolved_run.get("risk_percent") or DEFAULT_RISK_PERCENT
+                ),
             )
             mongo.db.trade_accounts.insert_one(account)
 
@@ -654,12 +704,28 @@ class BacktestWorker:
             job.get("context_start_utc_date", job["next_utc_date"])
         )
         last_requested_date = _as_date(job["end_utc_date"])
-        all_dates = self._date_range(
-            _as_date(job["next_utc_date"]), last_requested_date
+        fx_conversion = self._ensure_fx_conversion_state(job, run, heartbeat)
+        needs_fx_series = bool(
+            fx_conversion
+            and fx_conversion.get("instrument")
+            and fx_conversion.get("direction") in {"direct", "inverse"}
         )
+        next_utc_date = _as_date(job["next_utc_date"])
+        # If base-candle checkpoints committed before a worker crash, still
+        # revisit those dates to resume missing FX checkpoints.
+        loop_start_date = (
+            min(first_requested_date, next_utc_date)
+            if needs_fx_series
+            else next_utc_date
+        )
+        all_dates = self._date_range(loop_start_date, last_requested_date)
         completed = {
             _as_date(checkpoint["utc_date"]): checkpoint
             for checkpoint in job.get("completed_utc_dates", [])
+        }
+        fx_completed = {
+            _as_date(checkpoint["utc_date"]): checkpoint
+            for checkpoint in (fx_conversion or {}).get("completed_utc_dates", [])
         }
         total_dates = max(
             (last_requested_date - first_requested_date).days + 1, 1
@@ -667,7 +733,9 @@ class BacktestWorker:
 
         for utc_date in all_dates:
             heartbeat.check()
-            if utc_date in completed:
+            base_done = utc_date in completed
+            fx_done = utc_date in fx_completed
+            if base_done and (not needs_fx_series or fx_done):
                 continue
             done_count = len(completed)
             self._renew_or_lose(job, run, heartbeat)
@@ -680,57 +748,88 @@ class BacktestWorker:
                 now=_as_utc(self.clock()),
             ):
                 raise LeaseLostError("Backtest preparation lease was lost.")
-            try:
-                result = self.provider.fetch_day(run["instrument"], utc_date)
-                candles = self._validated_candles(result, utc_date, run)
-            except Exception as exc:
+            if not base_done:
+                try:
+                    result = self.provider.fetch_day(run["instrument"], utc_date)
+                    candles = self._validated_candles(result, utc_date, run)
+                except Exception as exc:
+                    self._fail_provider_job(job, run, heartbeat, exc)
+                    return
+
+                outcome = "data" if candles else "empty"
+                object_key = self.snapshot_store.write_staged_date(
+                    user_id,
+                    run_id,
+                    utc_date,
+                    candles,
+                    before_write=lambda: self._renew_or_lose(
+                        job, run, heartbeat
+                    ),
+                    after_write=lambda key: self._verify_preparation_write(
+                        job, run, heartbeat, key
+                    ),
+                )
+                next_date = utc_date + timedelta(days=1)
+                now = _as_utc(self.clock())
                 self._renew_or_lose(job, run, heartbeat)
-                terminal_job = self.job_repository.mark_terminal(
+                checkpointed = self.job_repository.add_checkpoint(
                     job["_id"],
                     self.worker_id,
-                    now=_as_utc(self.clock()),
-                    outcome="failed",
-                    error_type=type(exc).__name__,
+                    now=now,
+                    utc_date=_date_instant(utc_date),
+                    outcome=outcome,
+                    object_key=object_key,
+                    next_utc_date=_date_instant(next_date),
                 )
-                if terminal_job is None:
-                    raise LeaseLostError(
-                        "Preparation lease expired before failure cleanup."
-                    ) from exc
-                self._finish_outcome(run, terminal_job, heartbeat)
-                return
+                if not checkpointed:
+                    raise LeaseLostError("Backtest preparation lease was lost.")
+                completed[utc_date] = {
+                    "utc_date": _date_instant(utc_date),
+                    "outcome": outcome,
+                    "object_key": object_key,
+                }
 
-            outcome = "data" if candles else "empty"
-            object_key = self.snapshot_store.write_staged_date(
-                user_id,
-                run_id,
-                utc_date,
-                candles,
-                before_write=lambda: self._renew_or_lose(
-                    job, run, heartbeat
-                ),
-                after_write=lambda key: self._verify_preparation_write(
-                    job, run, heartbeat, key
-                ),
-            )
-            next_date = utc_date + timedelta(days=1)
-            now = _as_utc(self.clock())
-            self._renew_or_lose(job, run, heartbeat)
-            checkpointed = self.job_repository.add_checkpoint(
-                job["_id"],
-                self.worker_id,
-                now=now,
-                utc_date=_date_instant(utc_date),
-                outcome=outcome,
-                object_key=object_key,
-                next_utc_date=_date_instant(next_date),
-            )
-            if not checkpointed:
-                raise LeaseLostError("Backtest preparation lease was lost.")
-            completed[utc_date] = {
-                "utc_date": _date_instant(utc_date),
-                "outcome": outcome,
-                "object_key": object_key,
-            }
+            if needs_fx_series and not fx_done:
+                try:
+                    fetch_conversion_day = getattr(
+                        self.provider, "fetch_conversion_day", None
+                    )
+                    if not callable(fetch_conversion_day):
+                        fetch_conversion_day = self.provider.fetch_day
+                    fx_result = fetch_conversion_day(
+                        fx_conversion["instrument"], utc_date
+                    )
+                    fx_candles = self._validated_candles(
+                        fx_result, utc_date, run
+                    )
+                except Exception as exc:
+                    self._fail_provider_job(job, run, heartbeat, exc)
+                    return
+
+                fx_outcome = "data" if fx_candles else "empty"
+                fx_object_key = self.snapshot_store.write_staged_conversion_date(
+                    user_id,
+                    run_id,
+                    fx_conversion["quote_currency"],
+                    utc_date,
+                    fx_candles,
+                    before_write=lambda: self._renew_or_lose(
+                        job, run, heartbeat
+                    ),
+                    after_write=lambda key: self._verify_preparation_write(
+                        job, run, heartbeat, key
+                    ),
+                )
+                self._renew_or_lose(job, run, heartbeat)
+                checkpoint = {
+                    "utc_date": _date_instant(utc_date),
+                    "outcome": fx_outcome,
+                    "object_key": fx_object_key,
+                    "completed_at": _as_utc(self.clock()),
+                }
+                if not self._add_fx_checkpoint(job, checkpoint):
+                    raise LeaseLostError("Backtest preparation lease was lost.")
+                fx_completed[utc_date] = checkpoint
 
         self._renew_or_lose(job, run, heartbeat)
         latest_job = self.job_repository.collection.find_one(
@@ -752,6 +851,7 @@ class BacktestWorker:
             user_id=user_id,
             run=run,
             completed_dates=checkpoints,
+            fx_conversion=latest_job.get("fx_conversion"),
             before_publish=lambda: self._renew_or_lose(job, run, heartbeat),
             after_publish=lambda key: self._verify_preparation_write(
                 job, run, heartbeat, key
@@ -828,6 +928,113 @@ class BacktestWorker:
             job["_id"], self.worker_id, now=_as_utc(self.clock())
         ):
             raise LeaseLostError("Backtest preparation lease was lost after publish.")
+
+    def _ensure_fx_conversion_state(
+        self, job: dict, run: dict, heartbeat
+    ) -> dict | None:
+        """Pin the FX source contract and retain completed date checkpoints."""
+        metadata = run.get("instrument_metadata") or {}
+        quote_currency = (
+            metadata.get("quote_currency")
+            or quote_currency_from_instrument(
+                run.get("instrument") or job.get("instrument")
+            )
+            or (job.get("fx_conversion") or {}).get("quote_currency")
+        )
+        spec = build_conversion_spec(quote_currency)
+        if spec is None:
+            return None
+
+        existing = job.get("fx_conversion") or {}
+        same_contract = all(
+            existing.get(key) == spec.get(key)
+            for key in ("quote_currency", "instrument", "direction", "supported")
+        )
+        if same_contract:
+            spec["completed_utc_dates"] = list(
+                existing.get("completed_utc_dates") or []
+            )
+        now = _as_utc(self.clock())
+        if not same_contract or "completed_utc_dates" not in existing:
+            self._renew_or_lose(job, run, heartbeat)
+            result = self.job_repository.collection.update_one(
+                {
+                    "_id": job["_id"],
+                    "state": "running",
+                    "lease_owner": self.worker_id,
+                    "lease_expires_at": {"$gt": now},
+                    "terminal_outcome": {"$exists": False},
+                },
+                {
+                    "$set": {
+                        "fx_conversion": spec,
+                        "updated_at": now,
+                    }
+                },
+            )
+            if result.matched_count != 1:
+                raise LeaseLostError("Backtest preparation lease was lost.")
+        job["fx_conversion"] = spec
+        return spec
+
+    def _add_fx_checkpoint(self, job: dict, checkpoint: dict) -> bool:
+        """Persist conversion-date completion behind the active worker lease."""
+        now = _as_utc(self.clock())
+        utc_date = checkpoint["utc_date"]
+        result = self.job_repository.collection.update_one(
+            {
+                "_id": job["_id"],
+                "state": "running",
+                "lease_owner": self.worker_id,
+                "lease_expires_at": {"$gt": now},
+                "terminal_outcome": {"$exists": False},
+                "fx_conversion.completed_utc_dates.utc_date": {"$ne": utc_date},
+            },
+            {
+                "$push": {
+                    "fx_conversion.completed_utc_dates": checkpoint,
+                },
+                "$set": {"updated_at": now},
+            },
+        )
+        if result.modified_count == 1:
+            return True
+        current = self.job_repository.collection.find_one(
+            {
+                "_id": job["_id"],
+                "state": "running",
+                "lease_owner": self.worker_id,
+                "lease_expires_at": {"$gt": now},
+                "terminal_outcome": {"$exists": False},
+            }
+        )
+        return bool(
+            current
+            and any(
+                item.get("utc_date") == utc_date
+                for item in current.get("fx_conversion", {}).get(
+                    "completed_utc_dates", []
+                )
+            )
+        )
+
+    def _fail_provider_job(
+        self, job: dict, run: dict, heartbeat, error: Exception
+    ) -> None:
+        """Commit and clean up a terminal base or conversion provider error."""
+        self._renew_or_lose(job, run, heartbeat)
+        terminal_job = self.job_repository.mark_terminal(
+            job["_id"],
+            self.worker_id,
+            now=_as_utc(self.clock()),
+            outcome="failed",
+            error_type=type(error).__name__,
+        )
+        if terminal_job is None:
+            raise LeaseLostError(
+                "Preparation lease expired before failure cleanup."
+            ) from error
+        self._finish_outcome(run, terminal_job, heartbeat)
 
     def _finish_outcome(
         self,
