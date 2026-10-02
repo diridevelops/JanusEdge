@@ -122,6 +122,11 @@ export function createBacktestReplayDataSource(
   };
 }
 
+function getReplayStepSize(speed: number | undefined): number {
+  if (typeof speed !== 'number' || !Number.isFinite(speed) || speed <= 0) return 1;
+  return Math.max(1, Math.round(speed));
+}
+
 /**
  * CandleKit's seek accepts arbitrary milliseconds and resumes a playing replay
  * after its asynchronous day lookup. JanusEdge seeks to the next available
@@ -199,6 +204,7 @@ export function createCandleKitControlsAdapter(
     };
     const tick = async () => {
       if (!playing || pending) return;
+      const tickStartedAt = Date.now();
       const state = controller.getState();
       if (state.status !== 'ready') {
         pause();
@@ -209,9 +215,12 @@ export function createCandleKitControlsAdapter(
         pause();
         return;
       }
-      await moveToIndex(currentIndex + 1);
+      const stepSize = getReplayStepSize(speed);
+      const nextIndex = Math.min(sortedCandleTimes.length - 1, currentIndex + stepSize);
+      await moveToIndex(nextIndex);
       if (playing) {
-        timer = window.setTimeout(() => void tick(), Math.max(25, 1000 / speed));
+        const elapsedMs = Date.now() - tickStartedAt;
+        timer = window.setTimeout(() => void tick(), Math.max(0, 1_000 - elapsedMs));
       }
     };
 
@@ -265,9 +274,7 @@ export function createCandleKitControlsAdapter(
             const state = target.getState();
             if (state.status !== 'ready') return;
             const currentIndex = sortedCandleTimes.indexOf(state.cursor.ts);
-            const stepSize = Number.isFinite(state.speed) && state.speed > 0
-              ? Math.max(1, Math.round(state.speed))
-              : 1;
+            const stepSize = getReplayStepSize(state.speed);
             const nextIndex = Math.max(
               0,
               Math.min(sortedCandleTimes.length - 1, currentIndex + direction * stepSize)
@@ -309,9 +316,7 @@ export function createCandleKitControlsAdapter(
             ? 0
             : Math.max(0, sortedCandleTimes.indexOf(firstEligibleTime));
           const lastIndex = sortedCandleTimes.length - 1;
-          const stepSize = Number.isFinite(initialState.speed) && initialState.speed > 0
-            ? Math.max(1, Math.round(initialState.speed))
-            : 1;
+          const stepSize = getReplayStepSize(initialState.speed);
           const initialIndex = sortedCandleTimes.indexOf(initialState.cursor.ts);
           if (initialIndex < firstIndex || initialIndex > lastIndex) return;
           const remainingSteps = direction === 1
