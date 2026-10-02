@@ -1,4 +1,5 @@
 import { useId, useState } from 'react';
+import { ChevronDown, ChevronUp } from 'lucide-react';
 import {
   calculateBacktestBracketSizing,
   type BacktestBracketPrices,
@@ -28,6 +29,21 @@ export interface BacktestEntryPanelProps extends BacktestBracketPrices {
 function formatUsd(value: number | null): string {
   if (value == null || !Number.isFinite(value)) return '—';
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(value);
+}
+
+/** Step manual lots in thousandths so each arrow adds or subtracts 0.01 exactly. */
+export function stepManualLotsValue(
+  currentLots: number | null,
+  direction: -1 | 1
+): number | null {
+  if (currentLots == null) return direction > 0 ? 0.01 : null;
+  if (!Number.isFinite(currentLots) || currentLots < 0.001) return null;
+
+  const currentThousandths = Math.round(currentLots * 1000);
+  if (Math.abs(currentLots * 1000 - currentThousandths) > 1e-6) return null;
+
+  const nextThousandths = currentThousandths + direction * 10;
+  return nextThousandths >= 1 ? nextThousandths / 1000 : null;
 }
 
 export function BacktestEntryPanel({
@@ -69,6 +85,8 @@ export function BacktestEntryPanel({
   const initialBudget = Number.isFinite(account.currentBalanceUsd) && Number.isFinite(account.riskPercent)
     ? account.currentBalanceUsd * account.riskPercent / 100
     : null;
+  const nextManualLotsUp = stepManualLotsValue(manualLots, 1);
+  const nextManualLotsDown = stepManualLotsValue(manualLots, -1);
 
   function setAutoSize(next: boolean) {
     if (autoSize == null) setLocalAutoSize(next);
@@ -132,21 +150,47 @@ export function BacktestEntryPanel({
           </label>
 
           {!useAutoSize && (
-            <label className="backtest-entry-panel-manual-size" htmlFor={`${panelId}-lots`}>
-              Manual lots
-              <input
-                id={`${panelId}-lots`}
-                type="number"
-                min="0.001"
-                step="0.001"
-                inputMode="decimal"
-                value={manualLots ?? ''}
-                onChange={(event) => {
-                  const value = event.currentTarget.value;
-                  onManualLotsChange(value === '' ? null : Number(value));
-                }}
-              />
-            </label>
+            <div className="backtest-entry-panel-manual-size">
+              <label htmlFor={`${panelId}-lots`}>Manual lots</label>
+              <div className="backtest-entry-panel-lots-control">
+                <input
+                  id={`${panelId}-lots`}
+                  type="number"
+                  min="0.001"
+                  step="any"
+                  inputMode="decimal"
+                  value={manualLots ?? ''}
+                  onChange={(event) => {
+                    const value = event.currentTarget.value;
+                    onManualLotsChange(value === '' ? null : Number(value));
+                  }}
+                />
+                <div className="backtest-entry-panel-lots-stepper" role="group" aria-label="Adjust manual lots">
+                  <button
+                    type="button"
+                    aria-label="Increase manual lots by 0.01"
+                    title="Increase by 0.01 lots"
+                    disabled={nextManualLotsUp == null}
+                    onClick={() => {
+                      if (nextManualLotsUp != null) onManualLotsChange(nextManualLotsUp);
+                    }}
+                  >
+                    <ChevronUp aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Decrease manual lots by 0.01"
+                    title="Decrease by 0.01 lots"
+                    disabled={nextManualLotsDown == null}
+                    onClick={() => {
+                      if (nextManualLotsDown != null) onManualLotsChange(nextManualLotsDown);
+                    }}
+                  >
+                    <ChevronDown aria-hidden="true" />
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
 
           <dl className="backtest-entry-panel-metrics">

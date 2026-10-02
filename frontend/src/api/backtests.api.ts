@@ -20,6 +20,7 @@ import type {
   BacktestSimulationRewindRequest,
   BacktestSimulationState,
   BacktestSimulationSubmitOrderRequest,
+  BacktestSimulationUpdateRiskRequest,
   CreateBacktestRunRequest,
 } from '../types/backtest.types';
 
@@ -232,6 +233,18 @@ export async function modifyBacktestSimulationProtection(
 ): Promise<BacktestSimulationOperationResponse> {
   const response = await apiClient.put<BacktestSimulationOperationResponse>(
     `/backtest/runs/${encodeURIComponent(runId)}/simulation/positions/${encodeURIComponent(positionId)}/protection`,
+    request
+  );
+  return response.data;
+}
+
+/** Update the saved risk budget percentage used for future entry orders. */
+export async function updateBacktestSimulationRisk(
+  runId: string,
+  request: BacktestSimulationUpdateRiskRequest
+): Promise<BacktestSimulationOperationResponse> {
+  const response = await apiClient.put<BacktestSimulationOperationResponse>(
+    `/backtest/runs/${encodeURIComponent(runId)}/simulation/risk`,
     request
   );
   return response.data;

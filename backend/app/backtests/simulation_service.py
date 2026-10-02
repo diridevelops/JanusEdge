@@ -768,7 +768,12 @@ class SimulationService:
     def _prepare_run_updates(
         self, operation: dict, run: dict, updates: dict[str, Any]
     ) -> dict[str, Any]:
-        allowed = {"replay_cursor", "current_balance_usd", "status"}
+        allowed = {
+            "replay_cursor",
+            "current_balance_usd",
+            "simulation_risk_percent",
+            "status",
+        }
         if not set(updates).issubset(allowed):
             raise ValueError("Simulation handler returned unsupported run updates.")
         if "status" in updates:
@@ -783,6 +788,20 @@ class SimulationService:
             ):
                 raise ValueError("current_balance_usd must be finite.")
             updates["current_balance_usd"] = float(balance)
+        if "simulation_risk_percent" in updates:
+            risk_percent = updates["simulation_risk_percent"]
+            if (
+                operation["kind"] != "update_risk"
+                or isinstance(risk_percent, bool)
+                or not isinstance(risk_percent, (float, int))
+                or not math.isfinite(risk_percent)
+                or risk_percent <= 0
+                or risk_percent > 100
+            ):
+                raise ValueError(
+                    "simulation_risk_percent must be greater than 0 and no more than 100."
+                )
+            updates["simulation_risk_percent"] = float(risk_percent)
         if operation["kind"] in {"advance", "rewind", "reset"}:
             raw_cursor = updates.get("replay_cursor")
             if not isinstance(raw_cursor, Mapping):

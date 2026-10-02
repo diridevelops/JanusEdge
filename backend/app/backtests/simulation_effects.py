@@ -127,6 +127,8 @@ class BacktestSimulationEffects:
                 return self._close_position(operation, run, request)
             if kind == "modify_protection":
                 return self._modify_protection(operation, run, request)
+            if kind == "update_risk":
+                return self._update_risk(operation, run, request)
             if kind == "update_costs":
                 return self._update_costs(operation, run, request)
             if kind == "advance":
@@ -254,7 +256,9 @@ class BacktestSimulationEffects:
             "pending_operation": control.get("pending_operation_id") is not None,
             "backward_navigation_locked": bool(control.get("has_accepted_order")),
             "initial_balance_usd": float(run.get("initial_balance_usd", 10_000.0)),
-            "risk_percent": float(run.get("risk_percent", 1.0)),
+            "risk_percent": float(
+                run.get("simulation_risk_percent", run.get("risk_percent", 1.0))
+            ),
             "current_balance_usd": float(
                 run.get("current_balance_usd", run.get("initial_balance_usd", 10_000.0))
             ),
@@ -666,7 +670,10 @@ class BacktestSimulationEffects:
         quote_rate = self._quote_rate(
             run, metadata, context["cursor_time_ms"] + 60_000
         )
-        risk_percent = _as_float(run.get("risk_percent", 1.0), "risk_percent")
+        risk_percent = _as_float(
+            run.get("simulation_risk_percent", run.get("risk_percent", 1.0)),
+            "risk_percent",
+        )
         balance = _as_float(
             run.get("current_balance_usd", run.get("initial_balance_usd", 10_000.0)),
             "current_balance_usd",
@@ -1012,6 +1019,17 @@ class BacktestSimulationEffects:
         return {
             "result": {"cost_profile": profile},
             "run_updates": {},
+        }
+
+    def _update_risk(self, operation: dict, run: dict, request: dict) -> dict:
+        risk_percent = _as_float(request.get("risk_percent"), "risk_percent")
+        if risk_percent <= 0 or risk_percent > 100:
+            raise SimulationRuleError(
+                "Risk percent must be greater than 0% and no more than 100%."
+            )
+        return {
+            "result": {"risk_percent": risk_percent},
+            "run_updates": {"simulation_risk_percent": risk_percent},
         }
 
     def _rewind(self, operation: dict, run: dict, request: dict) -> dict:

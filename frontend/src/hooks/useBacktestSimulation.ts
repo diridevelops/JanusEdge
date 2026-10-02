@@ -8,6 +8,7 @@ import {
   resetBacktestSimulation,
   rewindBacktestSimulation,
   submitBacktestSimulationOrder,
+  updateBacktestSimulationRisk,
 } from '../api/backtests.api';
 import type {
   BacktestSimulationAdvanceRequest,
@@ -20,6 +21,7 @@ import type {
   BacktestSimulationRewindRequest,
   BacktestSimulationState,
   BacktestSimulationSubmitOrderRequest,
+  BacktestSimulationUpdateRiskRequest,
 } from '../types/backtest.types';
 
 export type BacktestSimulationLoadStatus = 'idle' | 'loading' | 'ready' | 'error';
@@ -68,6 +70,9 @@ export interface UseBacktestSimulationResult {
   refresh: () => Promise<BacktestSimulationState | null>;
   submitOrder: (
     request: BacktestSimulationSubmitOrderRequest
+  ) => Promise<BacktestSimulationOperationResponse>;
+  updateRisk: (
+    request: BacktestSimulationUpdateRiskRequest
   ) => Promise<BacktestSimulationOperationResponse>;
   cancelOrder: (
     orderId: string,
@@ -239,6 +244,13 @@ export function useBacktestSimulation(
     [runId, runMutation]
   );
 
+  const updateRisk = useCallback(
+    (request: BacktestSimulationUpdateRiskRequest) => runMutation(
+      () => updateBacktestSimulationRisk(runId, request)
+    ),
+    [runId, runMutation]
+  );
+
   const cancelOrder = useCallback(
     (orderId: string, request: BacktestSimulationCancelOrderRequest) => runMutation(
       () => cancelBacktestSimulationOrder(runId, orderId, request)
@@ -289,6 +301,7 @@ export function useBacktestSimulation(
     isMutating: mutationCount > 0,
     refresh,
     submitOrder,
+    updateRisk,
     cancelOrder,
     closePosition,
     modifyProtection,

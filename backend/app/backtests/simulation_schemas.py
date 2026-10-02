@@ -17,6 +17,7 @@ OPERATION_KINDS = frozenset(
         "cancel_order",
         "close_position",
         "modify_protection",
+        "update_risk",
         "update_costs",
         "advance",
         "rewind",
@@ -223,6 +224,19 @@ class UpdateCostsRequestSchema(SimulationRequestSchema):
     total_spread_pips = NonnegativeFiniteFloat(required=True)
     slippage_pips = NonnegativeFiniteFloat(required=True)
     commission_usd_per_lot_per_side = NonnegativeFiniteFloat(required=True)
+
+
+class UpdateRiskRequestSchema(SimulationRequestSchema):
+    """Update the risk budget percentage used to size future entries."""
+
+    risk_percent = PositiveFiniteFloat(required=True)
+
+    @validates_schema
+    def validate_risk_percent(self, data, **kwargs) -> None:
+        if data["risk_percent"] > 100:
+            raise ValidationError(
+                {"risk_percent": ["Risk percent cannot exceed 100%."]}
+            )
 
 
 class AdvanceSimulationRequestSchema(SimulationRequestSchema):

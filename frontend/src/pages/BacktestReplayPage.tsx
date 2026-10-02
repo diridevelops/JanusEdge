@@ -1,4 +1,4 @@
-import { type CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { type CSSProperties, type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, Maximize2 } from 'lucide-react';
 import { Link, useOutletContext, useParams } from 'react-router-dom';
 import { getBacktestChartWorkspace, getBacktestRun, saveBacktestChartWorkspace } from '../api/backtests.api';
@@ -10,6 +10,7 @@ import {
 } from '../components/backtest/backtestBracketMath';
 import { BacktestEntryPanel } from '../components/backtest/BacktestEntryPanel';
 import { BacktestOrdersAndPositions, type BacktestWorkingOrder } from '../components/backtest/BacktestOrdersAndPositions';
+import type { BacktestWorkingOrderOverlayItem } from '../components/backtest/BacktestWorkingOrderOverlay';
 import { BacktestSimulationUiProvider, type BacktestSimulationChartUi } from '../components/backtest/BacktestSimulationContext';
 import { BacktestChartWorkspace } from '../components/backtest/BacktestChartWorkspace';
 import { BacktestReplayControls } from '../components/backtest/BacktestReplayControls';
@@ -307,8 +308,46 @@ function BacktestReplayWorkspaceRun({
   const [previewTakeProfit, setPreviewTakeProfit] = useState<number | null>(null);
   const [manualLots, setManualLots] = useState<number | null>(null);
   const [autoSize, setAutoSize] = useState(true);
+  const [riskPercentDraft, setRiskPercentDraft] = useState(String(run.risk_percent ?? 1));
+  const [riskPercentError, setRiskPercentError] = useState<string | null>(null);
+  const [isSavingRiskPercent, setIsSavingRiskPercent] = useState(false);
   const currentBalanceUsd = simulationState?.current_balance_usd ?? run.initial_balance_usd ?? 10_000;
   const riskPercent = simulationState?.risk_percent ?? run.risk_percent ?? 1;
+  useEffect(() => {
+    setRiskPercentDraft(String(riskPercent));
+    setRiskPercentError(null);
+  }, [riskPercent]);
+  const saveRiskPercent = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const nextRiskPercent = Number(riskPercentDraft);
+    if (!Number.isFinite(nextRiskPercent) || nextRiskPercent <= 0 || nextRiskPercent > 100) {
+      setRiskPercentError('Enter a risk percentage greater than 0 and no more than 100.');
+      return;
+    }
+    const current = simulation.state;
+    if (!current || simulationBusy || current.status !== 'ready') return;
+    if (nextRiskPercent === riskPercent) {
+      setRiskPercentDraft(String(riskPercent));
+      setRiskPercentError(null);
+      return;
+    }
+
+    setIsSavingRiskPercent(true);
+    setRiskPercentError(null);
+    try {
+      await simulation.updateRisk({
+        ...createBacktestSimulationOperationRequest(current.control_revision),
+        risk_percent: nextRiskPercent,
+      });
+    } catch {
+      // The simulation hook keeps the server error visible in the sidebar.
+    } finally {
+      setIsSavingRiskPercent(false);
+    }
+  };
+  const canUpdateRiskPercent = Boolean(
+    simulationState?.status === 'ready' && !simulationBusy
+  );
   const currentCosts = {
     totalSpreadPips: simulationState?.cost_profile.total_spread_pips ?? 0,
     slippagePips: simulationState?.cost_profile.slippage_pips ?? 0,
@@ -383,6 +422,19 @@ function BacktestReplayWorkspaceRun({
       takeProfitPrice: order.take_profit_price ?? 0,
       projectedRiskUsd: order.projected_risk_usd ?? order.risk_budget_usd ?? 0,
     }));
+  const workingOrderMarkers: BacktestWorkingOrderOverlayItem[] = (simulationState?.orders ?? [])
+    .filter((order) => order.role === 'entry' && order.status === 'pending')
+    .flatMap((order) => {
+      const canonicalEntryPrice = order.entry_price ?? order.sizing_reference_entry_price;
+      if (canonicalEntryPrice == null || !Number.isFinite(canonicalEntryPrice)) return [];
+      return [{
+        id: order.order_id,
+        side: order.side,
+        orderType: order.order_type === 'limit' ? 'limit' as const : 'market' as const,
+        lots: order.lots,
+        entryPrice: toDisplayPrice(canonicalEntryPrice),
+      }];
+    });
 
   const setPreviewEntry = useCallback((price: number) => {
     setPreviewEntryPrice(price);
@@ -440,6 +492,14 @@ function BacktestReplayWorkspaceRun({
   const onCloseChart = useCallback((positionId: string) => {
     ignoreRejectedMutation(closePosition(positionId));
   }, [closePosition]);
+  const onCancelWorkingOrder = useCallback((orderId: string) => {
+    const current = simulation.state;
+    if (!current || simulation.isMutating) return;
+    ignoreRejectedMutation(simulation.cancelOrder(
+      orderId,
+      createBacktestSimulationOperationRequest(current.control_revision)
+    ));
+  }, [simulation]);
   const onPlaceOrder = useCallback(async (draft: BacktestEntryOrderDraft) => {
     const current = simulation.state;
     if (!current || simulationBusy || draft.stopLossPrice == null || draft.takeProfitPrice == null) return;
@@ -496,6 +556,7 @@ function BacktestReplayWorkspaceRun({
       onCancel: resetPreview,
     },
     positions: positionItems,
+    workingOrders: workingOrderMarkers,
     currentClose: currentDisplayClose,
     pricePrecision: displayedPricePrecision,
     pipSize: entryInstrument?.pipSize ?? 0,
@@ -504,6 +565,7 @@ function BacktestReplayWorkspaceRun({
     onMoveTarget,
     onBreakEven: onBreakEvenChart,
     onClose: onCloseChart,
+    onCancelOrder: onCancelWorkingOrder,
   };
 
   useEffect(() => () => setReplayMaximized(false), [setReplayMaximized]);
@@ -659,8 +721,44 @@ function BacktestReplayWorkspaceRun({
               <section className="backtest-simulation-account" aria-label="Backtest account summary">
                 <div><span>Starting balance</span><strong>{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(simulationState?.initial_balance_usd ?? run.initial_balance_usd ?? 10_000)}</strong></div>
                 <div><span>Current balance</span><strong>{new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(currentBalanceUsd)}</strong></div>
-                <div><span>Risk per trade</span><strong>{riskPercent}%</strong></div>
-                <div><span>Run status</span><strong>{simulationState?.status ?? (simulation.status === 'loading' ? 'Loading…' : run.status)}</strong></div>
+                <form className="backtest-simulation-risk" onSubmit={saveRiskPercent} noValidate>
+                  <label htmlFor="backtest-risk-percent">Risk per trade</label>
+                  <div className="backtest-simulation-risk-control">
+                    <input
+                      id="backtest-risk-percent"
+                      type="number"
+                      inputMode="decimal"
+                      min="0"
+                      max="100"
+                      step="any"
+                      value={riskPercentDraft}
+                      disabled={!canUpdateRiskPercent || isSavingRiskPercent}
+                      onChange={(event) => {
+                        setRiskPercentDraft(event.target.value);
+                        setRiskPercentError(null);
+                      }}
+                      aria-describedby="backtest-risk-percent-help"
+                    />
+                    <span aria-hidden="true">%</span>
+                    <button type="submit" disabled={!canUpdateRiskPercent || isSavingRiskPercent}>
+                      {isSavingRiskPercent ? 'Saving…' : 'Save'}
+                    </button>
+                  </div>
+                  <span id="backtest-risk-percent-help" className="backtest-simulation-risk-help">
+                    Applies to orders placed after saving.
+                  </span>
+                  {riskPercentError && <span className="backtest-simulation-risk-error" role="alert">{riskPercentError}</span>}
+                </form>
+                <div>
+                  <span>Trades</span>
+                  {run.account_id ? (
+                    <Link to={`/trades?account=${encodeURIComponent(run.account_id)}`} className="backtest-simulation-trades-link">
+                      View trades
+                    </Link>
+                  ) : (
+                    <strong>No linked account</strong>
+                  )}
+                </div>
               </section>
 
               {simulation.status === 'loading' && !simulationState && (
@@ -703,10 +801,7 @@ function BacktestReplayWorkspaceRun({
                 toDisplayPrice={toDisplayPrice}
                 toCanonicalPrice={toCanonicalPrice}
                 pending={simulationBusy || simulationState?.status !== 'ready'}
-                onCancelOrder={(orderId) => {
-                  const current = simulation.state;
-                  if (current) ignoreRejectedMutation(simulation.cancelOrder(orderId, createBacktestSimulationOperationRequest(current.control_revision)));
-                }}
+                onCancelOrder={onCancelWorkingOrder}
                 onMoveStop={(positionId, price) => { void setProtectionCanonical(positionId, 'stop_loss', price); }}
                 onMoveTarget={(positionId, price) => { void setProtectionCanonical(positionId, 'take_profit', price); }}
                 onBreakEven={(positionId, price) => { void setProtectionCanonical(positionId, 'stop_loss', price); }}

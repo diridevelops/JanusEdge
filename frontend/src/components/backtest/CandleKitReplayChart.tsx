@@ -32,6 +32,7 @@ import { createBacktestTimeFormatters } from '../../utils/backtestTimeFormat';
 import { normalizeBacktestPrice } from '../../utils/backtestPriceFormat';
 import { BacktestBracketPreview } from './BacktestBracketPreview';
 import { BacktestPositionOverlay } from './BacktestPositionOverlay';
+import { BacktestWorkingOrderOverlay } from './BacktestWorkingOrderOverlay';
 import { useBacktestSimulationChartUi } from './BacktestSimulationContext';
 import { useChartApi } from '@getcandlekit/charts/react';
 
@@ -162,6 +163,15 @@ function BacktestSimulationChartLayer() {
           onMoveTarget={ui.onMoveTarget}
           onBreakEven={ui.onBreakEven}
           onClose={ui.onClose}
+          disabled={ui.disabled}
+        />
+      )}
+      {ui.workingOrders.length > 0 && (
+        <BacktestWorkingOrderOverlay
+          orders={ui.workingOrders}
+          pricePrecision={ui.pricePrecision}
+          priceToCoordinate={priceToCoordinate}
+          onCancel={ui.onCancelOrder}
           disabled={ui.disabled}
         />
       )}

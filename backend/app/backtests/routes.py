@@ -15,6 +15,7 @@ from app.backtests.simulation_schemas import (
     ResetSimulationRequestSchema,
     RewindSimulationRequestSchema,
     SubmitOrderRequestSchema,
+    UpdateRiskRequestSchema,
 )
 from app.backtests.simulation_service import SimulationService
 from app.backtests.schemas import serialize_backtest_value
@@ -235,6 +236,12 @@ def modify_simulation_protection(run_id: str, position_id: str):
 def update_simulation_costs(run_id: str):
     _simulation_run_and_precision(get_jwt_identity(), run_id)
     raise ConflictError("Execution costs are fixed when the run is created.")
+
+
+@backtest_bp.route("/runs/<run_id>/simulation/risk", methods=["PUT"])
+@jwt_required()
+def update_simulation_risk(run_id: str):
+    return _execute_simulation(run_id, "update_risk", UpdateRiskRequestSchema)
 
 
 @backtest_bp.route("/runs/<run_id>/simulation/advance", methods=["POST"])

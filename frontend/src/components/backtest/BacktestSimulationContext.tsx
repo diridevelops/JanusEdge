@@ -5,6 +5,7 @@ import type {
   BacktestTradeDirection,
 } from './backtestBracketMath';
 import type { BacktestOverlayPosition } from './BacktestPositionOverlay';
+import type { BacktestWorkingOrderOverlayItem } from './BacktestWorkingOrderOverlay';
 
 export interface BacktestSimulationPreviewUi {
   visible: boolean;
@@ -35,6 +36,7 @@ export interface BacktestSimulationPreviewUi {
 export interface BacktestSimulationChartUi {
   preview: BacktestSimulationPreviewUi;
   positions: BacktestOverlayPosition[];
+  workingOrders: BacktestWorkingOrderOverlayItem[];
   currentClose: number | null;
   pricePrecision: number;
   pipSize: number;
@@ -43,6 +45,7 @@ export interface BacktestSimulationChartUi {
   onMoveTarget: (positionId: string, displayedPrice: number) => void;
   onBreakEven: (positionId: string, displayedPrice: number) => void;
   onClose: (positionId: string) => void;
+  onCancelOrder: (orderId: string) => void;
 }
 
 const BacktestSimulationUiContext = createContext<BacktestSimulationChartUi | null>(null);

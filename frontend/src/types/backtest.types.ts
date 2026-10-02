@@ -238,6 +238,12 @@ export interface BacktestSimulationOperationRequest {
   expected_revision: number;
 }
 
+/** Change the run's risk budget for orders submitted after this operation. */
+export interface BacktestSimulationUpdateRiskRequest
+  extends BacktestSimulationOperationRequest {
+  risk_percent: number;
+}
+
 /** Stable idempotency envelope returned by simulation mutation endpoints. */
 export interface BacktestSimulationOperationResponse<TResult = Record<string, unknown>> {
   client_operation_id: string;

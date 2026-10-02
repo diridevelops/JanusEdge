@@ -7,6 +7,7 @@ import {
 } from './backtestBracketMath';
 import {
   BacktestEntryPanel,
+  stepManualLotsValue,
   type BacktestEntryPanelProps,
 } from './BacktestEntryPanel';
 
@@ -80,6 +81,28 @@ describe('Backtest entry panel and bracket sizing', () => {
     expect(html).toContain('Manual lots');
     expect(html).toContain('value="0.25"');
     expect(html).not.toMatch(/<input type="checkbox" checked=""/);
+  });
+
+  it('steps manual lots by exactly 0.01 while retaining thousandth precision', () => {
+    expect(stepManualLotsValue(0.01, 1)).toBe(0.02);
+    expect(stepManualLotsValue(0.02, -1)).toBe(0.01);
+    expect(stepManualLotsValue(0.015, 1)).toBe(0.025);
+    expect(stepManualLotsValue(0.015, -1)).toBe(0.005);
+    expect(stepManualLotsValue(0.001, 1)).toBe(0.011);
+    expect(stepManualLotsValue(null, 1)).toBe(0.01);
+    expect(stepManualLotsValue(null, -1)).toBeNull();
+    expect(stepManualLotsValue(0.01, -1)).toBeNull();
+  });
+
+  it('renders attached manual-lots step buttons with the minimum boundary disabled', () => {
+    const html = renderToStaticMarkup(
+      <BacktestEntryPanel {...makePanelProps({ autoSize: false, manualLots: 0.01 })} />
+    );
+
+    expect(html).toMatch(/id="backtest-entry-panel-[^"]+-lots" type="number" min="0\.001" step="any"/);
+    expect(html).toContain('aria-label="Adjust manual lots"');
+    expect(html).toContain('aria-label="Increase manual lots by 0.01"');
+    expect(html).toContain('aria-label="Decrease manual lots by 0.01" title="Decrease by 0.01 lots" disabled=""');
   });
 
   it('does not render a collapsible control in the entry header', () => {
@@ -183,5 +206,22 @@ describe('Backtest entry panel and bracket sizing', () => {
     expect(html).toContain('Projected risk');
     expect(html).toContain('$29.00');
     expect(html).toContain('Projected risk and reward include modeled spread, slippage, and round-trip commission.');
+  });
+
+  it('continues to accept typed manual lots at 0.001 increments', () => {
+    const sizing = calculateBacktestBracketSizing({
+      entryType: 'market',
+      direction: 'long',
+      entryPrice: 1.1,
+      stopLossPrice: 1.099,
+      takeProfitPrice: 1.101,
+      instrument,
+      account,
+      autoSize: false,
+      manualLots: 0.001,
+    });
+
+    expect(sizing.quantityLots).toBe(0.001);
+    expect(sizing.canPlaceOrder).toBe(true);
   });
 });
