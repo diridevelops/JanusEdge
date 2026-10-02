@@ -265,7 +265,13 @@ export function createCandleKitControlsAdapter(
             const state = target.getState();
             if (state.status !== 'ready') return;
             const currentIndex = sortedCandleTimes.indexOf(state.cursor.ts);
-            const nextIndex = currentIndex + direction;
+            const stepSize = Number.isFinite(state.speed) && state.speed > 0
+              ? Math.max(1, Math.round(state.speed))
+              : 1;
+            const nextIndex = Math.max(
+              0,
+              Math.min(sortedCandleTimes.length - 1, currentIndex + direction * stepSize)
+            );
             if (direction === -1 && !gatedActions.canRewind()) return;
             void moveToIndex(nextIndex);
           };
@@ -297,18 +303,41 @@ export function createCandleKitControlsAdapter(
       }
       if (property === 'step') {
         return (direction: 1 | -1) => {
-          if (direction === -1) {
+          const initialState = target.getState();
+          if (initialState.status !== 'ready') return;
+          const firstIndex = firstEligibleTime === undefined
+            ? 0
+            : Math.max(0, sortedCandleTimes.indexOf(firstEligibleTime));
+          const lastIndex = sortedCandleTimes.length - 1;
+          const stepSize = Number.isFinite(initialState.speed) && initialState.speed > 0
+            ? Math.max(1, Math.round(initialState.speed))
+            : 1;
+          const initialIndex = sortedCandleTimes.indexOf(initialState.cursor.ts);
+          if (initialIndex < firstIndex || initialIndex > lastIndex) return;
+          const remainingSteps = direction === 1
+            ? lastIndex - initialIndex
+            : initialIndex - firstIndex;
+          if (remainingSteps <= 0) {
+            if (direction === -1) target.pause();
+            return;
+          }
+
+          for (let step = 0; step < Math.min(stepSize, remainingSteps); step += 1) {
             const state = target.getState();
+            if (state.status !== 'ready') return;
+            const currentIndex = sortedCandleTimes.indexOf(state.cursor.ts);
+            const nextIndex = currentIndex + direction;
             if (
-              firstEligibleTime !== undefined
-              && state.status === 'ready'
-              && state.cursor.ts <= firstEligibleTime
+              currentIndex < firstIndex
+              || currentIndex > lastIndex
+              || nextIndex < firstIndex
+              || nextIndex > lastIndex
             ) {
-              target.pause();
+              if (direction === -1 && nextIndex < firstIndex) target.pause();
               return;
             }
+            target.step(direction);
           }
-          target.step(direction);
         };
       }
 

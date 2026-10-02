@@ -22,7 +22,7 @@ export function BacktestReplayControls({
     <div className="backtest-replay-controls">
       <ReplayControls
         controller={controller}
-        speeds={[1, 5, 20]}
+        speeds={[1, 2, 5, 15, 30]}
         formatTime={formatTime}
         showProgress
         className="ck-replay backtest-candlekit-replay"
