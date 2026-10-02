@@ -154,6 +154,7 @@ function BacktestSimulationChartLayer() {
         <BacktestPositionOverlay
           positions={ui.positions}
           pricePrecision={ui.pricePrecision}
+          pipSize={ui.pipSize}
           currentClose={ui.currentClose}
           priceToCoordinate={priceToCoordinate}
           coordinateToPrice={coordinateToPrice}

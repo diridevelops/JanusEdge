@@ -498,6 +498,7 @@ function BacktestReplayWorkspaceRun({
     positions: positionItems,
     currentClose: currentDisplayClose,
     pricePrecision: displayedPricePrecision,
+    pipSize: entryInstrument?.pipSize ?? 0,
     disabled: simulationBusy || simulationState?.status !== 'ready',
     onMoveStop,
     onMoveTarget,

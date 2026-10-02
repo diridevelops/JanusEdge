@@ -37,6 +37,7 @@ export interface BacktestSimulationChartUi {
   positions: BacktestOverlayPosition[];
   currentClose: number | null;
   pricePrecision: number;
+  pipSize: number;
   disabled: boolean;
   onMoveStop: (positionId: string, displayedPrice: number) => void;
   onMoveTarget: (positionId: string, displayedPrice: number) => void;

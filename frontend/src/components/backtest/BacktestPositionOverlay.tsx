@@ -15,6 +15,7 @@ export interface BacktestOverlayPosition {
 interface BacktestPositionOverlayProps {
   positions: readonly BacktestOverlayPosition[];
   pricePrecision: number;
+  pipSize?: number;
   currentClose: number | null;
   priceToCoordinate: (price: number) => number | null;
   coordinateToPrice: (y: number) => number | null;
@@ -37,6 +38,29 @@ const usd = new Intl.NumberFormat('en-US', {
   style: 'currency', currency: 'USD', maximumFractionDigits: 2,
 });
 
+function formatSignedAmount(value: number, precision: number): string {
+  const rounded = Number(value.toFixed(precision));
+  const sign = rounded > 0 ? '+' : rounded < 0 ? '-' : '';
+  return `${sign}${Math.abs(rounded).toFixed(precision)}`;
+}
+
+function formatPositionPnlInInstrumentUnits(
+  position: BacktestOverlayPosition,
+  currentClose: number | null,
+  pipSize: number,
+  pricePrecision: number
+): string {
+  if (currentClose == null || !Number.isFinite(currentClose)) return '—';
+  const priceMove = position.side === 'long'
+    ? currentClose - position.weightedEntryPrice
+    : position.weightedEntryPrice - currentClose;
+  if (!Number.isFinite(priceMove)) return '—';
+  if (Number.isFinite(pipSize) && pipSize > 0) {
+    return `${formatSignedAmount(priceMove / pipSize, 1)} pips`;
+  }
+  return `${formatSignedAmount(priceMove, pricePrecision)} price`;
+}
+
 /** Keep a stop on the safe side of the latest close while allowing it past entry. */
 export function clampPositionStopPrice(
   side: BacktestOverlayPosition['side'],
@@ -56,6 +80,7 @@ export function clampPositionStopPrice(
 export function BacktestPositionOverlay({
   positions,
   pricePrecision,
+  pipSize = 0,
   currentClose,
   priceToCoordinate,
   coordinateToPrice,
@@ -216,8 +241,14 @@ export function BacktestPositionOverlay({
               top: Math.min(height - 28, Math.max(2, riskMarkerY)),
               transform: markerAboveEntry ? 'translateY(calc(-100% - 2px))' : 'translateY(2px)',
             }}>
-              <span className="px-1" title={`Initial risk ${usd.format(position.initialRiskUsd)}${position.stopMoved ? ' · stop-moved' : ''}`}>
+              <span className="sr-only" title={`Initial risk ${usd.format(position.initialRiskUsd)}${position.stopMoved ? ' · stop-moved' : ''}`}>
                 Risk {usd.format(position.initialRiskUsd)}{position.stopMoved ? ' · moved' : ''}
+              </span>
+              <span
+                className="px-1"
+                title={`USD unrealized P&L ${position.unrealizedPnlUsd == null ? 'unavailable' : usd.format(position.unrealizedPnlUsd)}`}
+              >
+                P&amp;L {formatPositionPnlInInstrumentUnits(position, currentClose, pipSize, pricePrecision)}
               </span>
               <button type="button" className="rounded px-1.5 py-0.5 leading-none hover:bg-white/15 disabled:opacity-40" aria-label={`Move stop to break-even for position ${position.id}`} title="Move stop to entry" disabled={!beAllowed || disabled} onClick={() => onBreakEven(position.id, position.weightedEntryPrice)}>BE</button>
               <button type="button" className="rounded px-1.5 py-0.5 leading-none hover:bg-rose-500/30 disabled:opacity-40" aria-label={`Close position ${position.id}`} title="Close this position" disabled={disabled} onClick={() => onClose(position.id)}>×</button>
