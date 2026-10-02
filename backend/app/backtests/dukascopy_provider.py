@@ -3,11 +3,121 @@
 from __future__ import annotations
 
 import math
+import logging
 import tempfile
-from datetime import date
+import threading
+import time
+import urllib.error
+import urllib.request
+from datetime import date, datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 import pandas as pd
+
+
+_UPSTREAM_REQUEST_INTERVAL_SECONDS = 1.0
+_UPSTREAM_RATE_LIMIT_BACKOFF_FACTOR = 5.0
+_UPSTREAM_RATE_LIMIT_RECOVERY_SECONDS = (30.0, 60.0)
+_upstream_request_lock = threading.Lock()
+_next_upstream_request_at = 0.0
+_logger = logging.getLogger(__name__)
+
+
+def _wait_for_upstream_request_slot() -> None:
+    """Serialize this process's requests to the public Dukascopy endpoint."""
+    global _next_upstream_request_at
+    with _upstream_request_lock:
+        now = time.monotonic()
+        delay = max(0.0, _next_upstream_request_at - now)
+        if delay:
+            time.sleep(delay)
+        _next_upstream_request_at = (
+            time.monotonic() + _UPSTREAM_REQUEST_INTERVAL_SECONDS
+        )
+
+
+def _retry_after_seconds(value: str | None) -> float:
+    """Parse the standard seconds or HTTP-date forms of Retry-After."""
+    if not value:
+        return 0.0
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        try:
+            retry_at = parsedate_to_datetime(value)
+        except (TypeError, ValueError, OverflowError):
+            return 0.0
+        if retry_at.tzinfo is None:
+            retry_at = retry_at.replace(tzinfo=timezone.utc)
+        return max(0.0, (retry_at - datetime.now(timezone.utc)).total_seconds())
+
+
+def _retry_after_from_error(error: BaseException) -> float | None:
+    """Find an upstream 429 in the downloader's chained exception."""
+    current: BaseException | None = error
+    while current is not None:
+        if isinstance(current, urllib.error.HTTPError) and current.code == 429:
+            return _retry_after_seconds(current.headers.get("Retry-After"))
+        current = current.__cause__ or current.__context__
+    return None
+
+
+def _download_json_with_rate_limit_backoff(url: str) -> bytes:
+    """Use the pinned downloader's retry contract with slower 429 recovery."""
+    try:
+        from dukascopy_market_data.candles import download_json_bytes
+    except ImportError as exc:
+        raise RuntimeError(
+            "The pinned Dukascopy downloader is not installed."
+        ) from exc
+
+    response_state: dict[str, float | int] = {}
+
+    def opener(request, *, timeout):
+        _wait_for_upstream_request_slot()
+        try:
+            return urllib.request.urlopen(request, timeout=timeout)
+        except urllib.error.HTTPError as exc:
+            response_state["status"] = exc.code
+            response_state["retry_after"] = _retry_after_seconds(
+                exc.headers.get("Retry-After")
+            )
+            raise
+
+    def sleep_before_retry(delay: float) -> None:
+        if response_state.get("status") == 429:
+            delay = max(
+                delay * _UPSTREAM_RATE_LIMIT_BACKOFF_FACTOR,
+                float(response_state.get("retry_after", 0.0)),
+            )
+        time.sleep(delay)
+        response_state.clear()
+
+    for attempt in range(len(_UPSTREAM_RATE_LIMIT_RECOVERY_SECONDS) + 1):
+        try:
+            return download_json_bytes(
+                url,
+                opener=opener,
+                sleeper=sleep_before_retry,
+            )
+        except Exception as exc:
+            retry_after = _retry_after_from_error(exc)
+            if (
+                retry_after is None
+                or attempt >= len(_UPSTREAM_RATE_LIMIT_RECOVERY_SECONDS)
+            ):
+                raise
+            delay = max(
+                _UPSTREAM_RATE_LIMIT_RECOVERY_SECONDS[attempt], retry_after
+            )
+            _logger.warning(
+                "Dukascopy rate-limited %s; retrying after %.0f seconds.",
+                url,
+                delay,
+            )
+            time.sleep(delay)
+    raise AssertionError("Unreachable after exhausted Dukascopy retries.")
 
 
 def run_downloads(*args, **kwargs):
@@ -18,6 +128,7 @@ def run_downloads(*args, **kwargs):
         raise RuntimeError(
             "The pinned Dukascopy downloader is not installed."
         ) from exc
+    kwargs.setdefault("fetcher", _download_json_with_rate_limit_backoff)
     return download(*args, **kwargs)
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 import random
@@ -1022,6 +1023,13 @@ class BacktestWorker:
         self, job: dict, run: dict, heartbeat, error: Exception
     ) -> None:
         """Commit and clean up a terminal base or conversion provider error."""
+        logging.getLogger(__name__).error(
+            "Backtest provider failed for run %s (%s): %s",
+            run.get("_id"),
+            run.get("instrument", job.get("instrument", "unknown")),
+            error,
+            exc_info=(type(error), error, error.__traceback__),
+        )
         self._renew_or_lose(job, run, heartbeat)
         terminal_job = self.job_repository.mark_terminal(
             job["_id"],
