@@ -23,6 +23,7 @@ export interface BacktestSimulationPreviewUi {
   riskRewardRatio: number | null;
   currentBalanceUsd: number;
   canPlaceOrder: boolean;
+  orderPending: boolean;
   invalidReason?: string;
   onEntryPriceChange: (price: number) => void;
   onStopLossPriceChange: (price: number) => void;

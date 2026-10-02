@@ -169,7 +169,6 @@ function BacktestSimulationChartLayer() {
           {...ui.preview}
           priceToCoordinate={priceToCoordinate}
           coordinateToPrice={coordinateToPrice}
-          showActionBar={false}
         />
       )}
     </>

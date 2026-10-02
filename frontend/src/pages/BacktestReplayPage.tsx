@@ -399,9 +399,16 @@ function BacktestReplayWorkspaceRun({
     setPreviewStopLoss(null);
     setPreviewTakeProfit(null);
   }, []);
-  const armEntryPreview = useCallback(() => {
+  const selectEntryOrder = useCallback((nextEntryType: BacktestEntryType, nextDirection: BacktestTradeDirection) => {
+    if (nextEntryType !== entryType || nextDirection !== direction) {
+      setPreviewEntryPrice(null);
+      setPreviewStopLoss(null);
+      setPreviewTakeProfit(null);
+    }
+    setEntryType(nextEntryType);
+    setDirection(nextDirection);
     setEntryPreviewArmed(true);
-  }, []);
+  }, [direction, entryType]);
 
   const setProtectionCanonical = useCallback(async (positionId: string, field: 'stop_loss' | 'take_profit', value: number) => {
     const current = simulation.state;
@@ -480,6 +487,7 @@ function BacktestReplayWorkspaceRun({
       riskRewardRatio: sizing?.riskRewardRatio ?? null,
       currentBalanceUsd,
       canPlaceOrder: Boolean(previewDraft && !simulationBusy && simulationState?.status === 'ready'),
+      orderPending: simulationBusy,
       invalidReason: sizing?.errors[0] ?? defaultBracket?.error,
       onEntryPriceChange: setPreviewEntry,
       onStopLossPriceChange: setPreviewStop,
@@ -668,26 +676,15 @@ function BacktestReplayWorkspaceRun({
                   costs={currentCosts}
                   currentRevealedClose={currentEntryPrice ?? currentDisplayClose}
                   entryType={entryType}
-                  previewActive={entryPreviewArmed}
-                  onEntryTypeChange={(value) => { resetPreview(); setEntryType(value); }}
                   direction={direction}
-                  onDirectionChange={(value) => { resetPreview(); setDirection(value); }}
+                  onOrderSelectionChange={selectEntryOrder}
                   entryPrice={entryType === 'market' ? currentEntryPrice : previewEntryPrice ?? currentEntryPrice}
                   stopLossPrice={activeStopLoss}
                   takeProfitPrice={activeTakeProfit}
-                  onEntryPriceChange={setPreviewEntry}
-                  onStopLossPriceChange={setPreviewStop}
-                  onTakeProfitPriceChange={setPreviewTarget}
                   autoSize={autoSize}
                   onAutoSizeChange={setAutoSize}
                   manualLots={manualLots}
                   onManualLotsChange={setManualLots}
-                  showActions
-                  onArmPreview={armEntryPreview}
-                  orderDisabled={!simulationState || simulationState.status !== 'ready' || !simulationState.current_quote_to_usd_rate && entryInstrument.quoteCurrency.toUpperCase() !== 'USD'}
-                  orderPending={simulationBusy}
-                  onPlaceOrder={onPlaceOrder}
-                  onCancel={resetPreview}
                 />
               ) : (
                 <section className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100" role="status">

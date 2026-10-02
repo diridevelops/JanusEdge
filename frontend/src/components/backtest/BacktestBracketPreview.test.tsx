@@ -142,7 +142,7 @@ function installDragEffect() {
 describe('Backtest bracket preview', () => {
   beforeEach(() => prepareHooks());
 
-  it('renders a draggable limit bracket with entry, stop, target, risk/reward shading, and order actions', () => {
+  it('renders a draggable limit bracket with submit and cancel controls at the entry level', () => {
     const root = renderPreview(makePreviewProps());
     const elements = descendants(root);
 
@@ -154,7 +154,11 @@ describe('Backtest bracket preview', () => {
     expect(elements.some((element) => element.props.className?.includes('zone--risk'))).toBe(true);
     expect(elements.some((element) => element.props.className?.includes('selection-frame'))).toBe(true);
     expect(elements.some((element) => element.props.className?.includes('preview-summary'))).toBe(true);
-    expect(elementByClass(root, 'backtest-bracket-preview-place')).toBeDefined();
+    const actions = elementByClass(root, 'backtest-bracket-preview-actions');
+    expect(actions.props.style?.top).toBe(180);
+    expect(actions.props.style?.transform).toBe('translateY(-50%)');
+    expect(elementByClass(root, 'backtest-bracket-preview-submit').props.children).toBe('Submit');
+    expect(elementByClass(root, 'backtest-bracket-preview-cancel').props.children).toBe('Cancel');
   });
 
   it('moves a limit entry, stop, and target together while preserving their offsets', () => {
@@ -264,10 +268,17 @@ describe('Backtest bracket preview', () => {
     expect(target.props.style?.top as number).toBeGreaterThan(entry.props.style?.top as number);
   });
 
-  it('disables Place order until the parent confirms valid prices and sizing', () => {
+  it('disables Submit until the parent confirms valid prices and sizing', () => {
     const root = renderPreview(makePreviewProps({ canPlaceOrder: false }));
-    const placeButton = elementByClass(root, 'backtest-bracket-preview-place');
+    const placeButton = elementByClass(root, 'backtest-bracket-preview-submit');
 
     expect(placeButton?.props.disabled).toBe(true);
+  });
+
+  it('shows submitting state and blocks both actions while an order is pending', () => {
+    const root = renderPreview(makePreviewProps({ orderPending: true }));
+
+    expect(elementByClass(root, 'backtest-bracket-preview-submit')).toMatchObject({ props: { disabled: true, children: 'Submitting…' } });
+    expect(elementByClass(root, 'backtest-bracket-preview-cancel').props.disabled).toBe(true);
   });
 });

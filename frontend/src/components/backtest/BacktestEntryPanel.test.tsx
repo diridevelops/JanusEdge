@@ -7,7 +7,6 @@ import {
 } from './backtestBracketMath';
 import {
   BacktestEntryPanel,
-  shouldClearPriceDraft,
   type BacktestEntryPanelProps,
 } from './BacktestEntryPanel';
 
@@ -29,13 +28,9 @@ function makePanelProps(overrides: Partial<BacktestEntryPanelProps> = {}): Backt
     costs: { totalSpreadPips: 0, slippagePips: 0, commissionUsdPerLotPerSide: 0 },
     currentRevealedClose: 1.1,
     entryType: 'market',
-    onEntryTypeChange: vi.fn(),
     direction: 'long',
-    onDirectionChange: vi.fn(),
+    onOrderSelectionChange: vi.fn(),
     ...prices,
-    onEntryPriceChange: vi.fn(),
-    onStopLossPriceChange: vi.fn(),
-    onTakeProfitPriceChange: vi.fn(),
     manualLots: null,
     onManualLotsChange: vi.fn(),
     ...overrides,
@@ -43,69 +38,57 @@ function makePanelProps(overrides: Partial<BacktestEntryPanelProps> = {}): Backt
 }
 
 describe('Backtest entry panel and bracket sizing', () => {
-  it('keeps a typed price draft when its parent echoes that value and clears it for external price changes', () => {
-    expect(shouldClearPriceDraft(1.23456, 1.23456)).toBe(false);
-    expect(shouldClearPriceDraft(1.23456, 1.2346)).toBe(true);
-    expect(shouldClearPriceDraft(null, 1.23456)).toBe(true);
-  });
-
-  it('defaults to an expanded panel with auto-size checked and all four entry choices', () => {
+  it('defaults to a compact header, four non-toggle order choices, and auto-size', () => {
     const html = renderToStaticMarkup(<BacktestEntryPanel {...makePanelProps()} />);
 
-    expect(html).toContain('aria-expanded="true"');
-    expect(html).toContain('Market');
-    expect(html).toContain('Limit');
-    expect(html).toContain('Long');
-    expect(html).toContain('Short');
+    expect(html).toMatch(/<header class="backtest-entry-panel-header"><h2[^>]*>Entry order<\/h2><\/header>/);
+    expect(html).toMatch(/>\s*Sell Market\s*<\/button>/);
+    expect(html).toMatch(/>\s*Buy Market\s*<\/button>/);
+    expect(html).toMatch(/>\s*Buy Limit\s*<\/button>/);
+    expect(html).toMatch(/>\s*Sell Limit\s*<\/button>/);
+    expect(html).not.toContain('aria-pressed=');
+    expect(html).not.toContain('Simulation');
+    expect(html).not.toContain('Collapse entry panel');
     expect(html).toMatch(/<input type="checkbox" checked=""/);
     expect(html).toContain('Risk budget $100.00');
     expect(html).toContain('Quantity');
   });
 
-  it('shows a place action before preview and a submit action only after preview is armed', () => {
-    const callbacks = { onArmPreview: vi.fn(), onPlaceOrder: vi.fn(), onCancel: vi.fn() };
-    const unarmedHtml = renderToStaticMarkup(
-      <BacktestEntryPanel {...makePanelProps({ showActions: true, ...callbacks })} />
-    );
-    const armedHtml = renderToStaticMarkup(
-      <BacktestEntryPanel {...makePanelProps({ showActions: true, previewActive: true, ...callbacks })} />
-    );
+  it('keeps submit and cancel controls off the entry panel', () => {
+    const html = renderToStaticMarkup(<BacktestEntryPanel {...makePanelProps()} />);
 
-    expect(unarmedHtml).toContain('>Place order</button>');
-    expect(unarmedHtml).not.toContain('Cancel preview');
-    expect(armedHtml).toContain('>Submit order</button>');
-    expect(armedHtml).toContain('Cancel preview');
+    expect(html).not.toContain('Place order');
+    expect(html).not.toContain('Submit');
+    expect(html).not.toContain('Cancel preview');
   });
 
-  it('shows the current revealed close as a fixed market entry price', () => {
-    const html = renderToStaticMarkup(
-      <BacktestEntryPanel {...makePanelProps({ currentRevealedClose: 1.23456, entryPrice: 1.2 })} />
-    );
-
-    expect(html).toMatch(/<input[^>]*readOnly=""[^>]*value="1\.23456"/);
-    expect(html).toContain('Fixed to the current revealed candle close.');
-  });
-
-  it('exposes limit price editing and the selected short direction accessibly', () => {
+  it('keeps all four combined order choices accessible without price fields or guidance text', () => {
     const html = renderToStaticMarkup(
       <BacktestEntryPanel {...makePanelProps({ entryType: 'limit', direction: 'short', autoSize: false, manualLots: 0.25 })} />
     );
 
-    expect(html).toMatch(/<button type="button" aria-pressed="true">Limit<\/button>/);
-    expect(html).toMatch(/<button type="button" aria-pressed="true">Short<\/button>/);
-    expect(html).toContain('Moves with the whole bracket when dragged on the chart.');
+    expect(html).toMatch(/>\s*Buy Market\s*<\/button>/);
+    expect(html).toMatch(/>\s*Sell Market\s*<\/button>/);
+    expect(html).toMatch(/>\s*Buy Limit\s*<\/button>/);
+    expect(html).toMatch(/>\s*Sell Limit\s*<\/button>/);
+    expect(html).not.toContain('aria-pressed=');
+    expect(html).not.toContain('Entry price');
+    expect(html).not.toContain('Stop-loss');
+    expect(html).not.toContain('Take-profit');
+    expect(html).not.toContain('Set entry, stop-loss');
+    expect(html).not.toMatch(/<input[^>]*type="text"/);
     expect(html).toContain('Manual lots');
     expect(html).toContain('value="0.25"');
     expect(html).not.toMatch(/<input type="checkbox" checked=""/);
   });
 
-  it('can collapse the right-side panel without removing its accessible expand control', () => {
-    const html = renderToStaticMarkup(<BacktestEntryPanel {...makePanelProps({ open: false })} />);
+  it('does not render a collapsible control in the entry header', () => {
+    const html = renderToStaticMarkup(<BacktestEntryPanel {...makePanelProps()} />);
+    const header = html.match(/<header class="backtest-entry-panel-header">([\s\S]*?)<\/header>/)?.[1] ?? '';
 
-    expect(html).toContain('class="backtest-entry-panel is-collapsed"');
-    expect(html).toContain('aria-expanded="false"');
-    expect(html).toContain('aria-label="Expand entry panel"');
-    expect(html).toContain('hidden=""');
+    expect(header).toContain('Entry order');
+    expect(header).not.toContain('<button');
+    expect(header).not.toContain('SIMULATION');
   });
 
   it('derives the initial stop from USD risk and sets an equal-distance 1R target', () => {

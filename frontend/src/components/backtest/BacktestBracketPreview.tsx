@@ -32,6 +32,7 @@ export interface BacktestBracketPreviewProps {
   riskRewardRatio: number | null;
   currentBalanceUsd?: number;
   canPlaceOrder: boolean;
+  orderPending?: boolean;
   invalidReason?: string;
   /** Maps a price to a y-coordinate relative to this overlay's top edge. */
   priceToCoordinate: (price: number) => number | null;
@@ -40,7 +41,6 @@ export interface BacktestBracketPreviewProps {
   /** Horizontal plot bounds in overlay-local pixels. Defaults leave room for chart axes. */
   plotLeftPx?: number;
   plotRightPx?: number;
-  showActionBar?: boolean;
   onEntryPriceChange: (price: number) => void;
   onStopLossPriceChange: (price: number) => void;
   onTakeProfitPriceChange: (price: number) => void;
@@ -78,12 +78,12 @@ export function BacktestBracketPreview({
   riskRewardRatio,
   currentBalanceUsd,
   canPlaceOrder,
+  orderPending = false,
   invalidReason,
   priceToCoordinate,
   coordinateToPrice,
   plotLeftPx,
   plotRightPx,
-  showActionBar = true,
   onEntryPriceChange,
   onStopLossPriceChange,
   onTakeProfitPriceChange,
@@ -193,8 +193,8 @@ export function BacktestBracketPreview({
   const entryLabelTop = clamp(entryY - 27, 2, Math.max(2, size.height - 25));
   const targetLabelTop = clamp(targetY - 22, 2, Math.max(2, size.height - 22));
   const stopLabelTop = clamp(stopY + 7, 2, Math.max(2, size.height - 22));
-  const toolbarTop = clamp(entryY + 12, 2, Math.max(2, size.height - 34));
-  const toolbarLeft = plotLeft + Math.min(plotWidth * 0.3, 110);
+  const actionBarTop = clamp(entryY, 16, Math.max(16, size.height - 16));
+  const actionBarLeft = Math.max(plotLeft + 4, plotRight - 124);
   const targetDistancePips = pipSize > 0 ? Math.abs(takeProfitPrice - entryPrice) / pipSize : null;
   const stopDistancePips = pipSize > 0 ? Math.abs(entryPrice - stopLossPrice) / pipSize : null;
   const rewardPct = projectedRewardUsd != null && currentBalanceUsd != null && currentBalanceUsd > 0
@@ -360,24 +360,27 @@ export function BacktestBracketPreview({
         {stopDistancePips != null && <span>{stopDistancePips.toFixed(1)} pips</span>}
       </div>
 
-      {showActionBar && (
-        <div className="backtest-bracket-preview-actions" style={{ left: toolbarLeft, top: toolbarTop }}>
-          <button
-            type="button"
-            className="backtest-bracket-preview-place"
-            disabled={!canPlaceOrder || !draft || !onPlaceOrder}
-            title={invalidReason || (autoSize ? `Auto-sized to ${quantityText}` : `Manual size ${quantityText}`)}
-            onClick={() => draft && onPlaceOrder?.(draft)}
-          >
-            <span aria-hidden="true">↗</span> Place order
+      <div
+        className="backtest-bracket-preview-actions"
+        style={{ left: actionBarLeft, top: actionBarTop, transform: 'translateY(-50%)' }}
+        role="group"
+        aria-label="Entry order confirmation"
+      >
+        <button
+          type="button"
+          className="backtest-bracket-preview-submit"
+          disabled={orderPending || !canPlaceOrder || !draft || !onPlaceOrder}
+          title={invalidReason || (autoSize ? `Auto-sized to ${quantityText}` : `Manual size ${quantityText}`)}
+          onClick={() => draft && onPlaceOrder?.(draft)}
+        >
+          {orderPending ? 'Submitting…' : 'Submit'}
+        </button>
+        {onCancel && (
+          <button type="button" className="backtest-bracket-preview-cancel" aria-label="Cancel entry preview" title="Cancel entry preview" disabled={orderPending} onClick={onCancel}>
+            Cancel
           </button>
-          {onCancel && (
-            <button type="button" className="backtest-bracket-preview-cancel" aria-label="Cancel entry preview" title="Cancel entry preview" onClick={onCancel}>
-              Cancel
-            </button>
-          )}
-        </div>
-      )}
+        )}
+      </div>
       {invalidReason && !canPlaceOrder && <span className="backtest-bracket-preview-validation" role="status">{invalidReason}</span>}
     </div>
   );
