@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import {
-  roundPriceToPrecision,
+  roundPriceToTick,
   type BacktestEntryOrderDraft,
   type BacktestEntryType,
   type BacktestTradeDirection,
@@ -23,7 +23,9 @@ export interface BacktestBracketPreviewProps {
   stopLossPrice: number;
   takeProfitPrice: number;
   pricePrecision: number;
+  tickSize?: number;
   pipSize: number;
+  priceUnitLabel?: string;
   quantityLots: number | null;
   autoSize: boolean;
   riskBudgetUsd: number | null;
@@ -69,7 +71,9 @@ export function BacktestBracketPreview({
   stopLossPrice,
   takeProfitPrice,
   pricePrecision,
+  tickSize: configuredTickSize,
   pipSize,
+  priceUnitLabel = 'pips',
   quantityLots,
   autoSize,
   riskBudgetUsd,
@@ -93,6 +97,9 @@ export function BacktestBracketPreview({
   const layerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [activeDrag, setActiveDrag] = useState<ActiveDrag | null>(null);
+  const tickSize = Number.isFinite(configuredTickSize) && (configuredTickSize ?? 0) > 0
+    ? Number(configuredTickSize)
+    : 10 ** -pricePrecision;
 
   useEffect(() => {
     const element = layerRef.current;
@@ -120,31 +127,30 @@ export function BacktestBracketPreview({
       const bounds = element.getBoundingClientRect();
       const currentPointerPrice = coordinateToPrice(event.clientY - bounds.top);
       if (currentPointerPrice == null || !Number.isFinite(currentPointerPrice)) return;
-      const tick = 10 ** -pricePrecision;
       const rawDelta = currentPointerPrice - activeDrag.startPointerPrice;
       const { entryPrice: startEntry, stopLossPrice: startStop, takeProfitPrice: startTarget } = activeDrag.startPrices;
 
       if (activeDrag.target === 'bracket' && entryType === 'limit') {
-        const movedEntry = roundPriceToPrecision(startEntry + rawDelta, pricePrecision);
+        const movedEntry = roundPriceToTick(startEntry + rawDelta, tickSize);
         const delta = movedEntry - startEntry;
         onEntryPriceChange(movedEntry);
-        onStopLossPriceChange(roundPriceToPrecision(startStop + delta, pricePrecision));
-        onTakeProfitPriceChange(roundPriceToPrecision(startTarget + delta, pricePrecision));
+        onStopLossPriceChange(roundPriceToTick(startStop + delta, tickSize));
+        onTakeProfitPriceChange(roundPriceToTick(startTarget + delta, tickSize));
         return;
       }
 
       if (activeDrag.target === 'stop') {
-        const candidate = roundPriceToPrecision(startStop + rawDelta, pricePrecision);
+        const candidate = roundPriceToTick(startStop + rawDelta, tickSize);
         const validStop = direction === 'long'
-          ? Math.min(candidate, entryPrice - tick)
-          : Math.max(candidate, entryPrice + tick);
-        onStopLossPriceChange(roundPriceToPrecision(validStop, pricePrecision));
+          ? Math.min(candidate, entryPrice - tickSize)
+          : Math.max(candidate, entryPrice + tickSize);
+        onStopLossPriceChange(roundPriceToTick(validStop, tickSize));
       } else if (activeDrag.target === 'target') {
-        const candidate = roundPriceToPrecision(startTarget + rawDelta, pricePrecision);
+        const candidate = roundPriceToTick(startTarget + rawDelta, tickSize);
         const validTarget = direction === 'long'
-          ? Math.max(candidate, entryPrice + tick)
-          : Math.min(candidate, entryPrice - tick);
-        onTakeProfitPriceChange(roundPriceToPrecision(validTarget, pricePrecision));
+          ? Math.max(candidate, entryPrice + tickSize)
+          : Math.min(candidate, entryPrice - tickSize);
+        onTakeProfitPriceChange(roundPriceToTick(validTarget, tickSize));
       }
     };
     const onUp = (event: PointerEvent) => {
@@ -168,6 +174,7 @@ export function BacktestBracketPreview({
     onStopLossPriceChange,
     onTakeProfitPriceChange,
     pricePrecision,
+    tickSize,
   ]);
 
   if (!visible) return null;
@@ -225,28 +232,27 @@ export function BacktestBracketPreview({
   }
 
   function nudge(target: DragTarget, delta: number) {
-    const tick = 10 ** -pricePrecision;
     if (target === 'bracket' && entryType === 'limit') {
-      onEntryPriceChange(roundPriceToPrecision(entryPrice + delta, pricePrecision));
-      onStopLossPriceChange(roundPriceToPrecision(stopLossPrice + delta, pricePrecision));
-      onTakeProfitPriceChange(roundPriceToPrecision(takeProfitPrice + delta, pricePrecision));
+      onEntryPriceChange(roundPriceToTick(entryPrice + delta, tickSize));
+      onStopLossPriceChange(roundPriceToTick(stopLossPrice + delta, tickSize));
+      onTakeProfitPriceChange(roundPriceToTick(takeProfitPrice + delta, tickSize));
     } else if (target === 'stop') {
       const next = direction === 'long'
-        ? Math.min(stopLossPrice + delta, entryPrice - tick)
-        : Math.max(stopLossPrice + delta, entryPrice + tick);
-      onStopLossPriceChange(roundPriceToPrecision(next, pricePrecision));
+        ? Math.min(stopLossPrice + delta, entryPrice - tickSize)
+        : Math.max(stopLossPrice + delta, entryPrice + tickSize);
+      onStopLossPriceChange(roundPriceToTick(next, tickSize));
     } else if (target === 'target') {
       const next = direction === 'long'
-        ? Math.max(takeProfitPrice + delta, entryPrice + tick)
-        : Math.min(takeProfitPrice + delta, entryPrice - tick);
-      onTakeProfitPriceChange(roundPriceToPrecision(next, pricePrecision));
+        ? Math.max(takeProfitPrice + delta, entryPrice + tickSize)
+        : Math.min(takeProfitPrice + delta, entryPrice - tickSize);
+      onTakeProfitPriceChange(roundPriceToTick(next, tickSize));
     }
   }
 
   function onLineKeyDown(event: ReactKeyboardEvent<HTMLElement>, target: DragTarget) {
     if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return;
     event.preventDefault();
-    nudge(target, event.key === 'ArrowUp' ? 10 ** -pricePrecision : -(10 ** -pricePrecision));
+    nudge(target, event.key === 'ArrowUp' ? tickSize : -tickSize);
   }
 
   const bracketStyle: CSSProperties = { left: plotLeft, width: plotWidth };
@@ -352,12 +358,12 @@ export function BacktestBracketPreview({
       </div>
       <div className="backtest-bracket-preview-label backtest-bracket-preview-label--target" style={{ left: plotLeft + Math.min(plotWidth * 0.14, 44), top: targetLabelTop }}>
         <span>TP {formatPrice(takeProfitPrice, pricePrecision)}</span>
-        {targetDistancePips != null && <span>{targetDistancePips.toFixed(1)} pips</span>}
+        {targetDistancePips != null && <span>{targetDistancePips.toFixed(1)} {priceUnitLabel}</span>}
         {projectedRewardUsd != null && <span>{formatUsd(projectedRewardUsd)}{rewardPct != null ? ` · ${rewardPct.toFixed(2)}%` : ''}</span>}
       </div>
       <div className="backtest-bracket-preview-label backtest-bracket-preview-label--stop" style={{ left: plotLeft + Math.min(plotWidth * 0.14, 44), top: stopLabelTop }}>
         <span>SL {formatPrice(stopLossPrice, pricePrecision)}</span>
-        {stopDistancePips != null && <span>{stopDistancePips.toFixed(1)} pips</span>}
+        {stopDistancePips != null && <span>{stopDistancePips.toFixed(1)} {priceUnitLabel}</span>}
       </div>
 
       <div

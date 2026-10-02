@@ -6,7 +6,7 @@ import {
   calculateBacktestBracketSizing,
   createBacktestEntryOrderDraft,
   createDefaultBacktestBracket,
-  roundPriceToPrecision,
+  roundPriceToTick,
 } from '../components/backtest/backtestBracketMath';
 import { BacktestEntryPanel } from '../components/backtest/BacktestEntryPanel';
 import { BacktestOrdersAndPositions, type BacktestWorkingOrder } from '../components/backtest/BacktestOrdersAndPositions';
@@ -30,7 +30,7 @@ import type { WorkspaceLayout } from '@getcandlekit/charts/react/workspace';
 import '../styles/backtest-candlekit.css';
 import type { AppLayoutOutletContext } from '../components/layout/AppLayout';
 import { createCandleKitControlsAdapter } from '../utils/backtestReplay';
-import { getBacktestDisplayPricePrecision, normalizeBacktestPrice } from '../utils/backtestPriceFormat';
+import { getBacktestDisplayPricePrecision, getBacktestDisplayTickSize, getBacktestPriceFormat, normalizeBacktestPrice } from '../utils/backtestPriceFormat';
 import type {
   BacktestEntryInstrument,
   BacktestEntryOrderDraft,
@@ -260,7 +260,10 @@ function BacktestReplayWorkspaceRun({
   ), [replay.controller, selectedReplayTimes]);
 
   const metadata = run.instrument_metadata ?? null;
-  const rawPricePrecision = metadata?.price_precision ?? 5;
+  const rawPricePrecision = metadata?.price_precision
+    ?? getBacktestPriceFormat(run.instrument).precision;
+  const rawTickSize = metadata?.tick_size
+    ?? getBacktestPriceFormat(run.instrument, rawPricePrecision).minMove;
   const referencePrice = run.normalized_reference_price;
   const blindScale = run.blind_mode && referencePrice != null && referencePrice !== 0
     ? 100 / referencePrice
@@ -272,34 +275,42 @@ function BacktestReplayWorkspaceRun({
   ), [referencePrice, run.blind_mode]);
   const toCanonicalPrice = useCallback((price: number) => {
     if (!run.blind_mode || referencePrice == null) return price;
-    const factor = 10 ** rawPricePrecision;
-    return Math.round((price * referencePrice / 100) * factor) / factor;
-  }, [rawPricePrecision, referencePrice, run.blind_mode]);
+    return roundPriceToTick(price * referencePrice / 100, rawTickSize);
+  }, [rawTickSize, referencePrice, run.blind_mode]);
   const displayedPricePrecision = getBacktestDisplayPricePrecision(
-    run.instrument, Boolean(run.blind_mode), referencePrice
+    run.instrument, Boolean(run.blind_mode), referencePrice, rawPricePrecision, rawTickSize
+  );
+  const displayedTickSize = getBacktestDisplayTickSize(
+    run.instrument, Boolean(run.blind_mode), referencePrice, rawPricePrecision, rawTickSize
   );
   const currentRawBar = replay.controller.getBarsUpToCursor(run.instrument, '1m').slice(-1)[0];
   const currentRawClose = currentRawBar?.close ?? null;
   const currentProtectionClose = currentRawClose == null
     ? null
-    : roundPriceToPrecision(currentRawClose, rawPricePrecision);
+    : roundPriceToTick(currentRawClose, rawTickSize);
   const currentDisplayClose = currentRawClose == null ? null : toDisplayPrice(currentRawClose);
   const simulationState = simulation.state;
   const simulationBusy = simulation.isMutating || Boolean(simulationState?.pending_operation);
   const canSimulateInstrument = Boolean(metadata?.supported_for_simulation
-    && metadata.pip_size != null && metadata.contract_size != null && metadata.quote_currency);
+    && metadata.pip_size != null && metadata.tick_size != null
+    && metadata.contract_size != null && metadata.min_lots != null
+    && metadata.lot_increment != null && metadata.quote_currency);
   const entryInstrument: BacktestEntryInstrument | null = canSimulateInstrument
     ? {
       pipSize: Number(metadata?.pip_size) * Math.abs(blindScale),
+      tickSize: displayedTickSize,
+      priceUnitLabel: metadata?.price_unit_label ?? 'pips',
       pricePrecision: displayedPricePrecision,
       contractSize: Number(metadata?.contract_size),
+      minLots: Number(metadata?.min_lots),
+      lotIncrement: Number(metadata?.lot_increment),
       quoteCurrency: String(metadata?.quote_currency ?? ''),
       quoteToUsdRate: simulationState?.current_quote_to_usd_rate ?? null,
     }
     : null;
   const currentEntryPrice = currentDisplayClose == null || !entryInstrument
     ? currentDisplayClose
-    : roundPriceToPrecision(currentDisplayClose, entryInstrument.pricePrecision);
+    : roundPriceToTick(currentDisplayClose, entryInstrument.tickSize ?? displayedTickSize);
   const [entryType, setEntryType] = useState<BacktestEntryType>('market');
   const [direction, setDirection] = useState<BacktestTradeDirection>('long');
   const [entryPreviewArmed, setEntryPreviewArmed] = useState(false);
@@ -538,7 +549,9 @@ function BacktestReplayWorkspaceRun({
       stopLossPrice: activeStopLoss ?? 0,
       takeProfitPrice: activeTakeProfit ?? 0,
       pricePrecision: displayedPricePrecision,
+      tickSize: entryInstrument?.tickSize ?? displayedTickSize,
       pipSize: entryInstrument?.pipSize ?? 0,
+      priceUnitLabel: entryInstrument?.priceUnitLabel ?? 'pips',
       quantityLots: sizing?.quantityLots ?? null,
       autoSize,
       riskBudgetUsd: sizing?.riskBudgetUsd ?? null,
@@ -559,7 +572,9 @@ function BacktestReplayWorkspaceRun({
     workingOrders: workingOrderMarkers,
     currentClose: currentDisplayClose,
     pricePrecision: displayedPricePrecision,
+    tickSize: entryInstrument?.tickSize ?? displayedTickSize,
     pipSize: entryInstrument?.pipSize ?? 0,
+    priceUnitLabel: entryInstrument?.priceUnitLabel ?? 'pips',
     disabled: simulationBusy || simulationState?.status !== 'ready',
     onMoveStop,
     onMoveTarget,
@@ -787,7 +802,7 @@ function BacktestReplayWorkspaceRun({
                 />
               ) : (
                 <section className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100" role="status">
-                  {metadata?.reason ?? 'Simulated order sizing is available for supported Forex instruments with frozen sizing metadata.'}
+                  {metadata?.reason ?? 'Simulated orders require a configured CFD instrument mapping and a usable USD conversion rate.'}
                 </section>
               )}
 

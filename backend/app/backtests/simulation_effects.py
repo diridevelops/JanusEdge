@@ -18,7 +18,7 @@ from bson import ObjectId
 from app.backtests.fx_conversion import (
     FXConversionUnavailable,
     build_conversion_spec,
-    resolve_quote_to_usd_rate,
+    resolve_conversion_route_rate,
 )
 from app.backtests.repository import BacktestRepository
 from app.backtests.simulation_engine import (
@@ -273,11 +273,20 @@ class BacktestSimulationEffects:
 
     def _metadata(self, run: dict) -> dict[str, Any]:
         metadata = run.get("instrument_metadata")
-        if not isinstance(metadata, dict) or not metadata.get("supported_for_simulation"):
+        if not isinstance(metadata, dict):
             raise SimulationRuleError(
                 "This run's instrument has no frozen simulation sizing metadata."
             )
-        required = ("price_precision", "pip_size", "contract_size", "quote_currency")
+        if not metadata.get("supported_for_simulation"):
+            raise SimulationRuleError(
+                metadata.get("reason")
+                or "This run's instrument has no frozen simulation sizing metadata."
+            )
+        required = (
+            "price_precision", "pip_size", "contract_size", "quote_currency"
+        )
+        if metadata.get("spec_version"):
+            required += ("tick_size", "min_lots", "lot_increment")
         if any(metadata.get(field) is None for field in required):
             raise SimulationRuleError("Run instrument metadata is incomplete.")
         return metadata
@@ -382,26 +391,49 @@ class BacktestSimulationEffects:
 
     def _quote_rate(self, run: dict, metadata: dict, event_time_ms: int) -> float:
         quote = str(metadata.get("quote_currency", "")).upper()
-        if quote == "USD":
-            return 1.0
         snapshot = run.get("snapshot") or {}
-        reference = next(
-            (
-                item
-                for item in snapshot.get("fx_conversion_series", [])
-                if str(item.get("quote_currency", "")).upper() == quote
-            ),
-            None,
-        )
-        spec = reference or build_conversion_spec(quote)
-        if not spec or not spec.get("supported") or not spec.get("instrument"):
+        spec = metadata.get("conversion_spec")
+        if not isinstance(spec, dict):
+            reference = next(
+                (
+                    item
+                    for item in snapshot.get("fx_conversion_series", [])
+                    if str(item.get("quote_currency", "")).upper() == quote
+                ),
+                None,
+            )
+            spec = reference or build_conversion_spec(quote)
+        if not spec or not spec.get("supported"):
             raise FXConversionUnavailable(quote, event_time_ms)
-        rows = self.snapshot_store.read_fx_conversion_series(snapshot, quote)
-        return resolve_quote_to_usd_rate(
+        route = spec.get("route")
+        if not isinstance(route, list):
+            route = (
+                [{
+                    "instrument": spec.get("instrument"),
+                    "direction": spec.get("direction"),
+                    "from_currency": quote,
+                    "to_currency": "USD",
+                }]
+                if spec.get("instrument")
+                and spec.get("direction") in {"direct", "inverse"}
+                else []
+            )
+        observations_by_instrument = {
+            str(leg.get("instrument", "")).upper():
+                self.snapshot_store.read_fx_conversion_series(
+                    snapshot, str(leg.get("instrument", ""))
+                )
+            for leg in route
+            if isinstance(leg, dict) and leg.get("instrument")
+        }
+        return resolve_conversion_route_rate(
             quote,
             int(event_time_ms),
-            rows,
-            direction=str(spec.get("direction", "direct")),
+            route,
+            observations_by_instrument,
+            quote_currency_unit_scale=float(
+                spec.get("quote_currency_unit_scale", 1.0)
+            ),
         )
 
     def _profile(self, run: dict, *, sequence: int | None = None) -> dict:
@@ -692,7 +724,7 @@ class BacktestSimulationEffects:
             )
             sizing_mode = "auto"
         else:
-            lots = validate_lots(request.get("lots"))
+            lots = validate_lots(request.get("lots"), metadata)
             sizing_mode = "manual"
         risk_usd = projected_risk_usd(
             lots=lots,
@@ -1138,7 +1170,8 @@ class BacktestSimulationEffects:
                     "cost_profile_revision": int(profile.get("revision", 0)),
                 }
                 allocated, excess = allocate_opposing_fill_fifo(
-                    order["side"], order["lots"], list(current_positions.values())
+                    order["side"], order["lots"], list(current_positions.values()),
+                    metadata=metadata,
                 )
                 total_lots = float(order["lots"])
                 allocation_index = 0
@@ -1422,7 +1455,7 @@ class BacktestSimulationEffects:
     ) -> tuple[bool, dict, dict | None]:
         metadata = context["metadata"]
         before = float(position["remaining_lots"])
-        quantity = float(validate_lots(lots))
+        quantity = float(validate_lots(lots, metadata))
         if quantity > before:
             raise SimulationRuleError("Exit quantity exceeds the remaining position.")
         share = quantity / before
@@ -1636,8 +1669,8 @@ class BacktestSimulationEffects:
             execution_count=len(all_fills),
             source="backtest",
             status="closed",
-            instrument_type="forex",
-            lot_size=1.0,
+            instrument_type="cfd",
+            lot_size=entry_lots,
             base_currency=metadata.get("base_currency"),
             quote_currency=metadata.get("quote_currency"),
             pip_size=float(metadata["pip_size"]),

@@ -28,6 +28,7 @@ import {
 } from '../utils/backtestReplay';
 import {
   getBacktestDisplayPricePrecision,
+  getBacktestDisplayTickSize,
   getBacktestPriceFormat,
   normalizeBacktestCandle,
 } from '../utils/backtestPriceFormat';
@@ -165,16 +166,28 @@ export function useBacktestReplay(
       return;
     }
     const currentRun = runRef.current;
-    const priceFormat = getBacktestPriceFormat(currentRun.instrument);
+    const rawPricePrecision = currentRun.instrument_metadata?.price_precision;
+    const rawTickSize = currentRun.instrument_metadata?.tick_size;
+    const priceFormat = getBacktestPriceFormat(currentRun.instrument, rawPricePrecision, rawTickSize);
     const displayPrecision = getBacktestDisplayPricePrecision(
       currentRun.instrument,
       Boolean(currentRun.blind_mode),
-      currentRun.normalized_reference_price
+      currentRun.normalized_reference_price,
+      rawPricePrecision,
+      rawTickSize,
+    );
+    const displayTickSize = getBacktestDisplayTickSize(
+      currentRun.instrument,
+      Boolean(currentRun.blind_mode),
+      currentRun.normalized_reference_price,
+      rawPricePrecision,
+      rawTickSize,
     );
     chart.getSeries().applyOptions({
       priceFormat: displayPrecision === priceFormat.precision
+        && displayTickSize === priceFormat.minMove
         ? priceFormat
-        : { type: 'price', precision: displayPrecision, minMove: 10 ** -displayPrecision },
+        : { type: 'price', precision: displayPrecision, minMove: displayTickSize },
     });
     chartControllersRef.current.set(tabId, chart);
     const snapshot = snapshotsRef.current.get(tabId);

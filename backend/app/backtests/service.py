@@ -23,6 +23,7 @@ from app.backtests.repository import (
     PreparationJobRepository,
     _object_id,
 )
+from app.backtests.fx_conversion import build_conversion_spec
 from app.backtests.preparation_jobs import PreparationJobService
 from app.backtests.snapshot_store import SnapshotStore
 from app.backtests.schemas import (
@@ -38,7 +39,11 @@ from app.backtests.schemas import (
     serialize_drawing_state,
     validate_chart_workspace,
 )
-from app.market_data.symbol_mapper import get_forex_instrument
+from app.market_data.symbol_mapper import (
+    get_default_instrument_specs_version,
+    get_effective_symbol_mappings,
+    get_simulation_instrument,
+)
 
 
 def fetch_instrument_codes():
@@ -220,58 +225,108 @@ def _validated_execution_costs(value) -> dict[str, float]:
 
 
 def _freeze_instrument_metadata(instrument: str, user_id: ObjectId) -> dict:
-    """Snapshot the user's validated forex sizing rules onto a run.
-
-    Replays remain available for catalog instruments without configured
-    trading metadata, but simulated order entry can then reject them with a
-    clear unsupported-instrument response rather than inventing contract
-    sizes or precision.
-    """
+    """Snapshot the user's validated CFD contract rules onto a run."""
     user = mongo.db.users.find_one(
         {"_id": user_id}, {"symbol_mappings": 1}
     )
-    forex = get_forex_instrument(
+    configured = get_simulation_instrument(
         instrument,
         raw_symbol=instrument.replace("-", "/").replace("_", "/"),
         symbol_mappings=(user or {}).get("symbol_mappings"),
     )
-    if forex is None:
+    if configured is None:
         return {
             "instrument": instrument,
             "instrument_type": "unsupported",
             "supported_for_simulation": False,
+            "reason": (
+                "Add this exact Dukascopy symbol to CFD Instrument Sizing in "
+                "Settings before placing simulated orders."
+            ),
         }
-    try:
-        base_currency = str(forex["base_currency"]).upper()
-        quote_currency = str(forex["quote_currency"]).upper()
-        pip_size = _positive_finite_number(forex["pip_size"], "pip_size")
-        price_precision = forex["price_precision"]
-        contract_size = _positive_finite_number(
-            forex["contract_size"], "contract_size"
+    mapping, mapping_type = configured
+    base_currency = str(mapping.get("base_currency", "")).upper()
+    quote_currency = str(mapping.get("quote_currency", "")).upper()
+    price_precision = mapping.get("price_precision")
+    pip_size = mapping.get("pip_size")
+    tick_size = mapping.get("tick_size")
+    contract_size = mapping.get("contract_size")
+    min_lots = mapping.get("min_lots")
+    lot_increment = mapping.get("lot_increment")
+    quote_unit_scale = mapping.get("quote_currency_unit_scale", 1)
+    sizing_supported = bool(mapping.get("supported_for_simulation")) and all(
+        value is not None
+        for value in (
+            pip_size, tick_size, price_precision, contract_size,
+            min_lots, lot_increment,
         )
-    except (KeyError, TypeError) as exc:
-        raise ValidationError(
-            "The configured instrument sizing metadata is incomplete."
-        ) from exc
-    if (
-        len(base_currency) != 3
-        or len(quote_currency) != 3
-        or isinstance(price_precision, bool)
-        or not isinstance(price_precision, int)
-        or not 0 <= price_precision <= 15
-    ):
-        raise ValidationError("The configured instrument metadata is invalid.")
-    return {
+    )
+    result = {
         "instrument": instrument,
-        "instrument_type": "forex",
-        "supported_for_simulation": True,
+        "instrument_type": "forex" if mapping_type == "forex" else "cfd",
+        "supported_for_simulation": False,
+        "sizing_supported": sizing_supported,
+        "conversion_supported": False,
         "base_currency": base_currency,
         "quote_currency": quote_currency,
+        "quote_currency_unit_scale": quote_unit_scale,
         "pip_size": pip_size,
+        "tick_size": tick_size,
         "price_precision": price_precision,
         "contract_size": contract_size,
-        "pip_value_per_standard_lot": pip_size * contract_size,
+        "min_lots": min_lots,
+        "lot_increment": lot_increment,
+        "price_unit_label": "pips" if mapping_type == "forex" else "points",
+        "spec_version": mapping.get("spec_version") or get_default_instrument_specs_version(),
+        "spec_source": mapping.get("spec_source"),
+        "reason": mapping.get("reason") or (
+            "Complete price precision, price step, contract size, minimum lot, "
+            "and lot increment settings are required before trading this instrument."
+        ),
     }
+    effective_mappings = get_effective_symbol_mappings(
+        (user or {}).get("symbol_mappings")
+    )
+    conversion = None
+    if base_currency and len(quote_currency) == 3:
+        conversion = build_conversion_spec(
+            quote_currency,
+            instruments=effective_mappings.get("instruments"),
+            quote_currency_unit_scale=quote_unit_scale,
+        )
+        result["conversion_spec"] = conversion
+        result["conversion_supported"] = bool(conversion and conversion.get("supported"))
+        if not result["conversion_supported"] and not result["reason"]:
+            result["reason"] = (conversion or {}).get("reason")
+    if sizing_supported:
+        pip_size = _positive_finite_number(pip_size, "pip_size")
+        tick_size = _positive_finite_number(tick_size, "tick_size")
+        contract_size = _positive_finite_number(contract_size, "contract_size")
+        min_lots = _positive_finite_number(min_lots, "min_lots")
+        lot_increment = _positive_finite_number(lot_increment, "lot_increment")
+        if (
+            not base_currency
+            or len(base_currency) > 24
+            or len(quote_currency) != 3
+            or isinstance(price_precision, bool)
+            or not isinstance(price_precision, int)
+            or not 0 <= price_precision <= 15
+        ):
+            raise ValidationError("The configured instrument metadata is invalid.")
+        fully_supported = bool(conversion and conversion.get("supported"))
+        result.update(
+            {
+                "supported_for_simulation": fully_supported,
+                "reason": None if fully_supported else (conversion or {}).get("reason"),
+                "pip_size": pip_size,
+                "tick_size": tick_size,
+                "contract_size": contract_size,
+                "min_lots": min_lots,
+                "lot_increment": lot_increment,
+                "pip_value_per_standard_lot": pip_size * contract_size,
+            }
+        )
+    return result
 
 
 def _parse_interval_minutes(value) -> int:
@@ -469,6 +524,8 @@ class BacktestService:
             context_start_utc_date=utc_context_start_date,
             end_utc_date=utc_end_date,
             staging_prefix=staging_prefix,
+            quote_currency=instrument_metadata.get("quote_currency"),
+            conversion_spec=instrument_metadata.get("conversion_spec"),
         )
 
         # MongoDB deployments in current dev/testing do not require replica-set
@@ -567,6 +624,8 @@ class BacktestService:
             maximum_start_date=maximum_start_date,
             staging_prefix=f"backtests/{user_oid}/{run_id}/staging/",
             blind_mode=blind_mode,
+            quote_currency=(instrument_metadata or {}).get("quote_currency"),
+            conversion_spec=(instrument_metadata or {}).get("conversion_spec"),
         )
 
         inserted_run = False

@@ -83,26 +83,31 @@ describe('Backtest entry panel and bracket sizing', () => {
     expect(html).not.toMatch(/<input type="checkbox" checked=""/);
   });
 
-  it('steps manual lots by exactly 0.01 while retaining thousandth precision', () => {
-    expect(stepManualLotsValue(0.01, 1)).toBe(0.02);
-    expect(stepManualLotsValue(0.02, -1)).toBe(0.01);
-    expect(stepManualLotsValue(0.015, 1)).toBe(0.025);
-    expect(stepManualLotsValue(0.015, -1)).toBe(0.005);
-    expect(stepManualLotsValue(0.001, 1)).toBe(0.011);
-    expect(stepManualLotsValue(null, 1)).toBe(0.01);
+  it('steps manual lots using the instrument minimum and exact lot increment', () => {
+    expect(stepManualLotsValue(0.01, 1, 0.01, 0.00001)).toBe(0.01001);
+    expect(stepManualLotsValue(0.01001, -1, 0.01, 0.00001)).toBe(0.01);
+    expect(stepManualLotsValue(0.010005, 1, 0.01, 0.00001)).toBe(0.01001);
+    expect(stepManualLotsValue(0.010005, -1, 0.01, 0.00001)).toBe(0.01);
+    expect(stepManualLotsValue(null, 1, 0.01, 0.00001)).toBe(0.01);
     expect(stepManualLotsValue(null, -1)).toBeNull();
-    expect(stepManualLotsValue(0.01, -1)).toBeNull();
+    expect(stepManualLotsValue(0.01, -1, 0.01, 0.00001)).toBeNull();
+    expect(stepManualLotsValue(null, 1, 1, 1)).toBe(1);
+    expect(stepManualLotsValue(1, 1, 1, 1)).toBe(2);
   });
 
   it('renders attached manual-lots step buttons with the minimum boundary disabled', () => {
     const html = renderToStaticMarkup(
-      <BacktestEntryPanel {...makePanelProps({ autoSize: false, manualLots: 0.01 })} />
+      <BacktestEntryPanel {...makePanelProps({
+        instrument: { ...instrument, minLots: 0.01, lotIncrement: 0.00001 },
+        autoSize: false,
+        manualLots: 0.01,
+      })} />
     );
 
-    expect(html).toMatch(/id="backtest-entry-panel-[^"]+-lots" type="number" min="0\.001" step="any"/);
+    expect(html).toMatch(/id="backtest-entry-panel-[^"]+-lots" type="number" min="0\.01" step="0\.00001"/);
     expect(html).toContain('aria-label="Adjust manual lots"');
-    expect(html).toContain('aria-label="Increase manual lots by 0.01"');
-    expect(html).toContain('aria-label="Decrease manual lots by 0.01" title="Decrease by 0.01 lots" disabled=""');
+    expect(html).toContain('aria-label="Increase manual lots by 0.00001"');
+    expect(html).toContain('aria-label="Decrease manual lots by 0.00001" title="Decrease by 0.00001 lots" disabled=""');
   });
 
   it('does not render a collapsible control in the entry header', () => {
@@ -223,5 +228,45 @@ describe('Backtest entry panel and bracket sizing', () => {
 
     expect(sizing.quantityLots).toBe(0.001);
     expect(sizing.canPlaceOrder).toBe(true);
+  });
+
+  it('uses frozen CFD tick, minimum-lot, and lot-increment rules in preview sizing', () => {
+    const cfd = {
+      pipSize: 0.25,
+      tickSize: 0.25,
+      pricePrecision: 2,
+      contractSize: 1,
+      minLots: 1,
+      lotIncrement: 1,
+      quoteCurrency: 'USD',
+      quoteToUsdRate: null,
+    };
+    const base = {
+      entryType: 'limit' as const,
+      direction: 'long' as const,
+      entryPrice: 100,
+      stopLossPrice: 99.75,
+      takeProfitPrice: 100.25,
+      instrument: cfd,
+      account,
+      autoSize: true,
+      manualLots: null,
+    };
+
+    const valid = calculateBacktestBracketSizing(base);
+    expect(valid.canPlaceOrder).toBe(true);
+    expect(valid.quantityLots).toBeGreaterThanOrEqual(1);
+    expect(valid.quantityLots! % 1).toBe(0);
+    expect(calculateBacktestBracketSizing({ ...base, stopLossPrice: 99.8 }).canPlaceOrder).toBe(false);
+    expect(calculateBacktestBracketSizing({
+      ...base,
+      autoSize: false,
+      manualLots: 0.5,
+    }).canPlaceOrder).toBe(false);
+    expect(calculateBacktestBracketSizing({
+      ...base,
+      autoSize: false,
+      manualLots: 1,
+    }).canPlaceOrder).toBe(true);
   });
 });

@@ -35,14 +35,16 @@ ORDER_STATES = frozenset({"pending", "filled", "cancelled"})
 SIDES = frozenset({"buy", "sell"})
 POSITION_SIDES = frozenset({"long", "short"})
 POSITION_STATES = frozenset({"open", "closed"})
-LOT_INCREMENT = Decimal("0.001")
-MIN_LOTS = Decimal("0.001")
-
-
 class SimulationSchema(Schema):
     """Base schema carrying the run's immutable price precision."""
 
-    def __init__(self, *args, instrument_precision: int | None = None, **kwargs):
+    def __init__(
+        self,
+        *args,
+        instrument_precision: int | None = None,
+        instrument_tick_size: float | None = None,
+        **kwargs,
+    ):
         if instrument_precision is not None and (
             isinstance(instrument_precision, bool)
             or not isinstance(instrument_precision, int)
@@ -51,6 +53,16 @@ class SimulationSchema(Schema):
         ):
             raise ValueError("instrument_precision must be an integer from 0 to 15")
         self.instrument_precision = instrument_precision
+        if instrument_tick_size is not None:
+            try:
+                tick = Decimal(str(instrument_tick_size))
+            except (InvalidOperation, TypeError, ValueError) as exc:
+                raise ValueError("instrument_tick_size must be positive and finite") from exc
+            if not tick.is_finite() or tick <= 0:
+                raise ValueError("instrument_tick_size must be positive and finite")
+            self.instrument_tick_size = tick
+        else:
+            self.instrument_tick_size = None
         super().__init__(*args, **kwargs)
 
 
@@ -85,38 +97,31 @@ class InstrumentPrice(FiniteFloat):
             raise ValidationError(
                 f"Must use no more than {precision} decimal places."
             )
+        tick = getattr(self.root, "instrument_tick_size", None)
+        if tick is not None and price % tick != 0:
+            raise ValidationError(
+                f"Must be a multiple of the instrument tick size {tick}."
+            )
         return result
 
 
 class LotSize(FiniteFloat):
-    """A positive lot quantity on the required 0.001-lot grid."""
+    """A positive lot quantity; the run's frozen instrument rules check its grid."""
 
     def _deserialize(self, value: Any, attr: str | None, data: Any, **kwargs):
         result = super()._deserialize(value, attr, data, **kwargs)
-        try:
-            lots = Decimal(str(result))
-        except InvalidOperation as exc:
-            raise ValidationError("Must be a valid lot quantity.") from exc
-        if lots < MIN_LOTS:
-            raise ValidationError("Must be at least 0.001 lots.")
-        if lots % LOT_INCREMENT != 0:
-            raise ValidationError("Lots must be in 0.001-lot increments.")
+        if result <= 0:
+            raise ValidationError("Must be greater than zero.")
         return result
 
 
 class PositionLots(FiniteFloat):
-    """Nonnegative remaining quantity on the 0.001-lot grid."""
+    """Nonnegative remaining quantity; instrument grids are run-specific."""
 
     def _deserialize(self, value: Any, attr: str | None, data: Any, **kwargs):
         result = super()._deserialize(value, attr, data, **kwargs)
-        try:
-            lots = Decimal(str(result))
-        except InvalidOperation as exc:
-            raise ValidationError("Must be a valid lot quantity.") from exc
-        if lots < 0:
+        if result < 0:
             raise ValidationError("Remaining lots cannot be negative.")
-        if lots % LOT_INCREMENT != 0:
-            raise ValidationError("Lots must be in 0.001-lot increments.")
         return result
 
 
@@ -472,9 +477,9 @@ class BacktestPositionSchema(SimulationSchema):
     @validates_schema
     def validate_position_state(self, data, **kwargs) -> None:
         if data["status"] == "open":
-            if data["remaining_lots"] < float(MIN_LOTS):
+            if data["remaining_lots"] <= 0:
                 raise ValidationError(
-                    {"remaining_lots": ["Open positions require at least 0.001 lots."]}
+                    {"remaining_lots": ["Open positions require a positive remaining size."]}
                 )
             for field_name in ("stop_loss_order_id", "take_profit_order_id"):
                 if data.get(field_name) is None:

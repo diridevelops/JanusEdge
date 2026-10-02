@@ -155,7 +155,9 @@ function BacktestSimulationChartLayer() {
         <BacktestPositionOverlay
           positions={ui.positions}
           pricePrecision={ui.pricePrecision}
+          tickSize={ui.tickSize}
           pipSize={ui.pipSize}
+          priceUnitLabel={ui.priceUnitLabel}
           currentClose={ui.currentClose}
           priceToCoordinate={priceToCoordinate}
           coordinateToPrice={coordinateToPrice}
@@ -178,6 +180,7 @@ function BacktestSimulationChartLayer() {
       {ui.preview.visible && (
         <BacktestBracketPreview
           {...ui.preview}
+          tickSize={ui.preview.tickSize}
           priceToCoordinate={priceToCoordinate}
           coordinateToPrice={coordinateToPrice}
         />

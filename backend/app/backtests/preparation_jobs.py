@@ -36,6 +36,7 @@ class PreparationJobService:
         end_utc_date: date,
         staging_prefix: str,
         quote_currency: str | None = None,
+        conversion_spec: dict | None = None,
     ) -> dict:
         """Build a BSON-safe job with durable UTC-date recovery bounds."""
         document = create_preparation_job_doc(
@@ -50,7 +51,10 @@ class PreparationJobService:
             staging_prefix=staging_prefix,
         )
         return self._include_fx_conversion(
-            document, instrument=instrument, quote_currency=quote_currency
+            document,
+            instrument=instrument,
+            quote_currency=quote_currency,
+            conversion_spec=conversion_spec,
         )
 
     def create(self, document: dict) -> ObjectId:
@@ -70,6 +74,7 @@ class PreparationJobService:
         staging_prefix: str,
         blind_mode: bool = False,
         quote_currency: str | None = None,
+        conversion_spec: dict | None = None,
     ) -> dict:
         """Build the durable selection phase before replay bounds exist."""
         document = create_random_selection_job_doc(
@@ -85,7 +90,10 @@ class PreparationJobService:
             blind_mode=blind_mode,
         )
         return self._include_fx_conversion(
-            document, instrument=instrument, quote_currency=quote_currency
+            document,
+            instrument=instrument,
+            quote_currency=quote_currency,
+            conversion_spec=conversion_spec,
         )
 
     def requeue(self, run_id, *, now) -> bool:
@@ -93,11 +101,19 @@ class PreparationJobService:
 
     @staticmethod
     def _include_fx_conversion(
-        document: dict, *, instrument: str, quote_currency: str | None
+        document: dict,
+        *,
+        instrument: str,
+        quote_currency: str | None,
+        conversion_spec: dict | None = None,
     ) -> dict:
         """Persist the conversion source contract before a worker claims the job."""
         currency = quote_currency or quote_currency_from_instrument(instrument)
-        spec = build_conversion_spec(currency)
+        spec = (
+            dict(conversion_spec)
+            if isinstance(conversion_spec, dict)
+            else build_conversion_spec(currency)
+        )
         if spec is not None:
             document["fx_conversion"] = spec
         return document

@@ -23,7 +23,25 @@ const FIAT_CURRENCY_CODES = new Set([
  * Dukascopy FX symbols use five fractional digits, or three when quoted in JPY.
  * Other catalog instruments retain the normal two-decimal price display.
  */
-export function getBacktestPriceFormat(instrument: string): BacktestPriceFormat {
+export function getBacktestPriceFormat(
+  instrument: string,
+  configuredPrecision?: number | null,
+  configuredTickSize?: number | null
+): BacktestPriceFormat {
+  if (
+    configuredPrecision != null
+    && Number.isInteger(configuredPrecision)
+    && configuredPrecision >= 0
+    && configuredPrecision <= 15
+  ) {
+    return {
+      type: 'price',
+      precision: configuredPrecision,
+      minMove: Number.isFinite(configuredTickSize) && (configuredTickSize ?? 0) > 0
+        ? Number(configuredTickSize)
+        : 10 ** -configuredPrecision,
+    };
+  }
   const match = instrument.trim().toUpperCase().match(/^([A-Z]{3})[./_-]?([A-Z]{3})$/);
   const baseCurrency = match?.[1];
   const quoteCurrency = match?.[2];
@@ -48,15 +66,48 @@ export function getBacktestPriceFormat(instrument: string): BacktestPriceFormat 
 export function getBacktestDisplayPricePrecision(
   instrument: string,
   blindMode: boolean,
-  referencePrice: number | null | undefined
+  referencePrice: number | null | undefined,
+  configuredPrecision?: number | null,
+  configuredTickSize?: number | null
 ): number {
-  const rawPrecision = getBacktestPriceFormat(instrument).precision;
+  const format = getBacktestPriceFormat(instrument, configuredPrecision, configuredTickSize);
+  const rawPrecision = format.precision;
   if (!blindMode || !Number.isFinite(referencePrice) || referencePrice === 0) {
     return rawPrecision;
   }
-  const displayedTick = (10 ** -rawPrecision) * Math.abs(100 / Number(referencePrice));
+  const displayedTick = format.minMove * Math.abs(100 / Number(referencePrice));
   if (!Number.isFinite(displayedTick) || displayedTick <= 0) return rawPrecision;
-  return Math.min(12, Math.max(rawPrecision, Math.ceil(-Math.log10(displayedTick) - 1e-12)));
+  return Math.min(12, Math.max(
+    rawPrecision,
+    Math.ceil(-Math.log10(displayedTick) + 4 - 1e-12),
+  ));
+}
+
+/** Return the executable tick after a Blind chart's display normalization. */
+export function getBacktestDisplayTickSize(
+  instrument: string,
+  blindMode: boolean,
+  referencePrice: number | null | undefined,
+  configuredPrecision?: number | null,
+  configuredTickSize?: number | null
+): number {
+  const rawTick = getBacktestPriceFormat(
+    instrument,
+    configuredPrecision,
+    configuredTickSize
+  ).minMove;
+  return blindMode && Number.isFinite(referencePrice) && referencePrice !== 0
+    ? rawTick * Math.abs(100 / Number(referencePrice))
+    : rawTick;
+}
+
+/** Snap a finite number to the nearest valid tick without assuming decimal ticks. */
+export function roundPriceToTick(value: number, tickSize: number): number {
+  if (!Number.isFinite(value) || !Number.isFinite(tickSize) || tickSize <= 0) {
+    return Number.NaN;
+  }
+  const result = Math.round(value / tickSize) * tickSize;
+  return Number(result.toPrecision(14));
 }
 
 /** Convert a canonical price to the stable display scale used by Blind runs. */

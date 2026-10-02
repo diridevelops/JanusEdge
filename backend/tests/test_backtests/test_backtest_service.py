@@ -114,17 +114,23 @@ def test_create_run_persists_default_balance_and_risk_on_run_and_account(
     assert account["risk_percent"] == 1.0
     assert result["initial_balance_usd"] == 10_000
     assert result["risk_percent"] == 1.0
-    assert run["instrument_metadata"] == {
-        "instrument": "EUR-USD",
-        "instrument_type": "forex",
-        "supported_for_simulation": True,
-        "base_currency": "EUR",
-        "quote_currency": "USD",
-        "pip_size": 0.0001,
-        "price_precision": 5,
-        "contract_size": 100_000.0,
-        "pip_value_per_standard_lot": 10.0,
-    }
+    metadata = run["instrument_metadata"]
+    assert metadata["instrument"] == "EUR-USD"
+    assert metadata["instrument_type"] == "forex"
+    assert metadata["supported_for_simulation"] is True
+    assert metadata["sizing_supported"] is True
+    assert metadata["conversion_supported"] is True
+    assert metadata["base_currency"] == "EUR"
+    assert metadata["quote_currency"] == "USD"
+    assert metadata["pip_size"] == 0.0001
+    assert metadata["tick_size"] == 0.00001
+    assert metadata["price_precision"] == 5
+    assert metadata["contract_size"] == 100_000.0
+    assert metadata["min_lots"] == 0.01
+    assert metadata["lot_increment"] == 0.00001
+    assert metadata["pip_value_per_standard_lot"] == 10.0
+    assert metadata["conversion_spec"]["supported"] is True
+    assert metadata["conversion_spec"]["route"] == []
 
 
 def test_create_run_persists_custom_balance_and_risk(app, backtest_service):

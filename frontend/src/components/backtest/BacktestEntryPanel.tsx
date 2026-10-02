@@ -31,19 +31,36 @@ function formatUsd(value: number | null): string {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 }).format(value);
 }
 
-/** Step manual lots in thousandths so each arrow adds or subtracts 0.01 exactly. */
+/** Step to the next valid lot-grid value using integer units to avoid float drift. */
 export function stepManualLotsValue(
   currentLots: number | null,
-  direction: -1 | 1
+  direction: -1 | 1,
+  minimumLots = 0.001,
+  lotIncrement = 0.001
 ): number | null {
-  if (currentLots == null) return direction > 0 ? 0.01 : null;
-  if (!Number.isFinite(currentLots) || currentLots < 0.001) return null;
+  if (!Number.isFinite(minimumLots) || minimumLots <= 0
+    || !Number.isFinite(lotIncrement) || lotIncrement <= 0) return null;
+  if (currentLots == null) return direction > 0 ? minimumLots : null;
+  if (!Number.isFinite(currentLots) || currentLots < minimumLots) return null;
 
-  const currentThousandths = Math.round(currentLots * 1000);
-  if (Math.abs(currentLots * 1000 - currentThousandths) > 1e-6) return null;
-
-  const nextThousandths = currentThousandths + direction * 10;
-  return nextThousandths >= 1 ? nextThousandths / 1000 : null;
+  const decimals = Math.min(12, Math.max(
+    minimumLots.toString().split('.')[1]?.length ?? 0,
+    lotIncrement.toString().split('.')[1]?.length ?? 0,
+    currentLots.toString().split('.')[1]?.length ?? 0,
+  ));
+  const scale = 10 ** decimals;
+  const minUnits = Math.round(minimumLots * scale);
+  const stepUnits = Math.round(lotIncrement * scale);
+  if (stepUnits <= 0) return null;
+  const stepsFromMinimum = (currentLots * scale - minUnits) / stepUnits;
+  const wholeSteps = Math.floor(stepsFromMinimum);
+  const nearestSteps = Math.round(stepsFromMinimum);
+  const isOnGrid = Math.abs(stepsFromMinimum - nearestSteps) <= 1e-7;
+  const nextSteps = direction > 0
+    ? isOnGrid ? nearestSteps + 1 : wholeSteps + 1
+    : isOnGrid ? nearestSteps - 1 : wholeSteps;
+  const nextUnits = minUnits + nextSteps * stepUnits;
+  return nextUnits >= minUnits ? Number((nextUnits / scale).toPrecision(14)) : null;
 }
 
 export function BacktestEntryPanel({
@@ -85,8 +102,14 @@ export function BacktestEntryPanel({
   const initialBudget = Number.isFinite(account.currentBalanceUsd) && Number.isFinite(account.riskPercent)
     ? account.currentBalanceUsd * account.riskPercent / 100
     : null;
-  const nextManualLotsUp = stepManualLotsValue(manualLots, 1);
-  const nextManualLotsDown = stepManualLotsValue(manualLots, -1);
+  const minimumLots = instrument.minLots ?? 0.001;
+  const lotIncrement = instrument.lotIncrement ?? 0.001;
+  const lotDecimals = Math.min(12, Math.max(
+    minimumLots.toString().split('.')[1]?.length ?? 0,
+    lotIncrement.toString().split('.')[1]?.length ?? 0,
+  ));
+  const nextManualLotsUp = stepManualLotsValue(manualLots, 1, minimumLots, lotIncrement);
+  const nextManualLotsDown = stepManualLotsValue(manualLots, -1, minimumLots, lotIncrement);
 
   function setAutoSize(next: boolean) {
     if (autoSize == null) setLocalAutoSize(next);
@@ -156,8 +179,8 @@ export function BacktestEntryPanel({
                 <input
                   id={`${panelId}-lots`}
                   type="number"
-                  min="0.001"
-                  step="any"
+                  min={minimumLots}
+                  step={lotIncrement}
                   inputMode="decimal"
                   value={manualLots ?? ''}
                   onChange={(event) => {
@@ -168,8 +191,8 @@ export function BacktestEntryPanel({
                 <div className="backtest-entry-panel-lots-stepper" role="group" aria-label="Adjust manual lots">
                   <button
                     type="button"
-                    aria-label="Increase manual lots by 0.01"
-                    title="Increase by 0.01 lots"
+                    aria-label={`Increase manual lots by ${lotIncrement}`}
+                    title={`Increase by ${lotIncrement} lots`}
                     disabled={nextManualLotsUp == null}
                     onClick={() => {
                       if (nextManualLotsUp != null) onManualLotsChange(nextManualLotsUp);
@@ -179,8 +202,8 @@ export function BacktestEntryPanel({
                   </button>
                   <button
                     type="button"
-                    aria-label="Decrease manual lots by 0.01"
-                    title="Decrease by 0.01 lots"
+                    aria-label={`Decrease manual lots by ${lotIncrement}`}
+                    title={`Decrease by ${lotIncrement} lots`}
                     disabled={nextManualLotsDown == null}
                     onClick={() => {
                       if (nextManualLotsDown != null) onManualLotsChange(nextManualLotsDown);
@@ -194,8 +217,8 @@ export function BacktestEntryPanel({
           )}
 
           <dl className="backtest-entry-panel-metrics">
-            <div><dt>Stop distance</dt><dd>{sizing.stopDistancePips == null ? '—' : `${sizing.stopDistancePips.toFixed(1)} pips`}</dd></div>
-            <div><dt>Quantity</dt><dd>{sizing.quantityLots == null ? '—' : `${sizing.quantityLots.toFixed(3)} lots`}</dd></div>
+            <div><dt>Stop distance</dt><dd>{sizing.stopDistancePips == null ? '—' : `${sizing.stopDistancePips.toFixed(1)} ${instrument.priceUnitLabel ?? 'pips'}`}</dd></div>
+            <div><dt>Quantity</dt><dd>{sizing.quantityLots == null ? '—' : `${sizing.quantityLots.toFixed(lotDecimals)} lots`}</dd></div>
             <div><dt>Projected risk</dt><dd>{formatUsd(sizing.projectedRiskUsd)}</dd></div>
             <div><dt>Target reward</dt><dd>{formatUsd(sizing.projectedRewardUsd)}</dd></div>
             <div><dt>Risk / reward</dt><dd>{sizing.riskRewardRatio == null ? '—' : sizing.riskRewardRatio.toFixed(2)}</dd></div>

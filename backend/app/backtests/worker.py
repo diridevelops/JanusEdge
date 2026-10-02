@@ -56,6 +56,29 @@ def _date_instant(value: date) -> datetime:
     return datetime.combine(value, time.min, tzinfo=timezone.utc)
 
 
+def _conversion_legs(conversion: dict | None) -> list[dict]:
+    """Return the frozen conversion legs, including legacy single-pair specs."""
+    if not isinstance(conversion, dict):
+        return []
+    route = conversion.get("route")
+    if isinstance(route, list):
+        return [
+            dict(leg)
+            for leg in route
+            if isinstance(leg, dict) and leg.get("instrument")
+        ]
+    if conversion.get("instrument") and conversion.get("direction") in {
+        "direct", "inverse"
+    }:
+        return [{
+            "instrument": conversion["instrument"],
+            "direction": conversion["direction"],
+            "from_currency": conversion.get("quote_currency"),
+            "to_currency": "USD",
+        }]
+    return []
+
+
 class _LeaseHeartbeat:
     """Renew a live Mongo lease during long date downloads/assembly."""
 
@@ -706,10 +729,9 @@ class BacktestWorker:
         )
         last_requested_date = _as_date(job["end_utc_date"])
         fx_conversion = self._ensure_fx_conversion_state(job, run, heartbeat)
+        conversion_legs = _conversion_legs(fx_conversion)
         needs_fx_series = bool(
-            fx_conversion
-            and fx_conversion.get("instrument")
-            and fx_conversion.get("direction") in {"direct", "inverse"}
+            fx_conversion and fx_conversion.get("supported") and conversion_legs
         )
         next_utc_date = _as_date(job["next_utc_date"])
         # If base-candle checkpoints committed before a worker crash, still
@@ -791,41 +813,46 @@ class BacktestWorker:
                 }
 
             if needs_fx_series and not fx_done:
+                object_keys = {}
+                conversion_outcome = "empty"
                 try:
                     fetch_conversion_day = getattr(
                         self.provider, "fetch_conversion_day", None
                     )
                     if not callable(fetch_conversion_day):
                         fetch_conversion_day = self.provider.fetch_day
-                    fx_result = fetch_conversion_day(
-                        fx_conversion["instrument"], utc_date
-                    )
-                    fx_candles = self._validated_candles(
-                        fx_result, utc_date, run
-                    )
+                    for leg in conversion_legs:
+                        instrument = leg["instrument"]
+                        fx_result = fetch_conversion_day(instrument, utc_date)
+                        fx_candles = self._validated_candles(
+                            fx_result, utc_date, run
+                        )
+                        if fx_candles:
+                            conversion_outcome = "data"
+                        fx_object_key = self.snapshot_store.write_staged_conversion_date(
+                            user_id,
+                            run_id,
+                            instrument,
+                            utc_date,
+                            fx_candles,
+                            before_write=lambda: self._renew_or_lose(
+                                job, run, heartbeat
+                            ),
+                            after_write=lambda key: self._verify_preparation_write(
+                                job, run, heartbeat, key
+                            ),
+                        )
+                        if fx_object_key:
+                            object_keys[instrument] = fx_object_key
                 except Exception as exc:
                     self._fail_provider_job(job, run, heartbeat, exc)
                     return
 
-                fx_outcome = "data" if fx_candles else "empty"
-                fx_object_key = self.snapshot_store.write_staged_conversion_date(
-                    user_id,
-                    run_id,
-                    fx_conversion["quote_currency"],
-                    utc_date,
-                    fx_candles,
-                    before_write=lambda: self._renew_or_lose(
-                        job, run, heartbeat
-                    ),
-                    after_write=lambda key: self._verify_preparation_write(
-                        job, run, heartbeat, key
-                    ),
-                )
                 self._renew_or_lose(job, run, heartbeat)
                 checkpoint = {
                     "utc_date": _date_instant(utc_date),
-                    "outcome": fx_outcome,
-                    "object_key": fx_object_key,
+                    "outcome": conversion_outcome,
+                    "object_keys": object_keys,
                     "completed_at": _as_utc(self.clock()),
                 }
                 if not self._add_fx_checkpoint(job, checkpoint):
@@ -942,14 +969,35 @@ class BacktestWorker:
             )
             or (job.get("fx_conversion") or {}).get("quote_currency")
         )
-        spec = build_conversion_spec(quote_currency)
+        frozen_spec = metadata.get("conversion_spec")
+        spec = (
+            dict(frozen_spec)
+            if isinstance(frozen_spec, dict)
+            else build_conversion_spec(quote_currency)
+        )
         if spec is None:
             return None
+
+        if not spec.get("route") and spec.get("instrument") and spec.get("direction") in {"direct", "inverse"}:
+            spec["route"] = [{
+                "instrument": spec["instrument"],
+                "direction": spec["direction"],
+                "from_currency": quote_currency,
+                "to_currency": "USD",
+            }]
 
         existing = job.get("fx_conversion") or {}
         same_contract = all(
             existing.get(key) == spec.get(key)
-            for key in ("quote_currency", "instrument", "direction", "supported")
+            for key in (
+                "quote_currency",
+                "conversion_currency",
+                "quote_currency_unit_scale",
+                "instrument",
+                "direction",
+                "route",
+                "supported",
+            )
         )
         if same_contract:
             spec["completed_utc_dates"] = list(

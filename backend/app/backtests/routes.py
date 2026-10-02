@@ -20,6 +20,10 @@ from app.backtests.simulation_schemas import (
 from app.backtests.simulation_service import SimulationService
 from app.backtests.schemas import serialize_backtest_value
 from app.backtests.service import BacktestService
+from app.market_data.symbol_mapper import (
+    get_default_instrument_mappings,
+    get_default_instrument_specs_version,
+)
 from app.utils.errors import ConflictError, NotFoundError, ValidationError
 
 
@@ -54,9 +58,13 @@ def _simulation_run_and_precision(user_id: str, run_id: str) -> tuple[dict, int 
 
 
 def _simulation_payload(schema_type, user_id: str, run_id: str) -> dict:
-    _run, precision = _simulation_run_and_precision(user_id, run_id)
+    run, precision = _simulation_run_and_precision(user_id, run_id)
+    tick_size = (run.get("instrument_metadata") or {}).get("tick_size")
     try:
-        return schema_type(instrument_precision=precision).load(_request_json())
+        return schema_type(
+            instrument_precision=precision,
+            instrument_tick_size=tick_size,
+        ).load(_request_json())
     except MarshmallowError as exc:
         raise ValidationError("Validation failed.", details=exc.messages) from exc
 
@@ -82,6 +90,18 @@ def _execute_simulation(run_id: str, kind: str, schema_type):
 def list_instruments():
     """Return the current catalog from the pinned downloader."""
     return jsonify({"instruments": backtest_service.get_instruments()}), 200
+
+
+@backtest_bp.route("/instrument-specs", methods=["GET"])
+@jwt_required()
+def list_instrument_specs():
+    """Return the versioned Settings defaults for all catalog symbols."""
+    return jsonify(
+        {
+            "spec_version": get_default_instrument_specs_version(),
+            "instruments": get_default_instrument_mappings(),
+        }
+    ), 200
 
 
 @backtest_bp.route("/runs", methods=["POST"])

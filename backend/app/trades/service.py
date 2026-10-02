@@ -992,7 +992,7 @@ class TradeService:
         last_tick_price: float | None = None
         points: list[dict] = []
         native_pnl_rate = None
-        if trade.get("instrument_type") == "forex":
+        if trade.get("instrument_type") in {"forex", "cfd"}:
             stored_rate = trade.get("quote_to_usd_rate")
             if stored_rate:
                 native_pnl_rate = float(stored_rate)

@@ -1,7 +1,11 @@
 """Symbol helpers for market-data lookup and point values."""
 
+import json
 import math
+import re
 from decimal import Decimal, InvalidOperation
+from functools import lru_cache
+from pathlib import Path
 from typing import Any, Mapping
 
 # Normalized base symbol -> dollar value per point.
@@ -98,6 +102,61 @@ DEFAULT_FOREX_MAP = {
 }
 
 DEFAULT_FOREX_CONTRACT_SIZE = 100000.0
+_DEFAULT_INSTRUMENT_SPEC_PATH = (
+    Path(__file__).with_name("data") / "dukascopy_instrument_specs_v1.json"
+)
+_DEFAULT_INSTRUMENT_MAPPING_FIELDS = (
+    "base_currency",
+    "quote_currency",
+    "quote_currency_unit_scale",
+    "pip_size",
+    "tick_size",
+    "price_precision",
+    "contract_size",
+    "min_lots",
+    "lot_increment",
+    "supported_for_simulation",
+    "reason",
+    "spec_source",
+    "catalog_group",
+)
+
+
+@lru_cache(maxsize=1)
+def _load_default_instrument_specs() -> dict[str, dict[str, Any]]:
+    """Load the checked-in, versioned catalog and sizing snapshot."""
+    with _DEFAULT_INSTRUMENT_SPEC_PATH.open(encoding="utf-8") as stream:
+        payload = json.load(stream)
+    version = payload.get("spec_version")
+    rows = payload.get("instruments")
+    if not isinstance(version, str) or not isinstance(rows, list):
+        raise RuntimeError("The Dukascopy instrument specification file is invalid.")
+    specs: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict) or not isinstance(row.get("instrument"), str):
+            raise RuntimeError("The Dukascopy instrument specification file is invalid.")
+        code = row["instrument"].upper()
+        specs[code] = {
+            key: row.get(key)
+            for key in _DEFAULT_INSTRUMENT_MAPPING_FIELDS
+        }
+        specs[code]["spec_version"] = version
+    return specs
+
+
+def get_default_instrument_mappings() -> dict[str, dict[str, Any]]:
+    """Return a copy of the versioned JForex settings table defaults."""
+    return {
+        instrument: dict(mapping)
+        for instrument, mapping in _load_default_instrument_specs().items()
+    }
+
+
+def get_default_instrument_specs_version() -> str:
+    """Return the version tag for the checked-in JForex catalog snapshot."""
+    specs = _load_default_instrument_specs()
+    first = next(iter(specs.values()), {})
+    return str(first.get("spec_version", "unknown"))
 
 
 def get_default_symbol_mappings() -> dict[str, Any]:
@@ -107,6 +166,7 @@ def get_default_symbol_mappings() -> dict[str, Any]:
         for symbol, mapping in DEFAULT_BASE_SYMBOL_MAP.items()
     }
     mappings["forex"] = get_default_forex_mappings()
+    mappings["instruments"] = get_default_instrument_mappings()
     return mappings
 
 
@@ -162,6 +222,11 @@ def validate_symbol_mappings(
         normalized_mappings["forex"] = _validate_forex_mappings(
             forex_mappings
         )
+    instrument_mappings = _extract_instrument_mappings(symbol_mappings)
+    if instrument_mappings is not None:
+        normalized_mappings["instruments"] = _validate_instrument_mappings(
+            instrument_mappings
+        )
 
     return normalized_mappings
 
@@ -209,12 +274,21 @@ def get_effective_symbol_mappings(
             symbol_mappings
         )
         forex_mappings = normalized_mappings.pop("forex", None)
+        instrument_mappings = normalized_mappings.pop("instruments", None)
         effective_mappings.update(normalized_mappings)
         if forex_mappings is not None:
             # An explicitly supplied forex section is authoritative so the
             # settings UI can remove a built-in pair. Missing forex settings
             # continue to hydrate from defaults for legacy users.
             effective_mappings["forex"] = forex_mappings
+        if instrument_mappings is not None:
+            effective_instruments = dict(effective_mappings.get("instruments", {}))
+            for instrument, mapping in instrument_mappings.items():
+                effective_instruments[instrument] = {
+                    **effective_instruments.get(instrument, {}),
+                    **mapping,
+                }
+            effective_mappings["instruments"] = effective_instruments
         return effective_mappings
     except ValueError:
         return effective_mappings
@@ -253,6 +327,68 @@ def get_forex_instrument(
         if candidate in forex_mappings:
             return dict(forex_mappings[candidate])
     return None
+
+
+def get_simulation_instrument(
+    symbol: str,
+    raw_symbol: str | None = None,
+    symbol_mappings: Mapping[str, Any] | None = None,
+) -> tuple[dict[str, Any], str] | None:
+    """Resolve a configured contract mapping for backtest execution.
+
+    Exact instrument mappings are preferred. Existing Forex settings remain a
+    compatible fallback for runs and profiles that predate the generic table.
+    The returned type is ``forex`` for canonical three-letter pairs and
+    ``contract`` for other configured instruments.
+    """
+    try:
+        normalized = validate_symbol_mappings(symbol_mappings or {})
+    except ValueError:
+        normalized = {}
+    candidates = _iter_instrument_candidates(symbol, raw_symbol)
+    defaults = _load_default_instrument_specs()
+    instruments = normalized.get("instruments", {})
+    forex_mappings = normalized.get("forex", {})
+
+    for candidate in candidates:
+        default = defaults.get(candidate)
+        explicit = instruments.get(candidate) if isinstance(instruments, Mapping) else None
+        if isinstance(explicit, Mapping):
+            mapping = {**(default or {}), **explicit}
+            return mapping, _simulation_mapping_type(mapping)
+
+    # A legacy Forex row remains authoritative until the unified instrument
+    # table has an explicit row for the same exact symbol.
+    if isinstance(symbol_mappings, Mapping) and isinstance(forex_mappings, Mapping):
+        raw_forex = symbol_mappings.get("forex")
+        if isinstance(raw_forex, Mapping):
+            for candidate in candidates:
+                pair_alias = candidate.replace("-", "/")
+                legacy = forex_mappings.get(pair_alias)
+                if isinstance(legacy, Mapping) and pair_alias in raw_forex:
+                    default = defaults.get(candidate)
+                    return {**(default or {}), **legacy}, "forex"
+
+    for candidate in candidates:
+        mapping = defaults.get(candidate)
+        if isinstance(mapping, Mapping):
+            return dict(mapping), _simulation_mapping_type(mapping)
+
+    forex = get_forex_instrument(
+        symbol,
+        raw_symbol=raw_symbol,
+        symbol_mappings=symbol_mappings,
+    )
+    if forex is not None:
+        return forex, "forex"
+    return None
+
+
+def _simulation_mapping_type(mapping: Mapping[str, Any]) -> str:
+    """Classify source FX pairs while keeping other instruments as CFDs."""
+    return "forex" if mapping.get("catalog_group") in {
+        "FX_CROSSES", "FX_MAJORS", "FX_RSRV"
+    } else "contract"
 
 
 def is_forex_symbol(
@@ -311,7 +447,11 @@ def get_trade_usd_multiplier(
     symbol_mappings: Mapping[str, Any] | None = None,
 ) -> float:
     """Resolve the USD P&L multiplier for a stored trade."""
-    if str(trade.get("instrument_type", "")).lower() == "forex":
+    if (
+        str(trade.get("instrument_type", "")).lower()
+        in {"forex", "contract", "cfd"}
+        and trade.get("contract_size") is not None
+    ):
         return get_forex_usd_multiplier(
             {
                 "contract_size": trade.get("contract_size"),
@@ -492,7 +632,7 @@ def _extract_base_symbol_mappings(
     return {
         symbol: mapping
         for symbol, mapping in symbol_mappings.items()
-        if str(symbol).lower() != "forex"
+        if str(symbol).lower() not in {"forex", "instruments"}
     }
 
 
@@ -506,6 +646,18 @@ def _extract_forex_mappings(
     if not isinstance(forex_mappings, Mapping):
         raise ValueError("forex must be an object.")
     return forex_mappings
+
+
+def _extract_instrument_mappings(
+    symbol_mappings: Mapping[str, Any],
+) -> Mapping[str, Any] | None:
+    """Return the generic simulated-trading instrument section."""
+    if "instruments" not in symbol_mappings:
+        return None
+    mappings = symbol_mappings.get("instruments")
+    if not isinstance(mappings, Mapping):
+        raise ValueError("instruments must be an object.")
+    return mappings
 
 
 def _validate_forex_mappings(
@@ -577,6 +729,129 @@ def _validate_forex_mappings(
     return normalized
 
 
+def _validate_instrument_mappings(
+    instrument_mappings: Mapping[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Validate settings-driven pricing and lot contracts for any instrument."""
+    normalized: dict[str, dict[str, Any]] = {}
+    seen_aliases: set[str] = set()
+    for instrument, mapping in instrument_mappings.items():
+        code = _normalize_mapping_string(
+            instrument,
+            field_name="instrument code",
+        ).upper()
+        if not re.fullmatch(r"[A-Z0-9][A-Z0-9._/-]{0,63}", code):
+            raise ValueError(
+                f"Instrument code '{code}' contains unsupported characters."
+            )
+        alias = code.replace("/", "-")
+        if alias in seen_aliases:
+            raise ValueError(f"Duplicate instrument mapping for {alias}.")
+        seen_aliases.add(alias)
+        if not isinstance(mapping, Mapping):
+            raise ValueError(f"Mapping for {code} must be an object.")
+        base_currency = _normalize_unit_label(
+            mapping.get("base_currency"),
+            field_name=f"{code} base_currency",
+        )
+        quote_currency = _normalize_currency(
+            mapping.get("quote_currency"),
+            field_name=f"{code} quote_currency",
+        )
+        price_precision = _optional_mapping_integer(
+            mapping.get("price_precision"),
+            field_name=f"{code} price_precision",
+            minimum=0,
+        )
+        if price_precision is not None and price_precision > 15:
+            raise ValueError(f"{code} price_precision cannot exceed 15.")
+        normalized_mapping: dict[str, Any] = {
+            "base_currency": base_currency,
+            "quote_currency": quote_currency,
+            "quote_currency_unit_scale": _optional_positive_mapping_number(
+                mapping.get("quote_currency_unit_scale", 1),
+                field_name=f"{code} quote_currency_unit_scale",
+                default=1,
+            ),
+            "pip_size": _optional_positive_mapping_number(
+                mapping.get("pip_size"),
+                field_name=f"{code} pip_size",
+            ),
+            "tick_size": _optional_positive_mapping_number(
+                mapping.get("tick_size"),
+                field_name=f"{code} tick_size",
+            ),
+            "price_precision": price_precision,
+            "contract_size": _optional_positive_mapping_number(
+                mapping.get("contract_size"),
+                field_name=f"{code} contract_size",
+            ),
+            "min_lots": _optional_positive_mapping_number(
+                mapping.get("min_lots"),
+                field_name=f"{code} min_lots",
+            ),
+            "lot_increment": _optional_positive_mapping_number(
+                mapping.get("lot_increment"),
+                field_name=f"{code} lot_increment",
+            ),
+        }
+        complete = all(
+            normalized_mapping[field] is not None
+            for field in (
+                "pip_size", "tick_size", "price_precision", "contract_size",
+                "min_lots", "lot_increment",
+            )
+        )
+        enabled = mapping.get("supported_for_simulation", complete)
+        if not isinstance(enabled, bool):
+            raise ValueError(f"{code} supported_for_simulation must be a boolean.")
+        normalized_mapping["supported_for_simulation"] = enabled and complete
+        reason = mapping.get("reason")
+        if reason is not None and not isinstance(reason, str):
+            raise ValueError(f"{code} reason must be a string when provided.")
+        normalized_mapping["reason"] = (
+            reason
+            if normalized_mapping["supported_for_simulation"]
+            else reason or "Complete verified pricing and lot-size settings are required."
+        )
+        spec_source = mapping.get("spec_source")
+        if spec_source is not None and not isinstance(spec_source, str):
+            raise ValueError(f"{code} spec_source must be a string when provided.")
+        normalized_mapping["spec_source"] = spec_source
+        catalog_group = mapping.get("catalog_group")
+        normalized_mapping["catalog_group"] = (
+            catalog_group if isinstance(catalog_group, str) else None
+        )
+        normalized[code] = normalized_mapping
+    return normalized
+
+
+def _normalize_unit_label(value: Any, field_name: str) -> str:
+    """Normalize a base asset or unit label, such as EUR, shares, or ounces."""
+    label = _normalize_mapping_string(value, field_name=field_name).upper()
+    if len(label) > 24 or not re.fullmatch(r"[A-Z0-9][A-Z0-9.+_ -]{0,23}", label):
+        raise ValueError(f"{field_name} must be a short asset or unit label.")
+    return label
+
+
+def _iter_instrument_candidates(
+    symbol: str,
+    raw_symbol: str | None,
+) -> list[str]:
+    """Return exact normalized codes and their slash/dash catalog aliases."""
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for source in (symbol, raw_symbol):
+        if not isinstance(source, str):
+            continue
+        normalized = _normalize_symbol_candidate(source)
+        for candidate in (normalized, normalized.replace("/", "-"), normalized.replace("-", "/")):
+            if candidate and candidate not in seen:
+                candidates.append(candidate)
+                seen.add(candidate)
+    return candidates
+
+
 def _normalize_currency(value: Any, field_name: str) -> str:
     """Normalize a three-letter currency code."""
     currency = _normalize_mapping_string(
@@ -616,6 +891,18 @@ def _normalize_mapping_integer(
             f"{field_name} must be at least {minimum}."
         )
     return normalized
+
+
+def _optional_mapping_integer(
+    value: Any,
+    *,
+    field_name: str,
+    minimum: int = 1,
+) -> int | None:
+    """Normalize an optional integer used by explicitly incomplete catalog rows."""
+    if value is None or value == "":
+        return None
+    return _normalize_mapping_integer(value, field_name, minimum=minimum)
 
 
 def _iter_symbol_candidates(
@@ -744,3 +1031,15 @@ def _normalize_mapping_number(
         )
 
     return normalized
+
+
+def _optional_positive_mapping_number(
+    value: Any,
+    *,
+    field_name: str,
+    default: float | None = None,
+) -> float | None:
+    """Normalize an optional positive value, preserving missing specs as None."""
+    if value is None or value == "":
+        return default
+    return _normalize_mapping_number(value, field_name)

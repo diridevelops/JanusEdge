@@ -75,21 +75,21 @@ class SnapshotStore:
         self,
         user_id,
         run_id,
-        quote_currency: str,
+        instrument: str,
         utc_date: date,
         candles: list[dict],
         *,
         before_write=None,
         after_write=None,
     ) -> str | None:
-        """Stage one immutable conversion-pair date under its run namespace."""
+        """Stage one immutable conversion instrument date under its run namespace."""
         if not candles:
             return None
         payload = self._fx_parquet_bytes(candles)
         checksum = hashlib.sha256(payload).hexdigest()
         key = (
             f"backtests/{user_id}/{run_id}/staging/fx/"
-            f"{quote_currency.upper()}/{utc_date.isoformat()}/{checksum}.parquet"
+            f"{instrument.upper()}/{utc_date.isoformat()}/{checksum}.parquet"
         )
         if before_write is not None:
             before_write()
@@ -245,18 +245,27 @@ class SnapshotStore:
         return self._read_parquet(object_key)
 
     def read_fx_conversion_series(
-        self, snapshot: dict, quote_currency: str
+        self, snapshot: dict, instrument_or_quote: str
     ) -> list[dict]:
-        """Read the pinned one-minute conversion observations for a quote."""
-        currency = str(quote_currency).strip().upper()
+        """Read pinned one-minute observations by instrument, or legacy quote."""
+        key = str(instrument_or_quote).strip().upper()
         ref = next(
             (
                 item
                 for item in snapshot.get("fx_conversion_series", [])
-                if str(item.get("quote_currency", "")).upper() == currency
+                if str(item.get("instrument", "")).upper() == key
             ),
             None,
         )
+        if ref is None:
+            ref = next(
+                (
+                    item
+                    for item in snapshot.get("fx_conversion_series", [])
+                    if str(item.get("quote_currency", "")).upper() == key
+                ),
+                None,
+            )
         if not ref or not ref.get("object_key"):
             return []
         frame = self._read_parquet(
@@ -384,51 +393,76 @@ class SnapshotStore:
         before_publish=None,
         after_publish=None,
     ) -> list[dict]:
-        """Publish a content-addressed quote conversion series for this run."""
+        """Publish content-addressed series for each frozen route instrument."""
         if not conversion:
             return []
         currency = str(conversion.get("quote_currency", "")).upper()
-        if not currency or currency == "USD":
+        if not currency or conversion.get("supported") is False:
             return []
+        route = conversion.get("route")
+        if not isinstance(route, list):
+            route = (
+                [{
+                    "instrument": conversion.get("instrument"),
+                    "direction": conversion.get("direction"),
+                }]
+                if conversion.get("instrument")
+                and conversion.get("direction") in {"direct", "inverse"}
+                else []
+            )
 
-        frames = []
-        for checkpoint in conversion.get("completed_utc_dates", []):
-            object_key = checkpoint.get("object_key")
-            if object_key:
-                frames.append(
-                    self._read_parquet(
-                        object_key, columns=list(_FX_COLUMNS)
-                    )
+        series = []
+        for leg in route:
+            if not isinstance(leg, dict) or not leg.get("instrument"):
+                continue
+            instrument = str(leg["instrument"]).upper()
+            frames = []
+            for checkpoint in conversion.get("completed_utc_dates", []):
+                object_keys = checkpoint.get("object_keys")
+                object_key = (
+                    object_keys.get(instrument)
+                    if isinstance(object_keys, dict)
+                    else None
                 )
-        if frames:
-            frame = pd.concat(frames, ignore_index=True)
-            frame = frame.drop_duplicates(subset=["time_ms"], keep="first")
-            frame = frame.sort_values("time_ms", kind="stable")
-            frame = frame[
-                (frame["time_ms"] >= int(run.get("context_start_utc_ms", run["start_utc_ms"])))
-                & (frame["time_ms"] < int(run["end_utc_ms"]))
-            ].reset_index(drop=True)
-        else:
-            frame = pd.DataFrame(columns=list(_FX_COLUMNS))
+                # Older workers stored one object_key keyed by quote currency.
+                if not object_key and str(
+                    checkpoint.get("instrument", conversion.get("instrument", ""))
+                ).upper() == instrument:
+                    object_key = checkpoint.get("object_key")
+                if object_key:
+                    frames.append(
+                        self._read_parquet(object_key, columns=list(_FX_COLUMNS))
+                    )
+            if frames:
+                frame = pd.concat(frames, ignore_index=True)
+                frame = frame.drop_duplicates(subset=["time_ms"], keep="first")
+                frame = frame.sort_values("time_ms", kind="stable")
+                frame = frame[
+                    (frame["time_ms"] >= int(run.get("context_start_utc_ms", run["start_utc_ms"])))
+                    & (frame["time_ms"] < int(run["end_utc_ms"]))
+                ].reset_index(drop=True)
+            else:
+                frame = pd.DataFrame(columns=list(_FX_COLUMNS))
 
-        payload = self._fx_parquet_bytes(frame.to_dict(orient="records"))
-        checksum = hashlib.sha256(payload).hexdigest()
-        object_key = (
-            f"backtests/{user_id}/{run_id}/snapshot/fx/"
-            f"{currency}/{checksum}.parquet"
-        )
-        if before_publish is not None:
-            before_publish()
-        self._put(object_key, payload)
-        if after_publish is not None:
-            after_publish(object_key)
+            payload = self._fx_parquet_bytes(frame.to_dict(orient="records"))
+            checksum = hashlib.sha256(payload).hexdigest()
+            object_key = (
+                f"backtests/{user_id}/{run_id}/snapshot/fx/"
+                f"{instrument}/{checksum}.parquet"
+            )
+            if before_publish is not None:
+                before_publish()
+            self._put(object_key, payload)
+            if after_publish is not None:
+                after_publish(object_key)
 
-        times = [int(value) for value in frame["time_ms"].tolist()]
-        return [
-            {
+            times = [int(value) for value in frame["time_ms"].tolist()]
+            series.append({
                 "quote_currency": currency,
-                "instrument": conversion.get("instrument"),
-                "direction": conversion.get("direction"),
+                "instrument": instrument,
+                "direction": leg.get("direction"),
+                "from_currency": leg.get("from_currency"),
+                "to_currency": leg.get("to_currency"),
                 "interval_minutes": 1,
                 "source_start_utc_ms": int(
                     run.get("context_start_utc_ms", run["start_utc_ms"])
@@ -438,8 +472,8 @@ class SnapshotStore:
                 "source_last_time_ms": times[-1] if times else None,
                 "candle_count": len(times),
                 "object_key": object_key,
-            }
-        ]
+            })
+        return series
 
     def _write_snapshot_days(
         self,

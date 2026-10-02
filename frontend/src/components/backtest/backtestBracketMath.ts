@@ -9,8 +9,12 @@ export interface BacktestBracketPrices {
 
 export interface BacktestEntryInstrument {
   pipSize: number;
+  tickSize?: number;
+  priceUnitLabel?: string;
   pricePrecision: number;
   contractSize: number;
+  minLots?: number;
+  lotIncrement?: number;
   quoteCurrency: string;
   /** USD per one quote-currency unit, selected as of the revealed candle close. */
   quoteToUsdRate: number | null;
@@ -73,14 +77,34 @@ export function roundPriceToPrecision(value: number, precision: number): number 
   return Number(value.toFixed(precision));
 }
 
-export function isPriceAtPrecision(value: number | null, precision: number): value is number {
+function instrumentTick(instrument: Pick<BacktestEntryInstrument, 'pricePrecision' | 'tickSize'>): number {
+  return Number.isFinite(instrument.tickSize) && (instrument.tickSize ?? 0) > 0
+    ? Number(instrument.tickSize)
+    : 10 ** -instrument.pricePrecision;
+}
+
+export function roundPriceToTick(value: number, tickSize: number): number {
+  if (!Number.isFinite(value) || !Number.isFinite(tickSize) || tickSize <= 0) return Number.NaN;
+  return Number((Math.round(value / tickSize) * tickSize).toPrecision(15));
+}
+
+function floorToLotGrid(value: number, minimum: number, increment: number): number {
+  if (!Number.isFinite(value) || value < minimum || !(minimum > 0) || !(increment > 0)) return 0;
+  const steps = Math.floor((value - minimum) / increment + 1e-10);
+  return Number((minimum + steps * increment).toPrecision(14));
+}
+
+export function isPriceAtPrecision(value: number | null, precision: number, tickSize?: number): value is number {
   if (value == null || !Number.isFinite(value) || !Number.isInteger(precision) || precision < 0 || precision > 12) {
     return false;
   }
 
   const rounded = roundPriceToPrecision(value, precision);
   const tolerance = (10 ** -precision) * 1e-7;
-  return Math.abs(value - rounded) <= tolerance;
+  const tickValid = tickSize == null || !Number.isFinite(tickSize) || tickSize <= 0
+    ? true
+    : Math.abs(value / tickSize - Math.round(value / tickSize)) <= 1e-7;
+  return Math.abs(value - rounded) <= tolerance && tickValid;
 }
 
 function getUsdPerQuoteUnit(instrument: BacktestEntryInstrument): number | null {
@@ -118,7 +142,8 @@ export function createDefaultBacktestBracket(input: {
   if (!Number.isInteger(precision) || precision < 0 || precision > 12) {
     return { entryPrice: input.entryPrice, stopLossPrice: null, takeProfitPrice: null, stopDistancePips: null, error: 'Instrument price precision is invalid.' };
   }
-  const entryPrice = roundPriceToPrecision(input.entryPrice, precision);
+  const tick = instrumentTick(instrument);
+  const entryPrice = roundPriceToTick(input.entryPrice, tick);
   const rate = getUsdPerQuoteUnit(instrument);
   const budget = account.currentBalanceUsd * account.riskPercent / 100;
   const accountValid = Number.isFinite(account.currentBalanceUsd) && account.currentBalanceUsd > 0
@@ -134,17 +159,17 @@ export function createDefaultBacktestBracket(input: {
   }
 
   const pipValue = instrument.pipSize * instrument.contractSize * rate;
-  const minimumTick = 10 ** -precision;
+  const minimumTick = tick;
   const rawStopOffset = budget / (instrument.contractSize * rate);
   if (!Number.isFinite(pipValue) || !Number.isFinite(rawStopOffset) || rawStopOffset <= 0) {
     return { entryPrice, stopLossPrice: null, takeProfitPrice: null, stopDistancePips: null, error: 'Could not calculate a finite initial stop distance.' };
   }
-  const stopOffset = Math.max(minimumTick, Number(rawStopOffset.toFixed(precision)));
+  const stopOffset = Math.max(minimumTick, Math.ceil(rawStopOffset / tick - 1e-10) * tick);
   const stopDistancePips = stopOffset / instrument.pipSize;
   const sideOffset = direction === 'long' ? 1 : -1;
   const stopSign = -sideOffset;
-  const stopLossPrice = roundPriceToPrecision(entryPrice + stopSign * stopOffset, precision);
-  const takeProfitPrice = roundPriceToPrecision(entryPrice + sideOffset * stopOffset, precision);
+  const stopLossPrice = roundPriceToTick(entryPrice + stopSign * stopOffset, tick);
+  const takeProfitPrice = roundPriceToTick(entryPrice + sideOffset * stopOffset, tick);
 
   if (!(pipValue > 0) || !Number.isFinite(stopLossPrice) || !Number.isFinite(takeProfitPrice) || stopOffset <= 0) {
     return { entryPrice, stopLossPrice: null, takeProfitPrice: null, stopDistancePips: null, error: 'Could not calculate a precision-valid initial bracket.' };
@@ -165,9 +190,14 @@ export function calculateBacktestBracketSizing(input: BacktestBracketSizingInput
 
   const precisionValid = Number.isInteger(instrument.pricePrecision)
     && instrument.pricePrecision >= 0 && instrument.pricePrecision <= 12;
+  const minLots = instrument.minLots ?? 0.001;
+  const lotStep = instrument.lotIncrement ?? 0.001;
   const instrumentValid = precisionValid && Number.isFinite(instrument.pipSize) && instrument.pipSize > 0
-    && Number.isFinite(instrument.contractSize) && instrument.contractSize > 0;
-  if (!instrumentValid) errors.push('Instrument pip size, contract size, or price precision is invalid.');
+    && Number.isFinite(instrument.contractSize) && instrument.contractSize > 0
+    && Number.isFinite(instrumentTick(instrument)) && instrumentTick(instrument) > 0
+    && Number.isFinite(minLots) && minLots > 0
+    && Number.isFinite(lotStep) && lotStep > 0;
+  if (!instrumentValid) errors.push('Instrument price step, contract size, or price precision is invalid.');
 
   const quoteRate = getUsdPerQuoteUnit(instrument);
   if (quoteRate == null) errors.push('A completed quote-to-USD rate is required for this instrument.');
@@ -176,8 +206,9 @@ export function calculateBacktestBracketSizing(input: BacktestBracketSizingInput
     ? instrument.pipSize * instrument.contractSize * quoteRate
     : null;
   const priceValues = [entryPrice, stopLossPrice, takeProfitPrice];
-  const allPricesAtPrecision = precisionValid && priceValues.every((price) => isPriceAtPrecision(price, instrument.pricePrecision));
-  if (!allPricesAtPrecision) errors.push('Entry, stop, and target must be finite and use the instrument price precision.');
+  const tickSize = instrumentTick(instrument);
+  const allPricesAtPrecision = precisionValid && priceValues.every((price) => isPriceAtPrecision(price, instrument.pricePrecision, tickSize));
+  if (!allPricesAtPrecision) errors.push('Entry, stop, and target must be finite and use the instrument tick size.');
   const correctSides = isCorrectlyPositioned(direction, { entryPrice, stopLossPrice, takeProfitPrice });
   if (!correctSides) errors.push(direction === 'long'
     ? 'For a long entry, the stop must be below entry and the target above entry.'
@@ -205,19 +236,21 @@ export function calculateBacktestBracketSizing(input: BacktestBracketSizingInput
     : null;
 
   let quantityLots: number | null = null;
+  const minimumLots = minLots;
+  const lotIncrement = lotStep;
   if (autoSize) {
     if (riskBudgetUsd != null && riskPerLotUsd != null && riskPerLotUsd > 0) {
-      quantityLots = Math.floor((riskBudgetUsd / riskPerLotUsd) * 1000) / 1000;
-      if (quantityLots < 0.001) {
+      quantityLots = floorToLotGrid(riskBudgetUsd / riskPerLotUsd, minimumLots, lotIncrement);
+      if (quantityLots < minimumLots) {
         quantityLots = null;
-        errors.push('The minimum size of 0.001 lots would exceed the USD risk budget.');
+        errors.push(`The minimum size of ${minimumLots} lots would exceed the USD risk budget.`);
       }
     }
-  } else if (manualLots != null && Number.isFinite(manualLots) && manualLots >= 0.001
-    && Math.abs(manualLots * 1000 - Math.round(manualLots * 1000)) < 1e-6) {
+  } else if (manualLots != null && Number.isFinite(manualLots) && manualLots >= minimumLots
+    && Math.abs((manualLots - minimumLots) / lotIncrement - Math.round((manualLots - minimumLots) / lotIncrement)) < 1e-7) {
     quantityLots = manualLots;
   } else {
-    errors.push('Enter manual size in 0.001-lot increments (minimum 0.001 lots).');
+    errors.push(`Enter a valid lot size from ${minimumLots} in ${lotIncrement} increments.`);
   }
 
   const projectedRiskUsd = quantityLots != null && riskPerLotUsd != null ? quantityLots * riskPerLotUsd : null;

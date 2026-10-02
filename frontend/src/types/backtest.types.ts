@@ -8,6 +8,11 @@ export interface BacktestInstrumentCatalog {
   instruments: string[];
 }
 
+export interface BacktestInstrumentSpecs {
+  spec_version: string;
+  instruments: Record<string, import('./auth.types').InstrumentSizingMappingEntry>;
+}
+
 export type BacktestRandomPeriodMonths = 1 | 3 | 6 | 12;
 export type BacktestPeriodSelection = 'manual' | 'random';
 
@@ -89,10 +94,30 @@ export interface BacktestRunSummary {
     supported_for_simulation: boolean;
     reason?: string | null;
     price_precision?: number | null;
+    tick_size?: number | null;
     pip_size?: number | null;
+    price_unit_label?: string | null;
     contract_size?: number | null;
     base_currency?: string | null;
     quote_currency?: string | null;
+    quote_currency_unit_scale?: number | null;
+    min_lots?: number | null;
+    lot_increment?: number | null;
+    spec_version?: string | null;
+    spec_source?: string | null;
+    conversion_spec?: {
+      quote_currency: string;
+      quote_currency_unit_scale: number;
+      supported: boolean;
+      reason?: string | null;
+      route: Array<{
+        instrument: string;
+        direction: 'direct' | 'inverse';
+        from_currency: string;
+        to_currency: string;
+      }>;
+    } | null;
+    instrument_type?: string | null;
   } | null;
   progress: BacktestRunProgress | null;
   created_at: string;

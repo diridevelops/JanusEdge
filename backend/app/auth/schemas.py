@@ -112,10 +112,10 @@ class UpdateSymbolMappingsSchema(Schema):
 
     symbol_mappings = fields.Dict(
         keys=fields.Str(
-            validate=validate.Length(min=1, max=32)
+            validate=validate.Length(min=1, max=64)
         ),
-        # Futures entries remain flat, while forex definitions are nested
-        # under the reserved ``forex`` key and are validated centrally.
+        # Legacy futures entries remain flat. ``forex`` and ``instruments``
+        # are reserved nested mapping sections validated centrally.
         values=fields.Raw(),
         required=True,
     )

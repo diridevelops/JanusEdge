@@ -50,13 +50,51 @@ def _positive_metadata_decimal(metadata: Mapping[str, Any], field: str) -> Decim
     return value
 
 
+def _price_tick(metadata: Mapping[str, Any]) -> Decimal:
+    """Read the frozen tick size, falling back for runs created before it existed."""
+    value = metadata.get("tick_size")
+    if value is None:
+        return Decimal(1).scaleb(-_precision(metadata))
+    tick = _decimal(value, "tick_size")
+    if tick <= 0:
+        raise SimulationRuleError("Run instrument tick_size must be positive.")
+    return tick
+
+
+def _round_to_tick(value: Decimal, tick: Decimal, rounding) -> Decimal:
+    """Round a price to an arbitrary positive tick, including non-decimal steps."""
+    return (value / tick).quantize(Decimal(1), rounding=rounding) * tick
+
+
+def lot_limits(metadata: Mapping[str, Any] | None = None) -> tuple[Decimal, Decimal]:
+    """Return the run-frozen minimum and increment, preserving old-run defaults."""
+    values = metadata or {}
+    minimum_value = values.get("min_lots")
+    increment_value = values.get("lot_increment")
+    minimum = MIN_LOTS if minimum_value is None else _decimal(minimum_value, "min_lots")
+    increment = LOT_INCREMENT if increment_value is None else _decimal(
+        increment_value, "lot_increment"
+    )
+    if minimum <= 0 or increment <= 0:
+        raise SimulationRuleError("Run instrument lot limits must be positive.")
+    return minimum, increment
+
+
+def _floor_to_lot_step(value: Decimal, metadata: Mapping[str, Any] | None) -> Decimal:
+    minimum, increment = lot_limits(metadata)
+    if value < minimum:
+        return Decimal(0)
+    steps = ((value - minimum) / increment).quantize(Decimal(1), rounding=ROUND_DOWN)
+    return minimum + steps * increment
+
+
 def validate_price(value: Any, metadata: Mapping[str, Any], field_name: str) -> Decimal:
-    """Validate a finite price at frozen instrument precision; negatives are valid."""
+    """Validate a finite price on the frozen tick grid; negatives are valid."""
     price = _decimal(value, field_name)
     precision = _precision(metadata)
-    scaled = price.scaleb(precision)
-    rounded = price.quantize(Decimal(1).scaleb(-precision))
-    if scaled != scaled.to_integral_value():
+    tick = _price_tick(metadata)
+    rounded = _round_to_tick(price, tick, ROUND_HALF_UP)
+    if price != rounded:
         value_as_float = None
         try:
             value_as_float = float(price)
@@ -72,8 +110,12 @@ def validate_price(value: Any, metadata: Mapping[str, Any], field_name: str) -> 
             and abs(float(price - rounded)) <= tolerance
         ):
             return rounded
+        if metadata.get("tick_size") is None:
+            raise SimulationRuleError(
+                f"{field_name} must use no more than {_precision(metadata)} decimal places."
+            )
         raise SimulationRuleError(
-            f"{field_name} must use no more than {precision} decimal places."
+            f"{field_name} must be a multiple of the instrument tick size {tick}."
         )
     return rounded
 
@@ -88,17 +130,19 @@ def normalize_market_reference_price(
 ) -> Decimal:
     """Round a source midpoint to the frozen instrument precision for sizing."""
     price = validate_market_data_price(value, field_name)
-    tick = Decimal(1).scaleb(-_precision(metadata))
-    return price.quantize(tick, rounding=ROUND_HALF_UP)
+    return _round_to_tick(price, _price_tick(metadata), ROUND_HALF_UP)
 
 
-def validate_lots(value: Any) -> Decimal:
-    """Require the minimum 0.001 lot and exact 0.001 increments."""
+def validate_lots(
+    value: Any, metadata: Mapping[str, Any] | None = None
+) -> Decimal:
+    """Require a quantity on this run's frozen instrument lot grid."""
     lots = _decimal(value, "lots")
-    if lots < MIN_LOTS:
-        raise SimulationRuleError("Lots must be at least 0.001.")
-    if lots % LOT_INCREMENT != 0:
-        raise SimulationRuleError("Lots must be in 0.001 increments.")
+    minimum, increment = lot_limits(metadata)
+    if lots < minimum:
+        raise SimulationRuleError(f"Lots must be at least {minimum}.")
+    if (lots - minimum) % increment != 0:
+        raise SimulationRuleError(f"Lots must be in {increment} increments.")
     return lots
 
 
@@ -142,14 +186,13 @@ def default_bracket_for_budget(
     if budget <= 0 or rate <= 0:
         raise SimulationRuleError("Risk budget and conversion rate must be positive.")
     contract_size = _positive_metadata_decimal(metadata, "contract_size")
-    precision = _precision(metadata)
-    tick = Decimal(1).scaleb(-precision)
+    tick = _price_tick(metadata)
 
     # The documented pip formula simplifies to budget / (contract * rate).
     # Round the distance outward to a valid tick so the preview never uses a
     # tighter stop than the risk budget implies.
-    distance = (budget / (contract_size * rate)).quantize(
-        tick, rounding=ROUND_CEILING
+    distance = _round_to_tick(
+        budget / (contract_size * rate), tick, ROUND_CEILING
     )
     if distance <= 0:
         distance = tick
@@ -212,7 +255,7 @@ def projected_risk_usd(
     metadata: Mapping[str, Any],
     cost_profile: Mapping[str, Any] | None = None,
 ) -> Decimal:
-    quantity = validate_lots(lots)
+    quantity = validate_lots(lots, metadata)
     return projected_risk_per_lot_usd(
         entry_price=entry_price,
         stop_loss=stop_loss,
@@ -231,7 +274,7 @@ def auto_size_lots(
     metadata: Mapping[str, Any],
     cost_profile: Mapping[str, Any] | None = None,
 ) -> Decimal:
-    """Size down to 0.001 lots; reject if the minimum exceeds the budget."""
+    """Size down to the run's valid lot grid or reject when its minimum is too costly."""
     budget = _decimal(risk_budget_usd, "risk_budget_usd")
     if budget <= 0:
         raise SimulationRuleError("Risk budget must be positive.")
@@ -242,10 +285,12 @@ def auto_size_lots(
         metadata=metadata,
         cost_profile=cost_profile,
     )
-    lots = (budget / per_lot).quantize(LOT_INCREMENT, rounding=ROUND_DOWN)
-    if lots < MIN_LOTS:
+    minimum, increment = lot_limits(metadata)
+    raw_lots = budget / per_lot
+    lots = _floor_to_lot_step(raw_lots, metadata)
+    if lots < minimum:
         raise SimulationRuleError(
-            "The minimum 0.001 lot would exceed the selected risk budget."
+            f"The minimum {minimum} lot would exceed the selected risk budget."
         )
     return lots
 
@@ -343,7 +388,7 @@ def _adjusted_fill(
     cost_profile: Mapping[str, Any] | None,
     preserve_price: bool,
 ) -> dict[str, float | str]:
-    quantity = validate_lots(lots)
+    quantity = validate_lots(lots, metadata)
     normalized_side = str(side).lower()
     if normalized_side not in {"buy", "sell"}:
         raise SimulationRuleError("Fill side must be buy or sell.")
@@ -354,12 +399,12 @@ def _adjusted_fill(
     )
     pip_size = _positive_metadata_decimal(metadata, "pip_size")
     contract_size = _positive_metadata_decimal(metadata, "contract_size")
-    precision = _precision(metadata)
-    tick = Decimal(1).scaleb(-precision)
+    tick = _price_tick(metadata)
     reference = (
-        source_reference.quantize(
+        _round_to_tick(
+            source_reference,
             tick,
-            rounding=ROUND_CEILING if normalized_side == "buy" else ROUND_FLOOR,
+            ROUND_CEILING if normalized_side == "buy" else ROUND_FLOOR,
         )
         if not preserve_price
         else source_reference
@@ -371,12 +416,12 @@ def _adjusted_fill(
     if preserve_price:
         fill_price = reference
     elif normalized_side == "buy":
-        fill_price = (source_reference + total_offset).quantize(
-            tick, rounding=ROUND_CEILING
+        fill_price = _round_to_tick(
+            source_reference + total_offset, tick, ROUND_CEILING
         )
     else:
-        fill_price = (source_reference - total_offset).quantize(
-            tick, rounding=ROUND_FLOOR
+        fill_price = _round_to_tick(
+            source_reference - total_offset, tick, ROUND_FLOOR
         )
 
     spread_cost = spread_offset * contract_size * quantity
@@ -480,12 +525,13 @@ def allocate_opposing_fill_fifo(
     incoming_side: str,
     incoming_lots: Any,
     positions: list[Mapping[str, Any]],
+    metadata: Mapping[str, Any] | None = None,
 ) -> tuple[list[dict[str, Any]], Decimal]:
     """Plan FIFO reductions and return any excess for a reverse position."""
     side = str(incoming_side).lower()
     if side not in {"buy", "sell"}:
         raise SimulationRuleError("Fill side must be buy or sell.")
-    remaining = validate_lots(incoming_lots)
+    remaining = validate_lots(incoming_lots, metadata)
     opposing_position_side = "short" if side == "buy" else "long"
     candidates = [
         position
@@ -506,7 +552,7 @@ def allocate_opposing_fill_fifo(
             break
         available = _decimal(position["remaining_lots"], "remaining_lots")
         allocated = min(available, remaining)
-        allocated = allocated.quantize(LOT_INCREMENT, rounding=ROUND_DOWN)
+        allocated = _floor_to_lot_step(allocated, metadata)
         if allocated <= 0:
             continue
         allocations.append(
@@ -525,7 +571,7 @@ def realized_native_pnl(
     """Compute quote-currency gross P&L before separately accounted costs."""
     entry = validate_price(entry_price, metadata, "entry_price")
     exit_value = validate_price(exit_price, metadata, "exit_price")
-    quantity = validate_lots(lots)
+    quantity = validate_lots(lots, metadata)
     contract_size = _positive_metadata_decimal(metadata, "contract_size")
     normalized_side = str(side).lower()
     if normalized_side in {"long", "buy"}:

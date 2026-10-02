@@ -5,6 +5,7 @@ import type {
   BacktestChartWorkspaceSaveRequest,
   BacktestDrawingState,
   BacktestInstrumentCatalog,
+  BacktestInstrumentSpecs,
   BacktestPreparationNotice,
   BacktestReplayPosition,
   BacktestReplayPositionRequest,
@@ -234,6 +235,14 @@ export async function modifyBacktestSimulationProtection(
   const response = await apiClient.put<BacktestSimulationOperationResponse>(
     `/backtest/runs/${encodeURIComponent(runId)}/simulation/positions/${encodeURIComponent(positionId)}/protection`,
     request
+  );
+  return response.data;
+}
+
+/** Load the versioned default sizing rows used to seed the Settings table. */
+export async function getBacktestInstrumentSpecs(): Promise<BacktestInstrumentSpecs> {
+  const response = await apiClient.get<BacktestInstrumentSpecs>(
+    '/backtest/instrument-specs'
   );
   return response.data;
 }

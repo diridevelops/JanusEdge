@@ -57,6 +57,26 @@ def test_price_validation_snaps_float_noise_but_rejects_extra_precision():
     assert validate_price(1.2 + 0.001, EURUSD, "high") == Decimal("1.20100")
 
 
+def test_frozen_instrument_tick_and_lot_rules_allow_instrument_specific_grids():
+    cfd = {
+        "price_precision": 2,
+        "tick_size": 0.25,
+        "pip_size": 0.25,
+        "contract_size": 1,
+        "min_lots": 0.01,
+        "lot_increment": 0.005,
+    }
+    assert validate_price(12.5, cfd, "entry_price") == Decimal("12.50")
+    with pytest.raises(SimulationRuleError, match="tick size"):
+        validate_price(12.6, cfd, "entry_price")
+    assert validate_lots(0.01, cfd) == Decimal("0.01")
+    assert validate_lots(0.015, cfd) == Decimal("0.015")
+    with pytest.raises(SimulationRuleError, match="at least 0.01"):
+        validate_lots(0.005, cfd)
+    with pytest.raises(SimulationRuleError, match="0.005 increments"):
+        validate_lots(0.012, cfd)
+
+
 def test_default_bracket_uses_current_risk_budget_and_starts_at_one_r():
     bracket = default_bracket_for_budget(
         side="buy",

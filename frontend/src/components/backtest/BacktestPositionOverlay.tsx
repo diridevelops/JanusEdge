@@ -15,7 +15,9 @@ export interface BacktestOverlayPosition {
 interface BacktestPositionOverlayProps {
   positions: readonly BacktestOverlayPosition[];
   pricePrecision: number;
+  tickSize?: number;
   pipSize?: number;
+  priceUnitLabel?: string;
   currentClose: number | null;
   priceToCoordinate: (price: number) => number | null;
   coordinateToPrice: (y: number) => number | null;
@@ -48,7 +50,8 @@ function formatPositionPnlInInstrumentUnits(
   position: BacktestOverlayPosition,
   currentClose: number | null,
   pipSize: number,
-  pricePrecision: number
+  pricePrecision: number,
+  priceUnitLabel: string
 ): string {
   if (currentClose == null || !Number.isFinite(currentClose)) return '—';
   const priceMove = position.side === 'long'
@@ -56,7 +59,7 @@ function formatPositionPnlInInstrumentUnits(
     : position.weightedEntryPrice - currentClose;
   if (!Number.isFinite(priceMove)) return '—';
   if (Number.isFinite(pipSize) && pipSize > 0) {
-    return `${formatSignedAmount(priceMove / pipSize, 1)} pips`;
+    return `${formatSignedAmount(priceMove / pipSize, 1)} ${priceUnitLabel}`;
   }
   return `${formatSignedAmount(priceMove, pricePrecision)} price`;
 }
@@ -67,20 +70,28 @@ export function clampPositionStopPrice(
   candidate: number,
   entryPrice: number,
   currentClose: number | null,
-  pricePrecision: number
+  pricePrecision: number,
+  configuredTickSize?: number
 ): number {
   const reference = currentClose != null && Number.isFinite(currentClose) ? currentClose : entryPrice;
-  const tick = 10 ** -pricePrecision;
+  const tick = Number.isFinite(configuredTickSize) && (configuredTickSize ?? 0) > 0
+    ? Number(configuredTickSize)
+    : 10 ** -pricePrecision;
   const boundary = side === 'long' ? reference - tick : reference + tick;
   const bounded = side === 'long' ? Math.min(candidate, boundary) : Math.max(candidate, boundary);
-  return Number(bounded.toFixed(pricePrecision));
+  const steps = side === 'long'
+    ? Math.floor(bounded / tick + 1e-10)
+    : Math.ceil(bounded / tick - 1e-10);
+  return Number((steps * tick).toPrecision(15));
 }
 
 /** Per-position chart levels. Entry stays fixed; stop and target edits are scoped by id. */
 export function BacktestPositionOverlay({
   positions,
   pricePrecision,
+  tickSize: configuredTickSize,
   pipSize = 0,
+  priceUnitLabel = 'pips',
   currentClose,
   priceToCoordinate,
   coordinateToPrice,
@@ -90,6 +101,9 @@ export function BacktestPositionOverlay({
   onClose,
   disabled = false,
 }: BacktestPositionOverlayProps) {
+  const tickSize = Number.isFinite(configuredTickSize) && (configuredTickSize ?? 0) > 0
+    ? Number(configuredTickSize)
+    : 10 ** -pricePrecision;
   const layerRef = useRef<HTMLDivElement>(null);
   const [height, setHeight] = useState(0);
   const [drag, setDrag] = useState<ActiveDrag | null>(null);
@@ -117,7 +131,6 @@ export function BacktestPositionOverlay({
       if (!bounds) return;
       const nextPointer = coordinateToPrice(event.clientY - bounds.top);
       if (nextPointer == null || !Number.isFinite(nextPointer)) return;
-      const tick = 10 ** -pricePrecision;
       const delta = nextPointer - drag.startPointerPrice;
       const position = positions.find((item) => item.id === drag.positionId);
       if (!position) return;
@@ -128,14 +141,15 @@ export function BacktestPositionOverlay({
           candidate,
           position.weightedEntryPrice,
           currentClose,
-          pricePrecision
+          pricePrecision,
+          tickSize,
         ));
       } else {
         const candidate = drag.startPrice + delta;
         const bounded = position.side === 'long'
-          ? Math.max(candidate, position.weightedEntryPrice + tick)
-          : Math.min(candidate, position.weightedEntryPrice - tick);
-        setDragPrice(Number(bounded.toFixed(pricePrecision)));
+          ? Math.max(candidate, position.weightedEntryPrice + tickSize)
+          : Math.min(candidate, position.weightedEntryPrice - tickSize);
+        setDragPrice(Number((Math.round(bounded / tickSize) * tickSize).toPrecision(15)));
       }
     };
     const up = (event: PointerEvent) => {
@@ -155,7 +169,7 @@ export function BacktestPositionOverlay({
       window.removeEventListener('pointerup', up);
       window.removeEventListener('pointercancel', up);
     };
-  }, [coordinateToPrice, currentClose, drag, dragPrice, onMoveStop, onMoveTarget, positions, pricePrecision]);
+  }, [coordinateToPrice, currentClose, drag, dragPrice, onMoveStop, onMoveTarget, positions, pricePrecision, tickSize]);
 
   return (
     <div ref={layerRef} className="pointer-events-none absolute inset-0 z-20 overflow-hidden" data-testid="backtest-position-overlay">
@@ -214,17 +228,18 @@ export function BacktestPositionOverlay({
                         if (disabled || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
                         event.preventDefault();
                         const delta = event.key === 'ArrowUp' ? 1 : -1;
-                        const next = level.price + delta * 10 ** -pricePrecision;
+                        const next = level.price + delta * tickSize;
                         if (level.name === 'stop') {
                           onMoveStop(position.id, clampPositionStopPrice(
                             position.side,
                             next,
                             position.weightedEntryPrice,
                             currentClose,
-                            pricePrecision
+                            pricePrecision,
+                            tickSize,
                           ));
                         }
-                        else onMoveTarget(position.id, Number(next.toFixed(pricePrecision)));
+                        else onMoveTarget(position.id, Number((Math.round(next / tickSize) * tickSize).toPrecision(15)));
                       }}
                     >
                       {level.name === 'stop' ? 'SL' : 'TP'} {displayedPrice.toFixed(pricePrecision)}
@@ -248,7 +263,7 @@ export function BacktestPositionOverlay({
                 className="px-1"
                 title={`USD unrealized P&L ${position.unrealizedPnlUsd == null ? 'unavailable' : usd.format(position.unrealizedPnlUsd)}`}
               >
-                P&amp;L {formatPositionPnlInInstrumentUnits(position, currentClose, pipSize, pricePrecision)}
+                P&amp;L {formatPositionPnlInInstrumentUnits(position, currentClose, pipSize, pricePrecision, priceUnitLabel)}
               </span>
               <button type="button" className="rounded px-1.5 py-0.5 leading-none hover:bg-white/15 disabled:opacity-40" aria-label={`Move stop to break-even for position ${position.id}`} title="Move stop to entry" disabled={!beAllowed || disabled} onClick={() => onBreakEven(position.id, position.weightedEntryPrice)}>BE</button>
               <button type="button" className="rounded px-1.5 py-0.5 leading-none hover:bg-rose-500/30 disabled:opacity-40" aria-label={`Close position ${position.id}`} title="Close this position" disabled={disabled} onClick={() => onClose(position.id)}>×</button>

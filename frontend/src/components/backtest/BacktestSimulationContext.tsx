@@ -15,7 +15,9 @@ export interface BacktestSimulationPreviewUi {
   stopLossPrice: number;
   takeProfitPrice: number;
   pricePrecision: number;
+  tickSize: number;
   pipSize: number;
+  priceUnitLabel: string;
   quantityLots: number | null;
   autoSize: boolean;
   riskBudgetUsd: number | null;
@@ -39,7 +41,9 @@ export interface BacktestSimulationChartUi {
   workingOrders: BacktestWorkingOrderOverlayItem[];
   currentClose: number | null;
   pricePrecision: number;
+  tickSize: number;
   pipSize: number;
+  priceUnitLabel: string;
   disabled: boolean;
   onMoveStop: (positionId: string, displayedPrice: number) => void;
   onMoveTarget: (positionId: string, displayedPrice: number) => void;

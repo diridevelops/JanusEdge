@@ -422,6 +422,8 @@ export function TradeDetailPage() {
     );
   }
 
+  const isContractTrade = ['forex', 'cfd'].includes(String(trade.instrument_type).toLowerCase());
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -464,10 +466,10 @@ export function TradeDetailPage() {
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-9 gap-4 text-sm">
           <div>
             <p className="text-xs text-gray-500 uppercase dark:text-gray-400">
-              {trade.instrument_type === 'forex' ? 'Lots' : 'Quantity'}
+              {isContractTrade ? 'Lots' : 'Quantity'}
             </p>
             <p className="font-semibold text-gray-900 dark:text-gray-100">
-              {trade.instrument_type === 'forex'
+              {isContractTrade
                 ? formatQuantity(trade.lot_size ?? trade.total_quantity)
                 : trade.total_quantity}
             </p>
@@ -475,7 +477,7 @@ export function TradeDetailPage() {
           <div>
             <p className="text-xs text-gray-500 uppercase dark:text-gray-400">Avg Entry</p>
             <p className="font-semibold text-gray-900 dark:text-gray-100">
-              {trade.instrument_type === 'forex' && trade.price_precision != null
+              {isContractTrade && trade.price_precision != null
                 ? formatPrice(trade.avg_entry_price, trade.price_precision)
                 : formatCurrency(trade.avg_entry_price)}
             </p>
@@ -483,7 +485,7 @@ export function TradeDetailPage() {
           <div>
             <p className="text-xs text-gray-500 uppercase dark:text-gray-400">Avg Exit</p>
             <p className="font-semibold text-gray-900 dark:text-gray-100">
-              {trade.instrument_type === 'forex' && trade.price_precision != null
+              {isContractTrade && trade.price_precision != null
                 ? formatPrice(trade.avg_exit_price, trade.price_precision)
                 : formatCurrency(trade.avg_exit_price)}
             </p>
@@ -493,7 +495,7 @@ export function TradeDetailPage() {
             <p className={`font-semibold ${trade.gross_pnl >= 0 ? 'text-profit' : 'text-loss'}`}>
               {formatCurrency(trade.gross_pnl)}
             </p>
-            {trade.instrument_type === 'forex' && trade.native_pnl != null && (
+            {isContractTrade && trade.native_pnl != null && (
               <p className="text-xs text-gray-500 dark:text-gray-400">
                 Native: {formatCurrency(trade.native_pnl, trade.native_pnl_currency ?? 'USD')}
               </p>
@@ -538,13 +540,13 @@ export function TradeDetailPage() {
               {formatDuration(trade.holding_time_seconds)}
             </p>
           </div>
-          {trade.instrument_type === 'forex' && (
+          {isContractTrade && (
             <>
               <div>
-                <p className="text-xs text-gray-500 uppercase dark:text-gray-400">Pips</p>
+                <p className="text-xs text-gray-500 uppercase dark:text-gray-400">{trade.instrument_type === 'forex' ? 'Pips' : 'Price Steps'}</p>
                 <p className={`font-semibold ${trade.pips != null && trade.pips >= 0 ? 'text-profit' : 'text-loss'}`}>
                   {trade.pips != null
-                    ? `${trade.pips >= 0 ? '+' : ''}${formatPips(trade.pips)} ${Math.abs(trade.pips) === 1 ? 'pip' : 'pips'}`
+                    ? `${trade.pips >= 0 ? '+' : ''}${formatPips(trade.pips)} ${trade.instrument_type === 'forex' ? (Math.abs(trade.pips) === 1 ? 'pip' : 'pips') : 'price steps'}`
                     : '—'}
                 </p>
               </div>
@@ -586,7 +588,7 @@ export function TradeDetailPage() {
             avgEntryPrice={trade.avg_entry_price}
             avgExitPrice={trade.avg_exit_price}
             pricePrecision={
-              trade.instrument_type === 'forex'
+              isContractTrade
                 ? trade.price_precision ?? 2
                 : 2
             }

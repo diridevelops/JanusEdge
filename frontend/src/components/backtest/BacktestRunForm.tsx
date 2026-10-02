@@ -347,7 +347,7 @@ export function BacktestRunForm({
         </p>
         <div className="grid gap-4 sm:grid-cols-3">
           <label htmlFor="backtest-cost-spread" className="text-sm font-medium text-gray-700 dark:text-gray-300">
-            Total spread (pips)
+            Total spread (price steps)
             <input
               id="backtest-cost-spread"
               type="number"
@@ -364,7 +364,7 @@ export function BacktestRunForm({
             />
           </label>
           <label htmlFor="backtest-cost-slippage" className="text-sm font-medium text-gray-700 dark:text-gray-300">
-            Slippage (pips)
+            Slippage (price steps)
             <input
               id="backtest-cost-slippage"
               type="number"

@@ -78,13 +78,63 @@ def test_preparation_job_pins_conversion_contract():
     }
 
     job = PreparationJobService().build_for_run(**common)
-    assert job["fx_conversion"] == {
-        "quote_currency": "JPY",
+    conversion = job["fx_conversion"]
+    assert conversion["quote_currency"] == "JPY"
+    assert conversion["instrument"] == "USD-JPY"
+    assert conversion["direction"] == "inverse"
+    assert conversion["route"] == [{
+        "from_currency": "JPY",
+        "to_currency": "USD",
         "instrument": "USD-JPY",
         "direction": "inverse",
-        "supported": True,
-        "completed_utc_dates": [],
+    }]
+    assert conversion["supported"] is True
+    assert conversion["completed_utc_dates"] == []
+
+
+def test_conversion_routes_use_shortest_configured_cross_and_minor_unit_scale():
+    from app.backtests.fx_conversion import build_conversion_spec, resolve_conversion_route_rate
+
+    instruments = {
+        "EUR-GBP": {
+            "base_currency": "EUR", "quote_currency": "GBP", "catalog_group": "FX_CROSSES"
+        },
+        "GBP-USD": {
+            "base_currency": "GBP", "quote_currency": "USD", "catalog_group": "FX_MAJORS"
+        },
+        "EUR-CHF": {
+            "base_currency": "EUR", "quote_currency": "CHF", "catalog_group": "FX_CROSSES"
+        },
+        "CHF-USD": {
+            "base_currency": "CHF", "quote_currency": "USD", "catalog_group": "FX_MAJORS"
+        },
     }
+    cross = build_conversion_spec("EUR", instruments=instruments)
+    assert [leg["instrument"] for leg in cross["route"]] == ["EUR-CHF", "CHF-USD"]
+    assert resolve_conversion_route_rate(
+        "EUR",
+        120_000,
+        cross["route"],
+        {
+            "EUR-CHF": [{"time_ms": 0, "close": 0.95}],
+            "CHF-USD": [{"time_ms": 0, "close": 1.1}],
+        },
+    ) == pytest.approx(1.045)
+
+    minor = build_conversion_spec(
+        "GBX", instruments=instruments, quote_currency_unit_scale=0.01
+    )
+    assert minor["conversion_currency"] == "GBP"
+    assert minor["quote_currency_unit_scale"] == 0.01
+    assert resolve_conversion_route_rate(
+        "GBX", 120_000, minor["route"],
+        {"GBP-USD": [{"time_ms": 0, "close": 1.25}]},
+        quote_currency_unit_scale=minor["quote_currency_unit_scale"],
+    ) == pytest.approx(0.0125)
+
+    missing = build_conversion_spec("XYZ", instruments=instruments)
+    assert missing["supported"] is False
+    assert missing["route"] == []
 
 
 def test_snapshot_publishes_and_reads_immutable_conversion_series(app):
@@ -106,7 +156,7 @@ def test_snapshot_publishes_and_reads_immutable_conversion_series(app):
     with app.app_context():
         base_key = store.write_staged_date(user_id, run_id, day, base_candles)
         fx_key = store.write_staged_conversion_date(
-            user_id, run_id, "JPY", day, fx_candles
+            user_id, run_id, "USD-JPY", day, fx_candles
         )
         snapshot, _coverage = store.assemble_snapshot(
             user_id=user_id,
@@ -128,18 +178,23 @@ def test_snapshot_publishes_and_reads_immutable_conversion_series(app):
                 "quote_currency": "JPY",
                 "instrument": "USD-JPY",
                 "direction": "inverse",
+                "supported": True,
+                "route": [{
+                    "from_currency": "JPY", "to_currency": "USD",
+                    "instrument": "USD-JPY", "direction": "inverse",
+                }],
                 "completed_utc_dates":[
                     {
                         "utc_date": datetime(1970, 1, 1, tzinfo=timezone.utc),
                         "outcome": "data",
-                        "object_key": fx_key,
+                        "object_keys": {"USD-JPY": fx_key},
                     }
                 ],
             },
         )
 
         ref = snapshot["fx_conversion_series"][0]
-        read_back = store.read_fx_conversion_series(snapshot, "JPY")
+        read_back = store.read_fx_conversion_series(snapshot, "USD-JPY")
 
     assert ref["instrument"] == "USD-JPY"
     assert ref["direction"] == "inverse"

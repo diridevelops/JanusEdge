@@ -33,7 +33,7 @@ def test_entry_schema_accepts_negative_blind_prices_and_checks_precision():
         schema.load({**valid, "take_profit": -1.100001})
 
 
-@pytest.mark.parametrize("lots", [0, 0.0009, 0.0011, float("inf")])
+@pytest.mark.parametrize("lots", [0, -0.0009, float("inf")])
 def test_entry_schema_rejects_invalid_manual_lots(lots):
     schema = SubmitOrderRequestSchema(instrument_precision=5)
     request = {
@@ -50,6 +50,47 @@ def test_entry_schema_rejects_invalid_manual_lots(lots):
 
     with pytest.raises(ValidationError):
         schema.load(request)
+
+
+@pytest.mark.parametrize("lots", [0.0009, 0.0011])
+def test_entry_schema_defers_positive_lot_grid_to_frozen_run(lots):
+    from app.backtests.simulation_engine import SimulationRuleError, validate_lots
+
+    schema = SubmitOrderRequestSchema(instrument_precision=5)
+    request = {
+        "client_operation_id": "op-2",
+        "expected_revision": 0,
+        "side": "buy",
+        "order_type": "limit",
+        "auto_size": False,
+        "lots": lots,
+        "entry_price": 1.1,
+        "stop_loss": 1.09,
+        "take_profit": 1.12,
+    }
+    assert schema.load(request)["lots"] == lots
+    with pytest.raises(SimulationRuleError):
+        validate_lots(lots, {"min_lots": 0.01, "lot_increment": 0.00001})
+
+
+def test_price_schema_validates_non_decimal_tick_grid():
+    schema = SubmitOrderRequestSchema(
+        instrument_precision=2,
+        instrument_tick_size=0.25,
+    )
+    request = {
+        "client_operation_id": "op-tick",
+        "expected_revision": 0,
+        "side": "buy",
+        "order_type": "limit",
+        "auto_size": True,
+        "entry_price": 12.5,
+        "stop_loss": 12.0,
+        "take_profit": 13.0,
+    }
+    assert schema.load(request)["entry_price"] == 12.5
+    with pytest.raises(ValidationError):
+        schema.load({**request, "stop_loss": 12.1})
 
 
 def test_repository_filters_versions_by_scope_generation_and_commit():
