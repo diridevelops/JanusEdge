@@ -3,7 +3,15 @@ import {
   type Time,
 } from 'lightweight-charts';
 
-type DateFormatStyle = 'year' | 'month' | 'day' | 'time' | 'timeWithSeconds' | 'tooltip';
+type DateFormatStyle =
+  | 'year'
+  | 'month'
+  | 'day'
+  | 'time'
+  | 'timeWithSeconds'
+  | 'tooltip'
+  | 'tooltipDate'
+  | 'tooltipTime';
 
 export interface BacktestTimeFormatters {
   timeFormatter: (time: Time | number) => string;
@@ -45,9 +53,25 @@ function getDateFormatOptions(style: DateFormatStyle): Intl.DateTimeFormatOption
       return { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' };
     case 'tooltip':
       return {
+        weekday: 'short',
         year: 'numeric',
         month: 'short',
         day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hourCycle: 'h23',
+        timeZoneName: 'short',
+      };
+    case 'tooltipDate':
+      return {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+      };
+    case 'tooltipTime':
+      return {
         hour: '2-digit',
         minute: '2-digit',
         second: '2-digit',
@@ -97,7 +121,22 @@ export function createBacktestTimeFormatters(
       const timeMs = toEpochMilliseconds(time);
       if (timeMs === null) return String(time);
       const locale = typeof navigator === 'undefined' ? undefined : navigator.language;
-      return getFormatter(locale, 'tooltip').format(new Date(timeMs));
+      const date = new Date(timeMs);
+      if (blindMode) {
+        return getFormatter(locale, 'tooltip').format(date);
+      }
+
+      const dateParts = getFormatter(locale, 'tooltipDate').formatToParts(date);
+      const part = (type: Intl.DateTimeFormatPartTypes) =>
+        dateParts.find((datePart) => datePart.type === type)?.value ?? '';
+      const dateLabel = [
+        part('weekday'),
+        part('month'),
+        part('day'),
+        part('year'),
+      ].join(' ');
+      const timeLabel = getFormatter(locale, 'tooltipTime').format(date);
+      return `${dateLabel}, ${timeLabel}`;
     },
     tickMarkFormatter: (time, tickMarkType, locale) => {
       const timeMs = toEpochMilliseconds(time);
