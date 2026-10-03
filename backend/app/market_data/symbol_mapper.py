@@ -357,12 +357,28 @@ def get_simulation_instrument(
     raw_symbol: str | None = None,
     symbol_mappings: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, Any], str] | None:
-    """Resolve a configured contract mapping for backtest execution.
+    """Resolve a configured contract mapping for backtest execution."""
+    resolved = resolve_simulation_instrument(
+        symbol,
+        raw_symbol=raw_symbol,
+        symbol_mappings=symbol_mappings,
+    )
+    if resolved is None:
+        return None
+    _, mapping, mapping_type, _ = resolved
+    return mapping, mapping_type
 
-    Exact instrument mappings are preferred. Existing Forex settings remain a
-    compatible fallback for runs and profiles that predate the generic table.
-    The returned type is ``forex`` for canonical three-letter pairs and
-    ``contract`` for other configured instruments.
+
+def resolve_simulation_instrument(
+    symbol: str,
+    raw_symbol: str | None = None,
+    symbol_mappings: Mapping[str, Any] | None = None,
+) -> tuple[str, dict[str, Any], str, str] | None:
+    """Resolve a contract mapping and report its canonical code and source.
+
+    Explicit Settings instrument rows take precedence, followed by legacy
+    Forex rows and then the built-in Dukascopy catalog. ``source`` is one of
+    ``settings``, ``legacy_forex``, or ``catalog``.
     """
     try:
         normalized = validate_symbol_mappings(symbol_mappings or {})
@@ -378,7 +394,7 @@ def get_simulation_instrument(
         explicit = instruments.get(candidate) if isinstance(instruments, Mapping) else None
         if isinstance(explicit, Mapping):
             mapping = {**(default or {}), **explicit}
-            return mapping, _simulation_mapping_type(mapping)
+            return candidate, mapping, _simulation_mapping_type(mapping), "settings"
 
     # A legacy Forex row remains authoritative until the unified instrument
     # table has an explicit row for the same exact symbol.
@@ -398,12 +414,12 @@ def get_simulation_instrument(
                         merged["tick_size"] = float(
                             Decimal(1).scaleb(-int(legacy["price_precision"]))
                         )
-                    return merged, "forex"
+                    return candidate, merged, "forex", "legacy_forex"
 
     for candidate in candidates:
         mapping = defaults.get(candidate)
         if isinstance(mapping, Mapping):
-            return dict(mapping), _simulation_mapping_type(mapping)
+            return candidate, dict(mapping), _simulation_mapping_type(mapping), "catalog"
 
     forex = get_forex_instrument(
         symbol,
@@ -411,7 +427,7 @@ def get_simulation_instrument(
         symbol_mappings=symbol_mappings,
     )
     if forex is not None:
-        return forex, "forex"
+        return _iter_instrument_candidates(symbol, raw_symbol)[0], forex, "forex", "legacy_forex"
     return None
 
 

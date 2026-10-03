@@ -25,7 +25,7 @@ class ManualTradeSchema(Schema):
     lot_size = fields.Float(
         required=False,
         allow_none=True,
-        validate=validate.Range(min=0.001),
+        validate=validate.Range(min=0, min_inclusive=False),
     )
     entry_price = fields.Float(required=True)
     exit_price = fields.Float(required=True)

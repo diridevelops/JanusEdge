@@ -1,5 +1,7 @@
 """Trade API routes."""
 
+from datetime import datetime
+
 from flask import jsonify, request
 from flask_jwt_extended import (
     get_jwt_identity,
@@ -80,13 +82,42 @@ def get_running_pnl(trade_id):
     return jsonify(result), 200
 
 
+@trades_bp.route("/conversion-rate", methods=["GET"])
+@jwt_required()
+def get_manual_trade_conversion_rate():
+    """Resolve a manual trade's quote-currency conversion at an event time."""
+    user_id = get_jwt_identity()
+    require_real_workspace(user_id)
+    symbol = request.args.get("symbol", "").strip()
+    event_time_text = request.args.get("event_time", "").strip()
+    if not symbol:
+        raise ValidationError("Symbol is required.")
+    if not event_time_text:
+        raise ValidationError("event_time is required.")
+    try:
+        event_time = datetime.fromisoformat(
+            event_time_text.replace("Z", "+00:00")
+        )
+    except ValueError as exc:
+        raise ValidationError("event_time must be an ISO timestamp.") from exc
+    if event_time.tzinfo is None or event_time.utcoffset() is None:
+        raise ValidationError("event_time must include a timezone.")
+
+    result = trade_service.get_manual_trade_conversion_rate(
+        user_id=user_id,
+        symbol=symbol,
+        event_time=event_time,
+    )
+    return jsonify(result), 200
+
+
 @trades_bp.route("", methods=["POST"])
 @jwt_required()
 def create_trade():
     """
     Create a manual trade.
 
-    Expects futures JSON with total_quantity, or configured forex JSON
+    Expects futures JSON with total_quantity, or configured instrument JSON
     with lot_size and (for non-USD quote currencies) quote_to_usd_rate.
     """
     user_id = get_jwt_identity()

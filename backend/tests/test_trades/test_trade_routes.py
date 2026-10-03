@@ -202,6 +202,85 @@ def test_create_manual_trade(client):
     assert _sim_cache == {}
 
 
+def test_create_manual_trade_resolves_settings_alias_and_stores_metadata(client):
+    token = _register_and_login(client)
+    mappings = get_default_symbol_mappings()
+    _update_symbol_mappings(client, token, {
+        "instruments": {
+            "EUR-USD": mappings["instruments"]["EUR-USD"],
+        }
+    })
+
+    response = client.post(
+        "/api/trades",
+        json={
+            "symbol": "EUR/USD",
+            "side": "Long",
+            "lot_size": 0.01,
+            "entry_price": 1.1,
+            "exit_price": 1.101,
+            "entry_time": "2026-01-01T10:00:00Z",
+            "exit_time": "2026-01-01T10:05:00Z",
+        },
+        headers=_auth_header(token),
+    )
+
+    assert response.status_code == 201
+    trade = response.get_json()["trade"]
+    assert trade["symbol"] == "EUR-USD"
+    assert trade["raw_symbol"] == "EUR/USD"
+    assert trade["instrument_type"] == "forex"
+    assert trade["lot_size"] == 0.01
+    assert trade["quote_currency"] == "USD"
+    assert trade["quote_to_usd_rate"] == 1
+    assert trade["instrument_mapping_source"] == "settings"
+    assert trade["tick_size"] == mappings["instruments"][
+        "EUR-USD"
+    ]["tick_size"]
+    assert trade["conversion_rate_source"] == "identity"
+    assert trade["conversion_route"] == []
+    assert trade["gross_pnl"] == 1.0
+
+
+def test_conversion_rate_endpoint_uses_exit_time_historical_quote(client, monkeypatch):
+    from app.trades.routes import trade_service
+
+    token = _register_and_login(client)
+    event_time = datetime(2026, 1, 1, 10, 2, 30, tzinfo=timezone.utc)
+    event_ms = int(event_time.timestamp() * 1000)
+
+    class Provider:
+        def fetch_conversion_day(self, instrument, utc_date):
+            assert instrument == "USD-JPY"
+            return {
+                "candles": [
+                    {"time_ms": event_ms - 90_000, "close": 150},
+                    {"time_ms": event_ms - 30_000, "close": 200},
+                ]
+            }
+
+    monkeypatch.setattr(
+        trade_service.conversion_rate_service,
+        "provider",
+        Provider(),
+    )
+    response = client.get(
+        "/api/trades/conversion-rate",
+        query_string={
+            "symbol": "USD/JPY",
+            "event_time": event_time.isoformat(),
+        },
+        headers=_auth_header(token),
+    )
+
+    assert response.status_code == 200
+    quote = response.get_json()
+    assert quote["canonical_symbol"] == "USD-JPY"
+    assert quote["quote_currency"] == "JPY"
+    assert quote["quote_to_usd_rate"] == pytest.approx(1 / 150)
+    assert quote["route"][0]["direction"] == "inverse"
+
+
 def test_create_manual_trade_loser_sets_initial_risk(client):
     token = _register_and_login(client)
     resp = _create_trade(

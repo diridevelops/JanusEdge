@@ -1,6 +1,7 @@
 import apiClient from './client';
 import type {
   ManualTradeRequest,
+  ManualTradeConversionRateResponse,
   RunningPnLResponse,
   Trade,
   UpdateTradeRequest,
@@ -56,6 +57,18 @@ export async function createManualTrade(
 ): Promise<Trade> {
   const res = await apiClient.post<{ trade: Trade }>('/trades', data);
   return res.data.trade;
+}
+
+/** Resolve the historical quote-currency conversion for a manual trade. */
+export async function getManualTradeConversionRate(
+  symbol: string,
+  eventTime: string,
+): Promise<ManualTradeConversionRateResponse> {
+  const res = await apiClient.get<ManualTradeConversionRateResponse>(
+    '/trades/conversion-rate',
+    { params: { symbol, event_time: eventTime } },
+  );
+  return res.data;
 }
 
 /** Update a trade. */

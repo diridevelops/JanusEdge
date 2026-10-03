@@ -1,8 +1,10 @@
 """Trade service — business logic for trades."""
 
 import logging
+import math
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
+from typing import Any
 
 from bson import ObjectId
 
@@ -27,7 +29,10 @@ from app.market_data.symbol_mapper import (
     get_forex_instrument,
     get_point_value,
     get_trade_usd_multiplier,
+    resolve_simulation_instrument,
 )
+from app.backtests.simulation_engine import SimulationRuleError, validate_price
+from app.trades.conversion_rates import ManualTradeConversionRateService
 from app.utils.datetime_utils import to_utc, utc_now
 from app.utils.errors import NotFoundError, ValidationError
 from app.utils.trade_metrics import (
@@ -104,7 +109,7 @@ def _parse_date_to(value: str) -> datetime:
 class TradeService:
     """Service for trade operations."""
 
-    def __init__(self):
+    def __init__(self, conversion_rate_service=None):
         self.trade_repo = TradeRepository()
         self.exec_repo = ExecutionRepository()
         self.account_repo = AccountRepository()
@@ -112,6 +117,9 @@ class TradeService:
         self.market_data_service = MarketDataService()
         self.media_repo = MediaRepository()
         self.user_repo = UserRepository()
+        self.conversion_rate_service = (
+            conversion_rate_service or ManualTradeConversionRateService()
+        )
 
     def list_trades(
         self,
@@ -374,37 +382,84 @@ class TradeService:
             Created trade document.
         """
         user_oid = ObjectId(user_id)
-
-        # Find or create account
-        account = self.account_repo.find_or_create(
-            user_id=user_id,
-            account_name=data.get("account", "Manual"),
-            source_platform="manual",
+        raw_symbol = str(data["symbol"]).strip()
+        input_symbol = raw_symbol.upper()
+        raw_mappings = self._get_raw_symbol_mappings(user_id)
+        effective_mappings = get_effective_symbol_mappings(raw_mappings)
+        resolved = resolve_simulation_instrument(
+            input_symbol,
+            raw_symbol=raw_symbol,
+            symbol_mappings=raw_mappings,
         )
-
-        # Compute P&L
-        symbol = data["symbol"].strip().upper()
-        symbol_mappings = self._get_symbol_mappings(user_id)
-        forex_instrument = get_forex_instrument(
-            symbol,
-            str(data.get("symbol", symbol)),
-            symbol_mappings,
-        )
-        forex_metadata = {}
-        if forex_instrument is not None:
-            forex_metadata = self._calculate_forex_trade(
-                data,
-                forex_instrument,
+        if resolved is not None and resolved[3] == "catalog":
+            # A static Dukascopy spec is not itself a user's Settings row.
+            # Keep the legacy Forex path available, then let non-Forex symbols
+            # continue through the existing futures point-value path.
+            legacy_forex = get_forex_instrument(
+                input_symbol,
+                raw_symbol=raw_symbol,
+                symbol_mappings=raw_mappings,
             )
-            qty = forex_metadata["lot_size"]
-            entry_price = forex_metadata["entry_price"]
-            exit_price = forex_metadata["exit_price"]
-            gross_pnl = forex_metadata["usd_pnl"]
+            resolved = (
+                (input_symbol, legacy_forex, "forex", "legacy_forex")
+                if legacy_forex is not None
+                else None
+            )
+
+        entry_time = self._as_trade_datetime(data["entry_time"])
+        exit_time = self._as_trade_datetime(data["exit_time"])
+
+        instrument_metadata: dict[str, Any] = {}
+        if resolved is not None:
+            canonical_symbol, instrument, mapping_type, source = resolved
+            if source == "legacy_forex":
+                forex_data = self._with_resolved_quote_rate(
+                    exit_time,
+                    data,
+                    instrument,
+                    effective_mappings,
+                )
+                instrument_metadata = self._calculate_forex_trade(
+                    forex_data,
+                    instrument,
+                )
+                instrument_metadata["instrument_type"] = "forex"
+                conversion_data = forex_data
+            else:
+                self._validate_manual_instrument(instrument, canonical_symbol)
+                mapped_data = self._with_resolved_quote_rate(
+                    exit_time,
+                    data,
+                    instrument,
+                    effective_mappings,
+                )
+                instrument_metadata = self._calculate_mapped_instrument_trade(
+                    mapped_data,
+                    instrument,
+                )
+                instrument_metadata["instrument_type"] = (
+                    "forex" if mapping_type == "forex" else "cfd"
+                )
+                conversion_data = mapped_data
+            instrument_metadata.update(
+                self._manual_instrument_snapshot(
+                    instrument,
+                    source,
+                    conversion_data,
+                )
+            )
+            symbol = canonical_symbol
+            qty = instrument_metadata["lot_size"]
+            entry_price = instrument_metadata["entry_price"]
+            exit_price = instrument_metadata["exit_price"]
+            gross_pnl = instrument_metadata["usd_pnl"]
         else:
+            symbol = input_symbol
+            symbol_mappings = effective_mappings
             try:
                 point_value = get_point_value(
                     symbol,
-                    str(data.get("symbol", symbol)),
+                    raw_symbol,
                     symbol_mappings,
                 )
             except ValueError as exc:
@@ -413,26 +468,27 @@ class TradeService:
                 raise ValidationError(
                     "total_quantity is required for futures trades."
                 )
-            qty = data["total_quantity"]
-            entry_price = data["entry_price"]
-            exit_price = data["exit_price"]
             if data.get("lot_size") is not None:
                 raise ValidationError(
-                    "lot_size is only supported for configured forex pairs."
+                    "lot_size is only supported for configured instruments."
                 )
             if data.get("quote_to_usd_rate") is not None:
                 raise ValidationError(
-                    "quote_to_usd_rate is only supported for configured forex pairs."
+                    "quote_to_usd_rate is only supported for configured instruments."
                 )
+            qty = data["total_quantity"]
+            entry_price = data["entry_price"]
+            exit_price = data["exit_price"]
+            direction = 1 if data["side"] == "Long" else -1
+            gross_pnl = direction * (exit_price - entry_price) * qty * point_value
 
-            if data["side"] == "Long":
-                gross_pnl = (
-                    exit_price - entry_price
-                ) * qty * point_value
-            else:
-                gross_pnl = (
-                    entry_price - exit_price
-                ) * qty * point_value
+        # Only create an account after instrument, sizing, price, and FX
+        # validation have succeeded.
+        account = self.account_repo.find_or_create(
+            user_id=user_id,
+            account_name=data.get("account", "Manual"),
+            source_platform="manual",
+        )
 
         fee = data.get("fee", 0.0)
 
@@ -446,13 +502,6 @@ class TradeService:
             )
         else:
             initial_risk = requested_initial_risk
-
-        entry_time = data["entry_time"]
-        exit_time = data["exit_time"]
-        if isinstance(entry_time, str):
-            entry_time = datetime.fromisoformat(entry_time)
-        if isinstance(exit_time, str):
-            exit_time = datetime.fromisoformat(exit_time)
 
         holding_secs = int(
             (exit_time - entry_time).total_seconds()
@@ -479,35 +528,33 @@ class TradeService:
             holding_time_seconds=holding_secs,
             execution_count=0,
             source="manual",
-            instrument_type=(
-                "forex" if forex_metadata else "futures"
-            ),
-            lot_size=forex_metadata.get("lot_size"),
-            base_currency=forex_metadata.get(
-                "base_currency"
-            ),
-            quote_currency=forex_metadata.get(
-                "quote_currency"
-            ),
-            pip_size=forex_metadata.get("pip_size"),
-            price_precision=forex_metadata.get(
-                "price_precision"
-            ),
-            contract_size=forex_metadata.get(
-                "contract_size"
-            ),
-            pip_value_per_standard_lot=forex_metadata.get(
+            instrument_type=instrument_metadata.get("instrument_type", "futures"),
+            lot_size=instrument_metadata.get("lot_size"),
+            base_currency=instrument_metadata.get("base_currency"),
+            quote_currency=instrument_metadata.get("quote_currency"),
+            pip_size=instrument_metadata.get("pip_size"),
+            price_precision=instrument_metadata.get("price_precision"),
+            contract_size=instrument_metadata.get("contract_size"),
+            pip_value_per_standard_lot=instrument_metadata.get(
                 "pip_value_per_standard_lot"
             ),
-            pips=forex_metadata.get("pips"),
-            native_pnl=forex_metadata.get("native_pnl"),
-            native_pnl_currency=forex_metadata.get(
-                "native_pnl_currency"
-            ),
-            quote_to_usd_rate=forex_metadata.get(
-                "quote_to_usd_rate"
-            ),
+            pips=instrument_metadata.get("pips"),
+            native_pnl=instrument_metadata.get("native_pnl"),
+            native_pnl_currency=instrument_metadata.get("native_pnl_currency"),
+            quote_to_usd_rate=instrument_metadata.get("quote_to_usd_rate"),
         )
+        for field in (
+            "tick_size",
+            "min_lots",
+            "lot_increment",
+            "quote_currency_unit_scale",
+            "instrument_mapping_source",
+            "conversion_rate_source",
+            "conversion_rate_time",
+            "conversion_route",
+        ):
+            if field in instrument_metadata:
+                trade_doc[field] = instrument_metadata[field]
 
         # Auto-populate target_price for winners
         if net_pnl > 0:
@@ -530,6 +577,340 @@ class TradeService:
         trade = self.trade_repo.find_by_id(trade_id)
         clear_simulation_cache()
         return self.trade_repo.serialize_doc(trade)
+
+    def get_manual_trade_conversion_rate(
+        self,
+        user_id: str,
+        symbol: str,
+        event_time: datetime,
+    ) -> dict[str, Any]:
+        """Quote a Settings instrument's conversion rate at a trade event."""
+        raw_mappings = self._get_raw_symbol_mappings(user_id)
+        resolved = resolve_simulation_instrument(
+            symbol,
+            raw_symbol=symbol,
+            symbol_mappings=raw_mappings,
+        )
+        if resolved is not None and resolved[3] == "catalog":
+            legacy_forex = get_forex_instrument(
+                symbol,
+                raw_symbol=symbol,
+                symbol_mappings=raw_mappings,
+            )
+            resolved = (
+                (symbol.strip().upper(), legacy_forex, "forex", "legacy_forex")
+                if legacy_forex is not None
+                else None
+            )
+        if resolved is None:
+            return {
+                "available": False,
+                "canonical_symbol": symbol.strip().upper(),
+                "quote_currency": None,
+                "quote_to_usd_rate": None,
+                "rate_time": None,
+                "route": [],
+                "reason": "No Settings instrument mapping was found for this symbol.",
+            }
+
+        canonical_symbol, instrument, _, source = resolved
+        if source != "legacy_forex":
+            try:
+                self._validate_manual_instrument(instrument, canonical_symbol)
+            except ValidationError as exc:
+                return {
+                    "available": False,
+                    "canonical_symbol": canonical_symbol,
+                    "quote_currency": instrument.get("quote_currency"),
+                    "quote_to_usd_rate": None,
+                    "rate_time": None,
+                    "route": [],
+                    "reason": str(exc),
+                }
+
+        quote_currency = str(instrument.get("quote_currency", "")).upper()
+        if not quote_currency:
+            return {
+                "available": False,
+                "canonical_symbol": canonical_symbol,
+                "quote_currency": None,
+                "quote_to_usd_rate": None,
+                "rate_time": None,
+                "route": [],
+                "reason": "The instrument has no configured quote currency.",
+            }
+
+        effective_mappings = get_effective_symbol_mappings(raw_mappings)
+        quote = self.conversion_rate_service.quote_to_usd_rate(
+            quote_currency=quote_currency,
+            event_time=event_time,
+            instruments=effective_mappings.get("instruments", {}),
+            quote_currency_unit_scale=instrument.get("quote_currency_unit_scale"),
+        )
+        return {"canonical_symbol": canonical_symbol, **quote}
+
+    def _with_resolved_quote_rate(
+        self,
+        event_time: datetime,
+        data: dict,
+        instrument: dict,
+        effective_mappings: dict,
+    ) -> dict:
+        """Use a supplied/manual rate or resolve one from completed FX candles."""
+        quote_currency = str(instrument.get("quote_currency", "")).upper()
+        supplied_rate = data.get("quote_to_usd_rate")
+        if quote_currency == "USD":
+            if supplied_rate is not None and _decimal_number(
+                supplied_rate, "quote_to_usd_rate"
+            ) != Decimal("1"):
+                raise ValidationError(
+                    "quote_to_usd_rate must be 1 for USD-quoted instruments."
+                )
+            return {
+                **data,
+                "quote_to_usd_rate": 1,
+                "conversion_rate_source": "identity",
+                "conversion_rate_time": None,
+                "conversion_route": [],
+                "quote_currency_unit_scale": instrument.get(
+                    "quote_currency_unit_scale", 1
+                ),
+            }
+        if supplied_rate is not None:
+            rate = _decimal_number(supplied_rate, "quote_to_usd_rate")
+            if rate <= 0:
+                raise ValidationError(
+                    "quote_to_usd_rate must be greater than zero."
+                )
+            try:
+                historical_quote = self.conversion_rate_service.quote_to_usd_rate(
+                    quote_currency=quote_currency,
+                    event_time=to_utc(event_time),
+                    instruments=effective_mappings.get("instruments", {}),
+                    quote_currency_unit_scale=instrument.get(
+                        "quote_currency_unit_scale"
+                    ),
+                )
+            except Exception:
+                # A valid manual override remains usable if historical lookup
+                # is unavailable at submission time.
+                logger.exception(
+                    "Unable to verify the supplied %s conversion rate",
+                    quote_currency,
+                )
+                historical_quote = {}
+            matches_historical = (
+                historical_quote.get("available")
+                and historical_quote.get("quote_to_usd_rate") is not None
+                and math.isclose(
+                    float(rate),
+                    float(historical_quote["quote_to_usd_rate"]),
+                    rel_tol=1e-12,
+                    abs_tol=1e-12,
+                )
+            )
+            return {
+                **data,
+                "quote_to_usd_rate": rate,
+                "conversion_rate_source": (
+                    "historical" if matches_historical else "manual"
+                ),
+                "conversion_rate_time": (
+                    historical_quote.get("rate_time")
+                    if matches_historical
+                    else None
+                ),
+                "conversion_route": (
+                    historical_quote.get("route", [])
+                    if matches_historical
+                    else []
+                ),
+                "quote_currency_unit_scale": historical_quote.get(
+                    "quote_currency_unit_scale",
+                    instrument.get("quote_currency_unit_scale", 1),
+                ),
+            }
+
+        quote = self.conversion_rate_service.quote_to_usd_rate(
+            quote_currency=quote_currency,
+            event_time=to_utc(event_time),
+            instruments=effective_mappings.get("instruments", {}),
+            quote_currency_unit_scale=instrument.get("quote_currency_unit_scale"),
+        )
+        if not quote.get("available"):
+            reason = quote.get("reason") or "No historical conversion rate is available."
+            raise ValidationError(
+                f"{reason} Enter a positive USD-per-{quote_currency} rate manually."
+            )
+        return {
+            **data,
+            "quote_to_usd_rate": quote["quote_to_usd_rate"],
+            "conversion_rate_source": "historical",
+            "conversion_rate_time": quote.get("rate_time"),
+            "conversion_route": quote.get("route", []),
+            "quote_currency_unit_scale": quote.get(
+                "quote_currency_unit_scale",
+                instrument.get("quote_currency_unit_scale", 1),
+            ),
+        }
+
+    @staticmethod
+    def _manual_instrument_snapshot(
+        instrument: dict,
+        source: str,
+        conversion_data: dict,
+    ) -> dict[str, Any]:
+        """Freeze the Settings sizing and conversion details used for a trade."""
+        precision = instrument.get("price_precision")
+        fallback_tick = (
+            float(Decimal(1).scaleb(-int(precision)))
+            if precision is not None
+            else None
+        )
+        snapshot = {
+            "tick_size": instrument.get("tick_size", fallback_tick),
+            "min_lots": instrument.get(
+                "min_lots",
+                _FOREX_MIN_LOT_SIZE if source == "legacy_forex" else None,
+            ),
+            "lot_increment": instrument.get(
+                "lot_increment",
+                _FOREX_MIN_LOT_SIZE if source == "legacy_forex" else None,
+            ),
+            "instrument_mapping_source": source,
+            "conversion_rate_source": conversion_data.get(
+                "conversion_rate_source"
+            ),
+            "conversion_rate_time": conversion_data.get(
+                "conversion_rate_time"
+            ),
+            "conversion_route": conversion_data.get("conversion_route", []),
+            "quote_currency_unit_scale": conversion_data.get(
+                "quote_currency_unit_scale",
+                instrument.get("quote_currency_unit_scale", 1),
+            ),
+        }
+        for field in ("min_lots", "lot_increment", "quote_currency_unit_scale"):
+            value = snapshot.get(field)
+            if value is not None:
+                snapshot[field] = float(value)
+        if snapshot["tick_size"] is not None:
+            snapshot["tick_size"] = float(snapshot["tick_size"])
+        return snapshot
+
+    @staticmethod
+    def _validate_manual_instrument(
+        instrument: dict,
+        symbol: str,
+    ) -> None:
+        required = (
+            "base_currency",
+            "quote_currency",
+            "pip_size",
+            "tick_size",
+            "price_precision",
+            "contract_size",
+            "min_lots",
+            "lot_increment",
+        )
+        if not instrument.get("supported_for_simulation") or any(
+            instrument.get(field) is None for field in required
+        ):
+            reason = instrument.get("reason")
+            raise ValidationError(
+                str(reason)
+                if reason
+                else f"{symbol} has incomplete Settings sizing rules. Complete its instrument row before creating a trade."
+            )
+
+    @staticmethod
+    def _calculate_mapped_instrument_trade(
+        data: dict,
+        instrument: dict,
+    ) -> dict:
+        """Calculate a Settings-mapped Forex or CFD trade in quote currency."""
+        lot_input = data.get("lot_size")
+        total_quantity = data.get("total_quantity")
+        if lot_input is None:
+            lot_input = total_quantity
+        elif total_quantity is not None and _decimal_number(
+            total_quantity, "total_quantity"
+        ) != _decimal_number(lot_input, "lot_size"):
+            raise ValidationError(
+                "total_quantity must match lot_size for configured instruments."
+            )
+        if lot_input is None:
+            raise ValidationError("lot_size is required for configured instruments.")
+
+        lots = _decimal_number(lot_input, "lot_size")
+        minimum = _decimal_number(instrument["min_lots"], "min_lots")
+        increment = _decimal_number(instrument["lot_increment"], "lot_increment")
+        if minimum <= 0 or increment <= 0:
+            raise ValidationError(
+                "Configured lot minimum and increment must be greater than zero."
+            )
+        if lots < minimum:
+            raise ValidationError(f"lot_size must be at least {minimum}.")
+        steps = (lots - minimum) / increment
+        if steps != steps.to_integral_value():
+            raise ValidationError(
+                f"lot_size must use the configured {increment} lot increment from a minimum of {minimum}."
+            )
+
+        try:
+            entry_price = validate_price(
+                data["entry_price"], instrument, "entry_price"
+            )
+            exit_price = validate_price(
+                data["exit_price"], instrument, "exit_price"
+            )
+        except SimulationRuleError as exc:
+            raise ValidationError(str(exc)) from exc
+
+        price_precision = int(instrument["price_precision"])
+        pip_size = _decimal_number(instrument["pip_size"], "pip_size")
+        contract_size = _decimal_number(
+            instrument["contract_size"], "contract_size"
+        )
+        if pip_size <= 0 or contract_size <= 0:
+            raise ValidationError(
+                "Configured pip size and contract size must be greater than zero."
+            )
+        quote_currency = str(instrument["quote_currency"]).upper()
+        quote_to_usd_rate = _decimal_number(
+            data.get("quote_to_usd_rate"), "quote_to_usd_rate"
+        )
+        if quote_to_usd_rate <= 0:
+            raise ValidationError("quote_to_usd_rate must be greater than zero.")
+
+        direction = Decimal("1") if data["side"] == "Long" else Decimal("-1")
+        price_delta = exit_price - entry_price
+        native_pnl = direction * lots * contract_size * price_delta
+        usd_pnl = native_pnl * quote_to_usd_rate
+        return {
+            "lot_size": float(lots),
+            "entry_price": float(entry_price),
+            "exit_price": float(exit_price),
+            "pips": float(direction * price_delta / pip_size),
+            "native_pnl": float(native_pnl),
+            "usd_pnl": float(usd_pnl),
+            "native_pnl_currency": quote_currency,
+            "quote_to_usd_rate": float(quote_to_usd_rate),
+            "pip_value_per_standard_lot": float(contract_size * pip_size),
+            "base_currency": instrument["base_currency"],
+            "quote_currency": quote_currency,
+            "pip_size": float(pip_size),
+            "price_precision": price_precision,
+            "contract_size": float(contract_size),
+        }
+
+    @staticmethod
+    def _as_trade_datetime(value) -> datetime:
+        if isinstance(value, str):
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if not isinstance(value, datetime):
+            raise ValidationError("Trade times must be valid ISO timestamps.")
+        return value
 
     @staticmethod
     def _calculate_forex_trade(
@@ -643,6 +1024,11 @@ class TradeService:
         return get_effective_symbol_mappings(
             user.get("symbol_mappings") if user else None
         )
+
+    def _get_raw_symbol_mappings(self, user_id: str) -> dict | None:
+        """Return stored mappings without hydrating or merging catalog defaults."""
+        user = self.user_repo.find_by_id(user_id)
+        return user.get("symbol_mappings") if user else None
 
     def _get_market_data_mappings(self, user_id: str) -> dict:
         """Return the effective market-data mappings for a user."""
