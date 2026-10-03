@@ -627,7 +627,7 @@ class BacktestWorker:
         from app.backtests.service import (
             _as_utc_ms,
             _build_backtest_account_document,
-            _one_calendar_month_before,
+            _warmup_start_date,
         )
         from app.backtests.repository import _object_id
 
@@ -639,7 +639,9 @@ class BacktestWorker:
         timezone_info = ZoneInfo(run["display_timezone"])
         start_utc_ms = _as_utc_ms(start_date, timezone_info)
         end_utc_ms = _as_utc_ms(end_date + timedelta(days=1), timezone_info)
-        context_start_date = _one_calendar_month_before(start_date)
+        context_start_date = _warmup_start_date(
+            start_date, int(run.get("warmup_days", 0))
+        )
         context_start_utc_ms = _as_utc_ms(context_start_date, timezone_info)
         context_start_utc_date = datetime.fromtimestamp(
             context_start_utc_ms / 1000, tz=timezone.utc

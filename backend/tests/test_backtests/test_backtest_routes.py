@@ -36,7 +36,9 @@ def _register(client, username):
     return {"Authorization": f"Bearer {login.json['token']}"}
 
 
-def _create_run(client, headers, *, start="2026-01-05", end="2026-01-05"):
+def _create_run(
+    client, headers, *, start="2026-01-05", end="2026-01-05", warmup_days=0
+):
     response = client.post(
         "/api/backtest/runs",
         json={
@@ -44,6 +46,7 @@ def _create_run(client, headers, *, start="2026-01-05", end="2026-01-05"):
             "start_date": start,
             "end_date": end,
             "display_timezone": "UTC",
+            "warmup_days": warmup_days,
         },
         headers=headers,
     )
@@ -210,7 +213,11 @@ def test_worker_reports_partial_and_empty_dates_and_keeps_ready_snapshot_immutab
     _patch_catalog(monkeypatch)
     headers = _register(client, "backtest-gaps")
     run = _create_run(
-        client, headers, start="2026-01-05", end="2026-01-06"
+        client,
+        headers,
+        start="2026-01-05",
+        end="2026-01-06",
+        warmup_days=31,
     )
     run_object_id = ObjectId(run["id"])
     clock = _Clock()
@@ -289,7 +296,7 @@ def test_warmup_only_candles_do_not_make_a_run_ready(
 
     _patch_catalog(monkeypatch)
     headers = _register(client, "backtest-warmup-only")
-    run = _create_run(client, headers)
+    run = _create_run(client, headers, warmup_days=31)
     run_id = ObjectId(run["id"])
     warmup_date = date(2025, 12, 5)
     provider = _FakeProvider(
@@ -377,7 +384,11 @@ def test_expired_lease_resumes_after_completed_utc_date_checkpoint(
     _patch_catalog(monkeypatch)
     headers = _register(client, "backtest-recovery")
     run = _create_run(
-        client, headers, start="2026-01-05", end="2026-01-07"
+        client,
+        headers,
+        start="2026-01-05",
+        end="2026-01-07",
+        warmup_days=31,
     )
     run_object_id = ObjectId(run["id"])
     first_day, interrupted_day, last_day = (

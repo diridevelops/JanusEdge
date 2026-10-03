@@ -115,6 +115,7 @@ def _create_run(monkeypatch, app):
             start_date="2026-01-05",
             end_date="2026-01-05",
             display_timezone="UTC",
+            warmup_days=31,
         )
 
 

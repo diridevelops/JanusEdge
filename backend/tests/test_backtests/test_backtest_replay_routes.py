@@ -92,6 +92,7 @@ def _create_ready_run(
         "start_date": "2026-01-05",
         "end_date": "2026-01-07",
         "display_timezone": "UTC",
+        "warmup_days": 31,
     }
     if execution_costs is not None:
         request["execution_costs"] = execution_costs

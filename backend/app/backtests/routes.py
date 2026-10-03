@@ -117,6 +117,7 @@ def create_run():
         display_timezone=payload.get("display_timezone"),
         period_selection=payload.get("period_selection"),
         period_months=payload.get("period_months"),
+        warmup_days=payload.get("warmup_days", 0),
         blind_mode=payload.get("blind_mode"),
         initial_balance_usd=payload.get("initial_balance_usd", 10_000),
         risk_percent=payload.get("risk_percent", 1.0),

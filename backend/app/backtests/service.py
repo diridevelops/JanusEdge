@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import calendar
 import json
 import math
 from datetime import date, datetime, time, timedelta, timezone
@@ -93,13 +92,14 @@ def _one_year_anniversary(start_date: date) -> date:
         return date(start_date.year + 1, 3, 1)
 
 
-def _one_calendar_month_before(start_date: date) -> date:
-    """Subtract one calendar month, clamping to the prior month's last day."""
-    month_index = start_date.year * 12 + start_date.month - 2
-    year, month_zero = divmod(month_index, 12)
-    month = month_zero + 1
-    last_day = calendar.monthrange(year, month)[1]
-    return date(year, month, min(start_date.day, last_day))
+def _warmup_start_date(start_date: date, warmup_days: int) -> date:
+    """Return the local calendar date at the requested warm-up boundary."""
+    try:
+        return start_date - timedelta(days=warmup_days)
+    except OverflowError as exc:
+        raise ValidationError(
+            "warmup_days extends before the supported date range."
+        ) from exc
 
 
 def _add_calendar_months(start_date: date, months: int) -> date:
@@ -391,6 +391,7 @@ class BacktestService:
         display_timezone: str,
         period_selection: str | None = None,
         period_months: int | None = None,
+        warmup_days: int = 0,
         blind_mode: bool | None = None,
         initial_balance_usd: float = DEFAULT_INITIAL_BALANCE_USD,
         risk_percent: float = DEFAULT_RISK_PERCENT,
@@ -408,6 +409,7 @@ class BacktestService:
         if risk_percent > 100:
             raise ValidationError("risk_percent cannot exceed 100.")
         execution_costs = _validated_execution_costs(execution_costs)
+        warmup_days = _require_nonnegative_int(warmup_days, "warmup_days")
 
         if not isinstance(instrument, str) or not instrument:
             raise ValidationError("Instrument is required.")
@@ -452,6 +454,7 @@ class BacktestService:
                 display_timezone=display_timezone,
                 timezone_info=timezone_info,
                 period_months=period_months,
+                warmup_days=warmup_days,
                 blind_mode=blind_mode,
                 initial_balance_usd=initial_balance_usd,
                 risk_percent=risk_percent,
@@ -478,7 +481,7 @@ class BacktestService:
             )
 
         start_utc_ms = _as_utc_ms(start, timezone_info)
-        context_start_date = _one_calendar_month_before(start)
+        context_start_date = _warmup_start_date(start, warmup_days)
         context_start_utc_ms = _as_utc_ms(context_start_date, timezone_info)
         end_utc_ms = _as_utc_ms(end + timedelta(days=1), timezone_info)
         utc_context_start_date = datetime.fromtimestamp(
@@ -515,6 +518,7 @@ class BacktestService:
             start_utc_ms=start_utc_ms,
             end_utc_ms=end_utc_ms,
             context_start_utc_ms=context_start_utc_ms,
+            warmup_days=warmup_days,
             blind_mode=blind_mode,
             initial_balance_usd=initial_balance_usd,
             risk_percent=risk_percent,
@@ -570,6 +574,7 @@ class BacktestService:
             "created_at": run["created_at"],
             "start_utc_ms": start_utc_ms,
             "context_start_utc_ms": context_start_utc_ms,
+            "warmup_days": warmup_days,
             "end_utc_ms": end_utc_ms,
             "blind_mode": blind_mode,
             "initial_balance_usd": initial_balance_usd,
@@ -587,6 +592,7 @@ class BacktestService:
         display_timezone: str,
         timezone_info: ZoneInfo,
         period_months: int,
+        warmup_days: int = 0,
         blind_mode: bool = False,
         initial_balance_usd: float = DEFAULT_INITIAL_BALANCE_USD,
         risk_percent: float = DEFAULT_RISK_PERCENT,
@@ -599,6 +605,7 @@ class BacktestService:
             now = now.replace(tzinfo=timezone.utc)
         as_of_date = now.astimezone(timezone_info).date() - timedelta(days=1)
         minimum_start_date = date(2005, 1, 1)
+        _warmup_start_date(minimum_start_date, warmup_days)
         maximum_start_date = _latest_random_start(as_of_date, period_months)
         if maximum_start_date < minimum_start_date:
             raise ValidationError(
@@ -615,6 +622,7 @@ class BacktestService:
             display_timezone=display_timezone,
             period_months=period_months,
             selection_as_of_date=as_of_date,
+            warmup_days=warmup_days,
             blind_mode=blind_mode,
             initial_balance_usd=initial_balance_usd,
             risk_percent=risk_percent,
@@ -654,6 +662,7 @@ class BacktestService:
             "display_timezone": display_timezone,
             "period_selection": "random",
             "period_months": period_months,
+            "warmup_days": warmup_days,
             "blind_mode": blind_mode,
             "initial_balance_usd": initial_balance_usd,
             "current_balance_usd": initial_balance_usd,

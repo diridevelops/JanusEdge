@@ -16,6 +16,7 @@ export interface BacktestRunFormValues {
   endDate: string;
   periodSelection: 'manual' | 'random';
   periodMonths: BacktestRandomPeriodMonths;
+  warmupDays?: number;
   blindMode: boolean;
   initialBalanceUsd: number;
   riskPercent: number;
@@ -62,6 +63,9 @@ export function BacktestRunForm({
   );
   const [periodMonths, setPeriodMonths] = useState<BacktestRandomPeriodMonths>(
     initialValues?.periodMonths ?? 1
+  );
+  const [warmupDays, setWarmupDays] = useState(
+    String(initialValues?.warmupDays ?? 0)
   );
   const [blindMode, setBlindMode] = useState(initialValues?.blindMode ?? false);
   const [initialBalanceUsd, setInitialBalanceUsd] = useState(
@@ -148,6 +152,11 @@ export function BacktestRunForm({
       setFormError('Risk must be greater than 0% and no more than 100%.');
       return;
     }
+    const parsedWarmupDays = warmupDays.trim() ? Number(warmupDays) : Number.NaN;
+    if (!Number.isSafeInteger(parsedWarmupDays) || parsedWarmupDays < 0) {
+      setFormError('Warm-up days must be a nonnegative whole number.');
+      return;
+    }
     const parsedExecutionCosts = [
       totalSpreadPips,
       slippagePips,
@@ -176,6 +185,7 @@ export function BacktestRunForm({
           endDate,
           periodSelection,
           periodMonths,
+          warmupDays: parsedWarmupDays,
           blindMode,
           initialBalanceUsd: parsedInitialBalance,
           riskPercent: parsedRiskPercent,
@@ -439,6 +449,30 @@ export function BacktestRunForm({
             className="input-field"
           />
         </div>
+      </div>
+
+      <div className="max-w-xs">
+        <label htmlFor="backtest-warmup-days" className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
+          Warm-up days
+        </label>
+        <input
+          id="backtest-warmup-days"
+          type="number"
+          inputMode="numeric"
+          min="0"
+          step="1"
+          required
+          value={warmupDays}
+          onChange={(event) => {
+            setWarmupDays(event.target.value);
+            setFormError(null);
+          }}
+          disabled={isSubmitting}
+          className="input-field"
+        />
+        <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+          Calendar days before the selected period&apos;s start date, shown for context. Replay starts on start date.
+        </p>
       </div>
 
       {isRandomSelection ? (

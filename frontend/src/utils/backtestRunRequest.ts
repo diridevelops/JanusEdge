@@ -9,6 +9,7 @@ interface BacktestRunRequestValues {
   endDate: string;
   periodSelection: 'manual' | 'random';
   periodMonths: BacktestRandomPeriodMonths;
+  warmupDays?: number;
   blindMode?: boolean;
   initialBalanceUsd: number;
   riskPercent: number;
@@ -28,6 +29,7 @@ export function buildCreateBacktestRunRequest(
       display_timezone: displayTimezone,
       period_selection: 'random',
       period_months: values.periodMonths,
+      ...(values.warmupDays ? { warmup_days: values.warmupDays } : {}),
       initial_balance_usd: values.initialBalanceUsd,
       risk_percent: values.riskPercent,
       execution_costs: {
@@ -43,6 +45,7 @@ export function buildCreateBacktestRunRequest(
     start_date: values.startDate,
     end_date: values.endDate,
     display_timezone: displayTimezone,
+    ...(values.warmupDays ? { warmup_days: values.warmupDays } : {}),
     initial_balance_usd: values.initialBalanceUsd,
     risk_percent: values.riskPercent,
     execution_costs: {

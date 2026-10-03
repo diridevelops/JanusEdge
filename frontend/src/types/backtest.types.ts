@@ -25,6 +25,7 @@ export interface BacktestExecutionCosts {
 interface CreateBacktestRunOptions {
   initial_balance_usd?: number;
   risk_percent?: number;
+  warmup_days?: number;
   execution_costs?: BacktestExecutionCosts;
 }
 
@@ -81,6 +82,7 @@ export interface BacktestRunSummary {
   display_timezone: string;
   period_selection?: BacktestPeriodSelection;
   period_months?: BacktestRandomPeriodMonths | null;
+  warmup_days?: number;
   blind_mode?: boolean;
   normalized_reference_price?: number | null;
   status: BacktestRunStatus;

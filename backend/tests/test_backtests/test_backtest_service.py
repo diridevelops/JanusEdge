@@ -30,6 +30,7 @@ def _new_run(
     start_date="2026-03-29",
     end_date="2026-03-29",
     display_timezone="Europe/Rome",
+    warmup_days=0,
     initial_balance_usd=10_000,
     risk_percent=1.0,
     execution_costs=None,
@@ -40,6 +41,7 @@ def _new_run(
         start_date=start_date,
         end_date=end_date,
         display_timezone=display_timezone,
+        warmup_days=warmup_days,
         initial_balance_usd=initial_balance_usd,
         risk_percent=risk_percent,
         execution_costs=execution_costs,
@@ -217,23 +219,24 @@ def test_create_run_rejects_invalid_balance_or_risk_without_side_effects(
 
 
 @pytest.mark.parametrize(
-    ("start", "expected_context_date"),
+    ("start", "warmup_days", "expected_context_date"),
     [
-        (date(2026, 3, 31), date(2026, 2, 28)),
-        (date(2024, 3, 31), date(2024, 2, 29)),
-        (date(2026, 3, 29), date(2026, 2, 28)),
+        (date(2026, 3, 31), 31, date(2026, 2, 28)),
+        (date(2024, 3, 31), 31, date(2024, 2, 29)),
+        (date(2026, 3, 29), 29, date(2026, 2, 28)),
     ],
 )
-def test_create_run_stores_preceding_calendar_month_context_boundary(
-    app, backtest_service, start, expected_context_date
+def test_create_run_stores_requested_warmup_day_boundary(
+    app, backtest_service, start, warmup_days, expected_context_date
 ):
-    """Warm-up subtracts a clamped local calendar month before UTC conversion."""
+    """Warm-up subtracts the requested calendar days before UTC conversion."""
     with app.app_context():
         result = _new_run(
             backtest_service,
             start_date=start.isoformat(),
             end_date=start.isoformat(),
             display_timezone="Europe/Rome",
+            warmup_days=warmup_days,
         )
         run = mongo.db.backtest_runs.find_one({"_id": result["id"]})
         job = mongo.db.backtest_preparation_jobs.find_one(
