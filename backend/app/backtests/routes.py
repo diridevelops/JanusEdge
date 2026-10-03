@@ -52,6 +52,7 @@ def _simulation_run_and_precision(user_id: str, run_id: str) -> tuple[dict, int 
         raise NotFoundError("Backtest run not found.")
     if run.get("status") == "deleting":
         raise ConflictError("Backtest run is being deleted.")
+    backtest_service._require_cache_available(run)
     metadata = run.get("instrument_metadata") or {}
     precision = metadata.get("price_precision")
     return run, precision if isinstance(precision, int) and not isinstance(precision, bool) else None
@@ -140,6 +141,26 @@ def get_run(run_id: str):
     return jsonify(
         {"run": backtest_service.get_run(get_jwt_identity(), run_id)}
     ), 200
+
+
+@backtest_bp.route("/runs/<run_id>/cache-status", methods=["GET"])
+@jwt_required()
+def get_cache_status(run_id: str):
+    return jsonify(
+        serialize_backtest_value(
+            backtest_service.get_cache_status(get_jwt_identity(), run_id)
+        )
+    ), 200
+
+
+@backtest_bp.route("/runs/<run_id>/cache-recovery", methods=["POST"])
+@jwt_required()
+def start_cache_recovery(run_id: str):
+    return jsonify(
+        serialize_backtest_value(
+            backtest_service.start_cache_recovery(get_jwt_identity(), run_id)
+        )
+    ), 202
 
 
 @backtest_bp.route("/runs/<run_id>", methods=["DELETE"])

@@ -325,6 +325,12 @@ class SimulationService:
             raise ConflictError("Completed runs must be reset before mutation.")
         if status not in {"ready", "complete"}:
             raise ConflictError("Backtest run is not ready for simulation.")
+        if run.get("cache_availability") == "restoring":
+            raise ConflictError("Candle data recovery is still in progress.")
+        if run.get("cache_availability") == "missing":
+            raise ConflictError(
+                "Candle data is missing. Restore it before replaying this run."
+            )
 
     def _require_effect_handler(
         self, handler: SimulationEffectHandler | None, operation: dict

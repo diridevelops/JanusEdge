@@ -121,6 +121,10 @@ class BacktestCandleCache:
     def collection(self):
         return mongo.db.backtest_candle_cache
 
+    @property
+    def cache_version(self) -> str:
+        return CANDLE_CACHE_VERSION
+
     def get_or_fetch(
         self,
         *,
@@ -152,7 +156,12 @@ class BacktestCandleCache:
             entry = self.collection.find_one(identity)
             if entry is not None and entry.get("state") == "ready":
                 try:
-                    return self.snapshot_store.read_cached_candle_date(entry)
+                    # The process-local frame LRU can outlive a deleted or
+                    # recreated MinIO volume. Check the content-addressed
+                    # object still exists before trusting the cached frame.
+                    return self.snapshot_store.read_cached_candle_date(
+                        entry, check_object_exists=True
+                    )
                 except (CachedCandleObjectMissing, CachedCandleObjectInvalid) as exc:
                     self.collection.update_one(
                         {
@@ -245,6 +254,69 @@ class BacktestCandleCache:
                 fetcher=fetcher,
             )
 
+    def get_reference(
+        self, *, user_id, instrument: str, utc_date: date
+    ) -> dict:
+        """Return cache metadata for a ready day without reading candle bytes."""
+        user_oid = user_id if isinstance(user_id, ObjectId) else ObjectId(str(user_id))
+        normalized_instrument = str(instrument).strip().upper()
+        cache_key = (
+            f"{CANDLE_CACHE_VERSION}:{normalized_instrument}:"
+            f"{utc_date.isoformat()}"
+        )
+        entry = self.collection.find_one(
+            {"user_id": user_oid, "cache_key": cache_key, "state": "ready"}
+        )
+        if entry is None:
+            raise CachedCandleObjectMissing(cache_key)
+        return {
+            "cache_key": entry["cache_key"],
+            "cache_version": entry.get("cache_version", CANDLE_CACHE_VERSION),
+            "instrument": entry.get("instrument", normalized_instrument),
+            "utc_date": str(entry.get("utc_date", utc_date.isoformat())),
+            "object_key": entry.get("object_key"),
+            "sha256": entry.get("sha256"),
+            "object_size": entry.get("object_size"),
+            "outcome": entry.get("outcome"),
+            "candle_count": int(entry.get("candle_count", -1)),
+        }
+
+    def references_for_run(self, snapshot: dict) -> list[dict]:
+        """Collect unique source and conversion cache refs from run metadata."""
+        refs: dict[tuple[str, str], dict] = {}
+        for day_index in snapshot.get("_day_candle_indexes", []):
+            ref = day_index.get("cache_ref")
+            if isinstance(ref, dict):
+                item = dict(ref)
+                item["kind"] = "replay"
+                refs[(str(ref.get("instrument", "")).upper(), str(ref.get("utc_date", "")))] = item
+        for series in snapshot.get("fx_conversion_series", []):
+            for ref in series.get("_cache_date_refs", []):
+                if isinstance(ref, dict):
+                    key = (str(ref.get("instrument", "")).upper(), str(ref.get("utc_date", "")))
+                    item = dict(ref)
+                    item["kind"] = "conversion"
+                    # If one instrument/date serves both roles, its replay
+                    # normalization is also suitable for the conversion path.
+                    refs.setdefault(key, item)
+        return list(refs.values())
+
+    def missing_references(self, snapshot: dict) -> list[dict]:
+        """Return cache refs whose object is absent or fails integrity checks."""
+        # Replay reads are memoized per worker process. A status sweep must
+        # bypass that process-local cache so deleted or damaged MinIO objects
+        # are detected when a run is reopened.
+        self.snapshot_store.clear_cached_candle_reads()
+        missing = []
+        for ref in self.references_for_run(snapshot):
+            if not self.snapshot_store.cached_candle_ref_exists(ref):
+                missing.append({
+                    "instrument": ref.get("instrument"),
+                    "utc_date": ref.get("utc_date"),
+                    "kind": ref.get("kind", "replay"),
+                })
+        return missing
+
     def _fetch_and_publish(self, entry, *, owner, utc_date, fetcher) -> dict:
         identity = {
             "user_id": entry["user_id"],
@@ -269,7 +341,7 @@ class BacktestCandleCache:
             if result.get("outcome") != outcome:
                 raise ValueError("Candle cache outcome disagrees with its data.")
             lease.check()
-            object_key, checksum = self.snapshot_store.write_cached_candle_date(
+            object_key, checksum, object_size = self.snapshot_store.write_cached_candle_date(
                 entry["user_id"],
                 entry["instrument"],
                 utc_date,
@@ -289,6 +361,7 @@ class BacktestCandleCache:
                         "state": "ready",
                         "object_key": object_key,
                         "sha256": checksum,
+                        "object_size": object_size,
                         "outcome": outcome,
                         "candle_count": len(result["candles"]),
                         "completed_at": now,

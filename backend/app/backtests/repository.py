@@ -148,6 +148,13 @@ class BacktestRepository(BaseRepository):
                             {"deletion_lease_expires_at": {"$exists": False}},
                         ]
                     },
+                    {
+                        "$or": [
+                            {"cache_recovery.lease_expires_at": {"$lte": now}},
+                            {"cache_recovery.lease_expires_at": None},
+                            {"cache_recovery.lease_expires_at": {"$exists": False}},
+                        ]
+                    },
                 ],
             },
             sort=[("deletion_requested_at", 1), ("_id", 1)],
@@ -179,6 +186,13 @@ class BacktestRepository(BaseRepository):
                             {"deletion_lease_expires_at": {"$lte": now}},
                             {"deletion_lease_expires_at": None},
                             {"deletion_lease_expires_at": {"$exists": False}},
+                        ]
+                    },
+                    {
+                        "$or": [
+                            {"cache_recovery.lease_expires_at": {"$lte": now}},
+                            {"cache_recovery.lease_expires_at": None},
+                            {"cache_recovery.lease_expires_at": {"$exists": False}},
                         ]
                     },
                 ],
@@ -372,6 +386,8 @@ class BacktestRepository(BaseRepository):
             {
                 "$set": {
                     "snapshot": snapshot,
+                    "cache_availability": "available",
+                    "cache_recovery": None,
                     "coverage": coverage,
                     "warmup_coverage": warmup_coverage,
                     "normalized_reference_price": normalized_reference_price,
@@ -789,6 +805,7 @@ class BacktestRepository(BaseRepository):
                 {"simulation_control.pending_operation_id": None},
                 {"simulation_control.pending_operation_id": {"$exists": False}},
             ],
+            "cache_availability": {"$ne": "restoring"},
         }
         now = now or utc_now()
         result = self.collection.update_one(
@@ -947,6 +964,181 @@ class BacktestRepository(BaseRepository):
                     "updated_at": now or utc_now(),
                 }
             },
+        )
+        return result.matched_count == 1
+
+    def queue_cache_recovery(
+        self, user_id: str, run_id, *, missing_references: list[dict], now
+    ) -> dict | None:
+        """Queue an explicit, owner-scoped cache restore for a ready run."""
+        run_oid = _object_id(run_id)
+        user_oid = _object_id(user_id)
+        if run_oid is None or user_oid is None:
+            return None
+        return self.collection.find_one_and_update(
+            {
+                "_id": run_oid,
+                "user_id": user_oid,
+                "status": {"$in": ["ready", "complete"]},
+                "simulation_control.pending_operation_id": {"$in": [None]},
+                "cache_availability": {"$ne": "restoring"},
+            },
+            {
+                "$set": {
+                    "cache_availability": "restoring",
+                    "cache_recovery": {
+                        "state": "queued",
+                        "missing_references": missing_references,
+                        "completed": 0,
+                        "total": len(missing_references),
+                        "error": None,
+                        "requested_at": now,
+                        "updated_at": now,
+                    },
+                    "updated_at": now,
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+
+    def claim_cache_recovery(self, worker_id: str, *, now, lease_seconds: int) -> dict | None:
+        """Claim one queued or abandoned shared-cache restoration job."""
+        return self.collection.find_one_and_update(
+            {
+                "status": {"$in": ["ready", "complete"]},
+                "cache_availability": "restoring",
+                "simulation_control.pending_operation_id": {"$in": [None]},
+                "cache_recovery.state": {"$in": ["queued", "running"]},
+                "$or": [
+                    {"cache_recovery.state": "queued"},
+                    {"cache_recovery.lease_expires_at": {"$lte": now}},
+                    {"cache_recovery.lease_expires_at": None},
+                    {"cache_recovery.lease_expires_at": {"$exists": False}},
+                ],
+            },
+            {
+                "$set": {
+                    "cache_recovery.state": "running",
+                    "cache_recovery.lease_owner": worker_id,
+                    "cache_recovery.lease_expires_at": now + timedelta(seconds=lease_seconds),
+                    "cache_recovery.updated_at": now,
+                    "updated_at": now,
+                },
+                "$inc": {"cache_recovery.attempt": 1},
+            },
+            sort=[("cache_recovery.requested_at", 1), ("_id", 1)],
+            return_document=ReturnDocument.AFTER,
+        )
+
+    def renew_cache_recovery(self, run_id, worker_id: str, *, now, lease_seconds: int) -> bool:
+        run_oid = _object_id(run_id)
+        if run_oid is None:
+            return False
+        result = self.collection.update_one(
+            {
+                "_id": run_oid,
+                "status": {"$in": ["ready", "complete"]},
+                "cache_availability": "restoring",
+                "cache_recovery.state": "running",
+                "cache_recovery.lease_owner": worker_id,
+                "cache_recovery.lease_expires_at": {"$gt": now},
+            },
+            {"$set": {
+                "cache_recovery.lease_expires_at": now + timedelta(seconds=lease_seconds),
+                "cache_recovery.updated_at": now,
+                "updated_at": now,
+            }},
+        )
+        return result.matched_count == 1
+
+    def update_cache_recovery_progress(
+        self, run_id, worker_id: str, *, completed: int, now
+    ) -> bool:
+        run_oid = _object_id(run_id)
+        if run_oid is None:
+            return False
+        result = self.collection.update_one(
+            {
+                "_id": run_oid,
+                "status": {"$in": ["ready", "complete"]},
+                "cache_availability": "restoring",
+                "cache_recovery.state": "running",
+                "cache_recovery.lease_owner": worker_id,
+            },
+            {"$set": {
+                "cache_recovery.completed": completed,
+                "cache_recovery.updated_at": now,
+                "updated_at": now,
+            }},
+        )
+        return result.matched_count == 1
+
+    def fail_cache_recovery(self, run_id, worker_id: str, *, message: str, now) -> bool:
+        run_oid = _object_id(run_id)
+        if run_oid is None:
+            return False
+        result = self.collection.update_one(
+            {
+                "_id": run_oid,
+                "cache_availability": "restoring",
+                "cache_recovery.lease_owner": worker_id,
+            },
+            {"$set": {
+                "cache_availability": "missing",
+                "cache_recovery.state": "failed",
+                "cache_recovery.error": message,
+                "cache_recovery.updated_at": now,
+                "updated_at": now,
+            }, "$unset": {
+                "cache_recovery.lease_owner": "",
+                "cache_recovery.lease_expires_at": "",
+            }},
+        )
+        return result.matched_count == 1
+
+    def complete_cache_recovery(
+        self,
+        run_id,
+        worker_id: str,
+        *,
+        snapshot: dict,
+        coverage: dict,
+        warmup_coverage: dict,
+        replay_cursor: dict,
+        eligibility_anchors: dict,
+        completed: int,
+        now,
+    ) -> bool:
+        run_oid = _object_id(run_id)
+        if run_oid is None:
+            return False
+        result = self.collection.update_one(
+            {
+                "_id": run_oid,
+                "status": {"$in": ["ready", "complete"]},
+                "cache_availability": "restoring",
+                "cache_recovery.state": "running",
+                "cache_recovery.lease_owner": worker_id,
+                "cache_recovery.lease_expires_at": {"$gt": now},
+                "simulation_control.pending_operation_id": {"$in": [None]},
+            },
+            {"$set": {
+                "snapshot": snapshot,
+                "coverage": coverage,
+                "warmup_coverage": warmup_coverage,
+                "replay_cursor": replay_cursor,
+                "_simulation_eligibility_anchors": eligibility_anchors,
+                "cache_availability": "available",
+                "cache_refreshed_at": now,
+                "cache_recovery.state": "complete",
+                "cache_recovery.error": None,
+                "cache_recovery.completed": completed,
+                "cache_recovery.updated_at": now,
+                "updated_at": now,
+            }, "$unset": {
+                "cache_recovery.lease_owner": "",
+                "cache_recovery.lease_expires_at": "",
+            }},
         )
         return result.matched_count == 1
 
@@ -1219,7 +1411,7 @@ class PreparationJobRepository:
         now,
         utc_date,
         outcome: str,
-        object_key: str | None,
+        cache_ref: dict,
         next_utc_date,
     ) -> bool:
         """Commit a date result once, only for its live lease holder."""
@@ -1237,7 +1429,7 @@ class PreparationJobRepository:
                     "completed_utc_dates": {
                         "utc_date": utc_date,
                         "outcome": outcome,
-                        "object_key": object_key,
+                        "cache_ref": cache_ref,
                         "completed_at": now,
                     }
                 },

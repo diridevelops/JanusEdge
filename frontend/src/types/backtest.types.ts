@@ -126,8 +126,8 @@ export interface BacktestRunSummary {
 }
 
 export interface BacktestSnapshotMetadata {
-  object_key: string;
-  sha256: string;
+  storage_mode: 'shared_cache';
+  cache_version: string;
   source_side: 'COMB';
   price_mode: 'combined_midpoint';
   volume_semantics: 'two_sided_quote_liquidity';
@@ -196,8 +196,23 @@ export interface BacktestRunDetail extends BacktestRunSummary {
   coverage: BacktestRunCoverage | null;
   warmup_coverage: BacktestRunCoverage | null;
   snapshot: BacktestSnapshotMetadata | null;
+  cache_availability?: 'available' | 'missing' | 'restoring';
+  cache_refreshed_at?: string | null;
   replay_cursor: BacktestReplayPosition | null;
   tabs: BacktestChartTab[];
+}
+
+export interface BacktestCacheStatus {
+  state: 'available' | 'missing' | 'queued' | 'running' | 'failed';
+  missing_references: Array<{
+    instrument: string;
+    utc_date: string;
+    kind: 'replay' | 'conversion';
+  }>;
+  completed: number;
+  total: number;
+  error: string | null;
+  refreshed_at: string | null;
 }
 
 export interface BacktestPreparationNotice {

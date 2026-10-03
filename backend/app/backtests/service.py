@@ -23,6 +23,7 @@ from app.backtests.repository import (
     PreparationJobRepository,
     _object_id,
 )
+from app.backtests.candle_cache import BacktestCandleCache
 from app.backtests.fx_conversion import build_conversion_spec
 from app.backtests.preparation_jobs import PreparationJobService
 from app.backtests.snapshot_store import SnapshotStore
@@ -377,11 +378,15 @@ class BacktestService:
         repository=None,
         job_repository=None,
         snapshot_store=None,
+        candle_cache=None,
         clock=None,
     ):
         self.repository = repository or BacktestRepository()
         self.job_repository = job_repository or PreparationJobRepository()
         self.snapshot_store = snapshot_store or SnapshotStore()
+        self.candle_cache = candle_cache or BacktestCandleCache(
+            snapshot_store=self.snapshot_store, clock=clock or utc_now
+        )
         self.preparation_jobs = PreparationJobService(self.job_repository)
         self.clock = clock or utc_now
 
@@ -778,6 +783,105 @@ class BacktestService:
             ]
         return result
 
+    def get_cache_status(self, user_id: str, run_id) -> dict:
+        """Verify all shared candle refs and expose recovery progress."""
+        run = self.repository.find_owned_run(user_id, run_id)
+        if run is None:
+            raise NotFoundError("Backtest run not found.")
+        if run.get("status") not in {"ready", "complete"} or not run.get("snapshot"):
+            raise ConflictError("Backtest run candles are not available.")
+        recovery = run.get("cache_recovery") or {}
+        if run.get("cache_availability") == "restoring" and recovery.get("state") in {
+            "queued", "running"
+        }:
+            missing = recovery.get("missing_references") or []
+            state = recovery.get("state")
+        else:
+            missing = self.candle_cache.missing_references(run["snapshot"])
+            if missing:
+                state = "failed" if recovery.get("state") == "failed" else "missing"
+                if run.get("cache_availability") != "missing":
+                    self.repository.update_owned_run(
+                        user_id, run["_id"], {"cache_availability": "missing"}
+                    )
+            else:
+                state = "available"
+                if run.get("cache_availability") != "available":
+                    self.repository.update_owned_run(
+                        user_id, run["_id"], {"cache_availability": "available"}
+                    )
+
+        return {
+            "state": state,
+            "missing_references": [
+                {
+                    "instrument": item.get("instrument"),
+                    "utc_date": item.get("utc_date"),
+                    "kind": item.get("kind", "replay"),
+                }
+                for item in missing
+            ],
+            "completed": int(recovery.get("completed", 0)),
+            "total": int(recovery.get("total", len(missing))),
+            "error": recovery.get("error"),
+            "refreshed_at": run.get("cache_refreshed_at"),
+        }
+
+    def start_cache_recovery(self, user_id: str, run_id) -> dict:
+        """Queue downloads only after the owner explicitly requests recovery."""
+        run = self.repository.find_owned_run(user_id, run_id)
+        if run is None:
+            raise NotFoundError("Backtest run not found.")
+        if run.get("status") not in {"ready", "complete"} or not run.get("snapshot"):
+            raise ConflictError("Backtest run candles are not available.")
+        recovery = run.get("cache_recovery") or {}
+        if run.get("cache_availability") == "restoring" and recovery.get("state") in {
+            "queued", "running"
+        }:
+            return self.get_cache_status(user_id, run_id)
+
+        missing = self.candle_cache.missing_references(run["snapshot"])
+        if not missing:
+            return self.get_cache_status(user_id, run_id)
+        now = self.clock()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        queued = self.repository.queue_cache_recovery(
+            user_id,
+            run["_id"],
+            missing_references=[
+                {
+                    "instrument": str(item["instrument"]).upper(),
+                    "utc_date": str(item["utc_date"]),
+                    "kind": item.get("kind", "replay"),
+                }
+                for item in missing
+            ],
+            now=now.astimezone(timezone.utc),
+        )
+        if queued is None:
+            current = self.repository.find_owned_run(user_id, run_id)
+            if current is None:
+                raise NotFoundError("Backtest run not found.")
+            current_recovery = current.get("cache_recovery") or {}
+            if current.get("cache_availability") != "restoring":
+                control = current.get("simulation_control") or {}
+                if control.get("pending_operation_id") is not None:
+                    raise ConflictError(
+                        "Wait for the pending simulation action before restoring candle data."
+                    )
+                raise ConflictError("Candle data recovery could not be started.")
+            return self.get_cache_status(user_id, run_id)
+        return self.get_cache_status(user_id, run_id)
+
+    @staticmethod
+    def _require_cache_available(run: dict) -> None:
+        availability = run.get("cache_availability")
+        if availability == "restoring":
+            raise ConflictError("Candle data recovery is still in progress.")
+        if availability == "missing":
+            raise ConflictError("Candle data is missing. Restore it before replaying this run.")
+
     def _backfill_blind_reference(self, run: dict, user_id: str) -> None:
         """Recover the immutable chart reference for legacy ready blind runs."""
         if (
@@ -899,6 +1003,7 @@ class BacktestService:
             raise NotFoundError("Backtest run not found.")
         if run.get("status") not in {"ready", "complete"} or not run.get("snapshot"):
             raise ConflictError("Backtest run candles are not available.")
+        self._require_cache_available(run)
 
         interval_minutes = {"1m": 1, "5m": 5, "15m": 15, "1h": 60}.get(interval)
         if interval_minutes is None:
@@ -1055,6 +1160,7 @@ class BacktestService:
             raise NotFoundError("Backtest run not found.")
         if run.get("status") != "ready" or not run.get("snapshot"):
             raise ConflictError("Backtest run is not ready for replay.")
+        self._require_cache_available(run)
         return run
 
     def get_chart_workspace(self, user_id: str, run_id) -> dict:

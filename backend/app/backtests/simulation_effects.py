@@ -155,6 +155,12 @@ class BacktestSimulationEffects:
             raise NotFoundError("Backtest run not found.")
         if run.get("status") not in {"ready", "complete"} or not run.get("snapshot"):
             raise ConflictError("Backtest run is not ready for simulation.")
+        if run.get("cache_availability") == "restoring":
+            raise ConflictError("Candle data recovery is still in progress.")
+        if run.get("cache_availability") == "missing":
+            raise ConflictError(
+                "Candle data is missing. Restore it before replaying this run."
+            )
         run = self.backtest_repository.ensure_simulation_control(user_id, run_id)
         control = (run or {}).get("simulation_control") or {}
         sequence = int(control.get("committed_sequence", 0))
@@ -189,6 +195,7 @@ class BacktestSimulationEffects:
             open_only=True,
             limit=500,
         )
+        self._apply_eligibility_anchors(run, orders, positions)
         fills = self.simulation_repository.list_visible_fills(
             user_id,
             run_id,
@@ -476,6 +483,8 @@ class BacktestSimulationEffects:
             "cursor_index": int(cursor["source_candle_index"]),
             "cursor_time_ms": int(cursor["time_ms"]),
             "candle": candle,
+            "snapshot": run.get("snapshot") or {},
+            "eligibility_anchors": run.get("_simulation_eligibility_anchors") or {},
             "sequence": int(operation["sequence"]),
             "generation": int(operation["reset_generation"]),
         }
@@ -488,6 +497,11 @@ class BacktestSimulationEffects:
             committed_sequence=context["sequence"] - 1,
             limit=500,
         )
+        self._apply_eligibility_anchors(
+            {"snapshot": context["snapshot"], "_simulation_eligibility_anchors": context["eligibility_anchors"]},
+            docs,
+            [],
+        )
         return {str(doc["order_id"]): doc for doc in docs}
 
     def _visible_positions(self, context: dict) -> dict[str, dict]:
@@ -499,7 +513,46 @@ class BacktestSimulationEffects:
             open_only=True,
             limit=500,
         )
+        self._apply_eligibility_anchors(
+            {"snapshot": context["snapshot"], "_simulation_eligibility_anchors": context["eligibility_anchors"]},
+            [],
+            docs,
+        )
         return {str(doc["position_id"]): doc for doc in docs}
+
+    def _apply_eligibility_anchors(
+        self, run: dict, orders: list[dict], positions: list[dict]
+    ) -> None:
+        """Resolve saved eligibility event times against current candle indexes."""
+        snapshot = run.get("snapshot") or {}
+        anchors = run.get("_simulation_eligibility_anchors") or {}
+        for order in orders:
+            after_time = order.get("eligible_after_time_ms")
+            if not isinstance(after_time, int) or isinstance(after_time, bool):
+                after_time = (anchors.get("orders") or {}).get(str(order.get("order_id")))
+            if isinstance(after_time, int) and not isinstance(after_time, bool):
+                order["eligible_after_time_ms"] = after_time
+                order["eligible_source_index"] = self._eligible_index_after(
+                    snapshot, after_time
+                )
+        for position in positions:
+            saved = (anchors.get("positions") or {}).get(
+                str(position.get("position_id")), {}
+            )
+            for label in ("stop_loss", "take_profit"):
+                field = f"{label}_eligible_after_time_ms"
+                after_time = position.get(field)
+                if not isinstance(after_time, int) or isinstance(after_time, bool):
+                    after_time = saved.get(label)
+                if isinstance(after_time, int) and not isinstance(after_time, bool):
+                    position[field] = after_time
+                    position[f"{label}_eligible_source_index"] = self._eligible_index_after(
+                        snapshot, after_time
+                    )
+
+    def _eligible_index_after(self, snapshot: dict, after_time: int) -> int:
+        eligible = self.snapshot_store.source_index_after_time(snapshot, after_time)
+        return int(snapshot.get("candle_count", 0)) if eligible is None else int(eligible)
 
     def _stage_order(
         self,
@@ -784,6 +837,7 @@ class BacktestSimulationEffects:
             cost_profile_revision=int(profile.get("revision", 0)),
             status="pending",
             eligible_source_index=context["cursor_index"] + 1,
+            eligible_after_time_ms=context["cursor_time_ms"],
             linked_position_id=None,
             oco_group_id=None,
             submitted_at=now,
@@ -964,6 +1018,8 @@ class BacktestSimulationEffects:
                 "take_profit_price": float(target),
                 "stop_loss_eligible_source_index": eligible if request.get("stop_loss") is not None else position.get("stop_loss_eligible_source_index", eligible),
                 "take_profit_eligible_source_index": eligible if request.get("take_profit") is not None else position.get("take_profit_eligible_source_index", eligible),
+                "stop_loss_eligible_after_time_ms": context["cursor_time_ms"] if request.get("stop_loss") is not None else position.get("stop_loss_eligible_after_time_ms"),
+                "take_profit_eligible_after_time_ms": context["cursor_time_ms"] if request.get("take_profit") is not None else position.get("take_profit_eligible_after_time_ms"),
                 "tag_ids": tag_ids,
                 "stop_moved": stop_moved,
                 "updated_at": utc_now(),
@@ -982,6 +1038,7 @@ class BacktestSimulationEffects:
                     "entry_price": float(position["weighted_entry_price"]),
                     "stop_loss_price": float(stop),
                     "eligible_source_index": eligible,
+                    "eligible_after_time_ms": context["cursor_time_ms"],
                     "lots": float(position["remaining_lots"]),
                     "updated_at": utc_now(),
                 },
@@ -996,6 +1053,7 @@ class BacktestSimulationEffects:
                     "entry_price": float(position["weighted_entry_price"]),
                     "take_profit_price": float(target),
                     "eligible_source_index": eligible,
+                    "eligible_after_time_ms": context["cursor_time_ms"],
                     "lots": float(position["remaining_lots"]),
                     "updated_at": utc_now(),
                 },
@@ -1545,6 +1603,8 @@ class BacktestSimulationEffects:
             take_profit_price=float(target),
             stop_loss_eligible_source_index=int(candle["source_candle_index"]) + 1,
             take_profit_eligible_source_index=int(candle["source_candle_index"]) + 1,
+            stop_loss_eligible_after_time_ms=int(candle["time_ms"]),
+            take_profit_eligible_after_time_ms=int(candle["time_ms"]),
             initial_risk_native=max(
                 initial_native,
                 float(
@@ -1622,6 +1682,7 @@ class BacktestSimulationEffects:
                 order_type=child_type,
                 side=child_side,
                 eligible_source_index=int(candle["source_candle_index"]) + 1,
+                eligible_after_time_ms=int(candle["time_ms"]),
                 **common,
                 **{
                     "stop_loss_price": child_price if role == "protective_stop" else None,

@@ -269,6 +269,8 @@ def serialize_backtest_value(value):
                 "preparation_lease_owner",
                 "preparation_lease_expires_at",
                 "preparation_lease_generation",
+                "lease_owner",
+                "lease_expires_at",
             }
             and (not key.startswith("_") or key == "_id")
         }

@@ -1,7 +1,7 @@
 import { type CSSProperties, type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, Maximize2 } from 'lucide-react';
 import { Link, useOutletContext, useParams } from 'react-router-dom';
-import { getBacktestChartWorkspace, getBacktestRun, saveBacktestChartWorkspace } from '../api/backtests.api';
+import { getBacktestCacheStatus, getBacktestChartWorkspace, getBacktestRun, saveBacktestChartWorkspace, startBacktestCacheRecovery } from '../api/backtests.api';
 import {
   calculateBacktestBracketSizing,
   createBacktestEntryOrderDraft,
@@ -21,7 +21,7 @@ import { createBacktestSimulationOperationRequest, useBacktestSimulation } from 
 import { useAuth } from '../hooks/useAuth';
 import { useChartColors } from '../hooks/useChartColors';
 import { useToast } from '../hooks/useToast';
-import type { BacktestChartTab, BacktestRunDetail } from '../types/backtest.types';
+import type { BacktestCacheStatus, BacktestChartTab, BacktestRunDetail } from '../types/backtest.types';
 import {
   extractBacktestWorkspaceTabs,
   initializeBacktestWorkspace,
@@ -69,6 +69,9 @@ function ignoreRejectedMutation(promise: Promise<unknown>): void {
 export function BacktestReplayPage() {
   const { runId } = useParams<{ runId: string }>();
   const [run, setRun] = useState<BacktestRunDetail | null>(null);
+  const [cacheStatus, setCacheStatus] = useState<BacktestCacheStatus | null>(null);
+  const [recoveryRequestError, setRecoveryRequestError] = useState<string | null>(null);
+  const [isRequestingRecovery, setIsRequestingRecovery] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -83,10 +86,19 @@ export function BacktestReplayPage() {
 
     setIsLoading(true);
     setLoadError(null);
-    void getBacktestRun(runId)
-      .then((detail) => {
-        if (!cancelled) setRun(detail);
-      })
+    setCacheStatus(null);
+    setRun(null);
+    void (async () => {
+      const detail = await getBacktestRun(runId);
+      let status: BacktestCacheStatus | null = null;
+      if (detail.status === 'ready' || detail.status === 'complete') {
+        status = await getBacktestCacheStatus(runId);
+      }
+      if (!cancelled) {
+        setRun(detail);
+        setCacheStatus(status);
+      }
+    })()
       .catch((error: unknown) => {
         if (!cancelled) setLoadError(getErrorMessage(error));
       })
@@ -96,6 +108,56 @@ export function BacktestReplayPage() {
 
     return () => { cancelled = true; };
   }, [attempt, runId]);
+
+  useEffect(() => {
+    if (!runId || !cacheStatus || !['queued', 'running'].includes(cacheStatus.state)) {
+      return;
+    }
+    let cancelled = false;
+    let polling = false;
+    const timer = window.setInterval(() => {
+      if (polling) return;
+      polling = true;
+      void getBacktestCacheStatus(runId)
+        .then(async (status) => {
+          if (cancelled) return;
+          if (status.state === 'available') {
+            const detail = await getBacktestRun(runId);
+            if (!cancelled) {
+              setRun(detail);
+              setCacheStatus(status);
+            }
+            return;
+          }
+          setCacheStatus(status);
+        })
+        .catch((error: unknown) => {
+          if (!cancelled) setRecoveryRequestError(getErrorMessage(error));
+        })
+        .finally(() => { polling = false; });
+    }, 1500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [cacheStatus?.state, runId]);
+
+  const handleCacheRecovery = async () => {
+    if (!runId) return;
+    setRecoveryRequestError(null);
+    setIsRequestingRecovery(true);
+    try {
+      const status = await startBacktestCacheRecovery(runId);
+      if (status.state === 'available') {
+        setRun(await getBacktestRun(runId));
+      }
+      setCacheStatus(status);
+    } catch (error) {
+      setRecoveryRequestError(getErrorMessage(error));
+    } finally {
+      setIsRequestingRecovery(false);
+    }
+  };
 
   if (isLoading) {
     return (
@@ -142,6 +204,67 @@ export function BacktestReplayPage() {
     );
   }
 
+  if (!cacheStatus || cacheStatus.state !== 'available') {
+    const restoring = cacheStatus?.state === 'queued' || cacheStatus?.state === 'running';
+    const missing = cacheStatus?.missing_references ?? [];
+    return (
+      <section className="mx-auto max-w-3xl rounded-xl border border-amber-300 bg-white p-6 dark:border-amber-800 dark:bg-gray-900">
+        <h1 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+          {restoring ? 'Restoring replay data' : 'Replay data is missing'}
+        </h1>
+        <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">
+          {restoring
+            ? `Restoring ${cacheStatus.completed} of ${cacheStatus.total} missing cache entries. Replay will be available when this finishes.`
+            : 'Some shared candle data used by this run is missing or unreadable. Choose whether to download the missing dates again.'}
+        </p>
+        {restoring && (
+          <div className="mt-4 h-2 overflow-hidden rounded bg-gray-200 dark:bg-gray-700" role="progressbar" aria-valuemin={0} aria-valuemax={cacheStatus.total} aria-valuenow={cacheStatus.completed}>
+            <div className="h-full bg-blue-600 transition-all" style={{ width: `${cacheStatus.total ? Math.min(100, cacheStatus.completed * 100 / cacheStatus.total) : 0}%` }} />
+          </div>
+        )}
+        {missing.length > 0 && (
+          <div className="mt-4 max-h-48 overflow-auto rounded border border-gray-200 p-3 text-sm dark:border-gray-700">
+            <h2 className="mb-2 font-medium text-gray-800 dark:text-gray-200">Affected dates</h2>
+            <ul className="space-y-1 text-gray-600 dark:text-gray-300">
+              {missing.map((item) => (
+                <li key={`${item.kind}:${item.instrument}:${item.utc_date}`}>
+                  {item.instrument} · {item.utc_date}{item.kind === 'conversion' ? ' · conversion' : ''}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {(cacheStatus?.error || recoveryRequestError) && (
+          <p className="mt-3 text-sm text-red-700 dark:text-red-300" role="alert">
+            {recoveryRequestError ?? cacheStatus?.error}
+          </p>
+        )}
+        <div className="mt-5 flex flex-wrap gap-3">
+          {!restoring && (
+            <button
+              type="button"
+              onClick={() => void handleCacheRecovery()}
+              disabled={isRequestingRecovery}
+              className="rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+            >
+              {isRequestingRecovery ? 'Starting…' : cacheStatus?.state === 'failed' ? 'Retry download' : 'Download missing data'}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setAttempt((value) => value + 1)}
+            className="rounded-md px-3 py-2 text-sm text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800"
+          >
+            Check again
+          </button>
+          <Link to="/backtest/runs" className="rounded-md px-3 py-2 text-sm text-gray-600 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-gray-800">
+            Back to runs
+          </Link>
+        </div>
+      </section>
+    );
+  }
+
   if (run.blind_mode && (
     run.normalized_reference_price == null
     || !Number.isFinite(run.normalized_reference_price)
@@ -160,7 +283,16 @@ export function BacktestReplayPage() {
     );
   }
 
-  return <BacktestReplayRunView key={run.id} run={run} />;
+  return (
+    <div className="space-y-3">
+      {run.cache_refreshed_at && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200" role="status">
+          Historical candles may differ because missing data was downloaded again. Saved orders, fills, positions, and balance were preserved.
+        </div>
+      )}
+      <BacktestReplayRunView key={run.id} run={run} />
+    </div>
+  );
 }
 
 function BacktestReplayRunView({ run }: { run: BacktestRunDetail }) {

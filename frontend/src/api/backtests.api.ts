@@ -1,6 +1,7 @@
 import apiClient from './client';
 import type {
   BacktestCandle,
+  BacktestCacheStatus,
   BacktestChartWorkspaceResponse,
   BacktestChartWorkspaceSaveRequest,
   BacktestDrawingState,
@@ -65,6 +66,26 @@ export async function getBacktestRun(
     `/backtest/runs/${encodeURIComponent(runId)}`
   );
   return response.data.run;
+}
+
+/** Check whether the run's shared candle-cache entries are still available. */
+export async function getBacktestCacheStatus(
+  runId: string
+): Promise<BacktestCacheStatus> {
+  const response = await apiClient.get<BacktestCacheStatus>(
+    `/backtest/runs/${encodeURIComponent(runId)}/cache-status`
+  );
+  return response.data;
+}
+
+/** Queue explicit restoration of missing shared candle-cache entries. */
+export async function startBacktestCacheRecovery(
+  runId: string
+): Promise<BacktestCacheStatus> {
+  const response = await apiClient.post<BacktestCacheStatus>(
+    `/backtest/runs/${encodeURIComponent(runId)}/cache-recovery`
+  );
+  return response.data;
 }
 
 /** Requeue an interrupted run's existing preparation job. */

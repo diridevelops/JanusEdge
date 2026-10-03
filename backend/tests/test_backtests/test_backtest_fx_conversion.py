@@ -270,9 +270,115 @@ def test_worker_checkpoints_and_publishes_inverse_conversion_data(app, monkeypat
     assert ref["instrument"] == "USD-JPY"
     assert ref["direction"] == "inverse"
     assert ref["candle_count"] == 1
+    assert stored_run["snapshot"]["storage_mode"] == "shared_cache"
+    assert stored_run["snapshot"]["cache_version"]
+    assert "object_key" not in stored_run["snapshot"]
+    cache_ref = ref["_cache_date_refs"][0]
+    assert cache_ref["object_key"].startswith(
+        f"backtests/{stored_run['user_id']}/shared-candles/"
+    )
+    assert mongo.db.backtest_candle_cache.count_documents(
+        {"user_id": stored_run["user_id"]}
+    ) == 1
     assert len(provider.base_calls) == 1
     assert all(item[0] == "USD-JPY" for item in provider.base_calls)
     # The base series is also the conversion instrument, so its cached UTC
     # dates are reused instead of being downloaded a second time.
     assert provider.conversion_calls == []
     assert len(stored_job["fx_conversion"]["completed_utc_dates"]) == 1
+
+
+def test_cache_recovery_restores_only_missing_conversion_instrument(app, monkeypatch):
+    from bson import ObjectId
+
+    from app.backtests.service import BacktestService
+    from app.backtests.worker import BacktestWorker
+    from app.extensions import mongo
+    from app.storage import get_client, get_market_data_bucket
+
+    import app.backtests.service as service_module
+
+    monkeypatch.setattr(
+        service_module, "fetch_instrument_codes", lambda: ["EUR-JPY"]
+    )
+    user_id = str(ObjectId())
+    day = date(2026, 2, 2)
+
+    class Provider:
+        def __init__(self, *, restoring=False):
+            self.calls = []
+            self.restoring = restoring
+
+        @staticmethod
+        def _result(instrument, utc_date):
+            time_ms = int(
+                datetime.combine(
+                    utc_date, datetime.min.time(), tzinfo=timezone.utc
+                ).timestamp()
+                * 1000
+            )
+            price = 160.0 if instrument == "EUR-JPY" else 150.0
+            return {
+                "utc_date": utc_date,
+                "outcome": "data",
+                "candles": [{
+                    "time_ms": time_ms,
+                    "open": price,
+                    "high": price + 1,
+                    "low": price - 1,
+                    "close": price + 0.5,
+                    "volume": 10,
+                }],
+            }
+
+        def fetch_day(self, instrument, utc_date):
+            if self.restoring:
+                raise AssertionError("Recovery must not refetch replay data.")
+            self.calls.append(("replay", instrument, utc_date))
+            return self._result(instrument, utc_date)
+
+        def fetch_conversion_day(self, instrument, utc_date):
+            self.calls.append(("conversion", instrument, utc_date))
+            return self._result(instrument, utc_date)
+
+    with app.app_context():
+        service = BacktestService()
+        run = service.create_run(
+            user_id=user_id,
+            instrument="EUR-JPY",
+            start_date=day.isoformat(),
+            end_date=day.isoformat(),
+            display_timezone="UTC",
+        )
+        initial_provider = Provider()
+        assert BacktestWorker(
+            provider=initial_provider, worker_id="fx-cache-worker", lease_seconds=60
+        ).process_one()
+        stored_run = mongo.db.backtest_runs.find_one({"_id": run["id"]})
+        conversion_ref = stored_run["snapshot"]["fx_conversion_series"][0]
+        assert conversion_ref["instrument"] == "USD-JPY"
+        missing_date_ref = conversion_ref["_cache_date_refs"][0]
+        get_client().remove_object(
+            get_market_data_bucket(), missing_date_ref["object_key"]
+        )
+
+        status = service.get_cache_status(user_id, run["id"])
+        assert status["state"] == "missing"
+        assert status["missing_references"] == [{
+            "instrument": "USD-JPY",
+            "utc_date": day.isoformat(),
+            "kind": "conversion",
+        }]
+        queued = service.start_cache_recovery(user_id, run["id"])
+        assert queued["state"] == "queued"
+
+        recovery_provider = Provider(restoring=True)
+        assert BacktestWorker(
+            provider=recovery_provider,
+            worker_id="fx-cache-recovery-worker",
+            lease_seconds=60,
+        ).process_one()
+        restored = service.get_cache_status(user_id, run["id"])
+
+    assert restored["state"] == "available"
+    assert recovery_provider.calls == [("conversion", "USD-JPY", day)]

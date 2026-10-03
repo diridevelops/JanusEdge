@@ -322,6 +322,9 @@ class BacktestOrderSchema(SimulationSchema):
     eligible_source_index = fields.Int(
         required=True, validate=validate.Range(min=0)
     )
+    eligible_after_time_ms = fields.Int(
+        allow_none=True, load_default=None, validate=validate.Range(min=0)
+    )
     linked_position_id = fields.Raw(allow_none=True, load_default=None)
     oco_group_id = fields.Raw(allow_none=True, load_default=None)
     submitted_at = fields.DateTime(required=True)
@@ -461,6 +464,18 @@ class BacktestPositionSchema(SimulationSchema):
     take_profit_order_id = fields.Raw(allow_none=True, load_default=None)
     stop_loss_price = InstrumentPrice(allow_none=True, load_default=None)
     take_profit_price = InstrumentPrice(allow_none=True, load_default=None)
+    stop_loss_eligible_source_index = fields.Int(
+        allow_none=True, load_default=None, validate=validate.Range(min=0)
+    )
+    take_profit_eligible_source_index = fields.Int(
+        allow_none=True, load_default=None, validate=validate.Range(min=0)
+    )
+    stop_loss_eligible_after_time_ms = fields.Int(
+        allow_none=True, load_default=None, validate=validate.Range(min=0)
+    )
+    take_profit_eligible_after_time_ms = fields.Int(
+        allow_none=True, load_default=None, validate=validate.Range(min=0)
+    )
     initial_risk_native = PositiveFiniteFloat(required=True)
     initial_risk_usd = PositiveFiniteFloat(required=True)
     entry_quote_to_usd_rate = PositiveFiniteFloat(required=True)

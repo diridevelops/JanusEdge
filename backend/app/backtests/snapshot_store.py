@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from bisect import bisect_right
 from datetime import date, datetime, time, timedelta, timezone
 from functools import lru_cache
 from io import BytesIO
@@ -11,7 +12,11 @@ import re
 import pandas as pd
 from minio.error import S3Error
 
-from app.storage import get_client, get_market_data_bucket
+from app.storage import (
+    ensure_bucket_exists,
+    get_client,
+    get_market_data_bucket,
+)
 from app.utils.datetime_utils import utc_now
 
 
@@ -40,7 +45,7 @@ def _utc_day_end_ms(value: date) -> int:
 
 
 class SnapshotStore:
-    """Write date checkpoints and publish one run-owned immutable Parquet."""
+    """Store shared candle days and build run metadata over cache references."""
 
     def __init__(self, client=None, bucket: str | None = None):
         self.client = client
@@ -116,7 +121,7 @@ class SnapshotStore:
         candles: list[dict],
         *,
         cache_version: str,
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str, int]:
         """Write a reusable user-owned UTC day, including known-empty days."""
         payload = self._parquet_bytes(candles)
         checksum = hashlib.sha256(payload).hexdigest()
@@ -126,32 +131,36 @@ class SnapshotStore:
             f"{safe_instrument}/{utc_date.isoformat()}/{checksum}.parquet"
         )
         self._put(key, payload)
-        return key, checksum
+        return key, checksum, len(payload)
 
-    def read_cached_candle_date(self, entry: dict) -> dict:
+    def read_cached_candle_date(
+        self, entry: dict, *, check_object_exists: bool = False
+    ) -> dict:
         """Read and verify a normalized reusable candle date from MinIO."""
         object_key = entry.get("object_key")
-        if not isinstance(object_key, str) or not object_key:
-            raise CachedCandleObjectInvalid("Cached candle object key is missing.")
+        checksum = entry.get("sha256")
+        candle_count = entry.get("candle_count")
+        if (
+            not isinstance(object_key, str)
+            or not object_key
+            or not isinstance(checksum, str)
+            or isinstance(candle_count, bool)
+            or not isinstance(candle_count, int)
+            or candle_count < 0
+        ):
+            raise CachedCandleObjectInvalid("Cached candle reference is invalid.")
         try:
-            payload = self._read_bytes(object_key)
+            if check_object_exists:
+                self._check_cached_object_exists(object_key)
+            frame = self._read_verified_cache_frame(
+                object_key, checksum, candle_count
+            )
         except KeyError as exc:
             raise CachedCandleObjectMissing(object_key) from exc
         except S3Error as exc:
-            if exc.code in {"NoSuchKey", "NotFound"}:
+            if exc.code in {"NoSuchKey", "NoSuchBucket", "NotFound"}:
                 raise CachedCandleObjectMissing(object_key) from exc
             raise
-
-        if hashlib.sha256(payload).hexdigest() != entry.get("sha256"):
-            raise CachedCandleObjectInvalid("Cached candle checksum does not match.")
-        try:
-            frame = pd.read_parquet(BytesIO(payload))
-        except Exception as exc:
-            raise CachedCandleObjectInvalid("Cached candle Parquet is invalid.") from exc
-        if not set(_CANDLE_COLUMNS).issubset(frame.columns):
-            raise CachedCandleObjectInvalid("Cached candle columns are incomplete.")
-        if len(frame.index) != int(entry.get("candle_count", -1)):
-            raise CachedCandleObjectInvalid("Cached candle row count does not match.")
         candles = frame.loc[:, list(_CANDLE_COLUMNS)].to_dict(orient="records")
         outcome = entry.get("outcome")
         if outcome not in {"data", "empty"} or (outcome == "data") != bool(candles):
@@ -161,6 +170,193 @@ class SnapshotStore:
         except (KeyError, TypeError, ValueError) as exc:
             raise CachedCandleObjectInvalid("Cached candle date is invalid.") from exc
         return {"utc_date": utc_date, "outcome": outcome, "candles": candles}
+
+    def _check_cached_object_exists(self, object_key: str) -> None:
+        """Check that a ready metadata hit still has its MinIO object."""
+        try:
+            self._client.stat_object(self._bucket, object_key)
+        except KeyError as exc:
+            # Keep lightweight test/object-store adapters compatible with the
+            # MinIO missing-key behavior.
+            raise CachedCandleObjectMissing(object_key) from exc
+        except S3Error as exc:
+            if exc.code in {"NoSuchKey", "NoSuchBucket", "NotFound"}:
+                raise CachedCandleObjectMissing(object_key) from exc
+            raise
+
+    @lru_cache(maxsize=64)
+    def _read_verified_cache_frame(
+        self, object_key: str, checksum: str, candle_count: int
+    ) -> pd.DataFrame:
+        """Read one content-addressed cache day once per worker process."""
+        payload = self._read_bytes(object_key)
+        if hashlib.sha256(payload).hexdigest() != checksum:
+            raise CachedCandleObjectInvalid("Cached candle checksum does not match.")
+        try:
+            frame = pd.read_parquet(BytesIO(payload))
+        except Exception as exc:
+            raise CachedCandleObjectInvalid(
+                "Cached candle Parquet is invalid."
+            ) from exc
+        if not set(_CANDLE_COLUMNS).issubset(frame.columns):
+            raise CachedCandleObjectInvalid("Cached candle columns are incomplete.")
+        if len(frame.index) != candle_count:
+            raise CachedCandleObjectInvalid("Cached candle row count does not match.")
+        return frame.loc[:, list(_CANDLE_COLUMNS)].reset_index(drop=True)
+
+    def cached_candle_ref_exists(self, ref: dict) -> bool:
+        """Check whether a cache object referenced by a run is still present."""
+        try:
+            self.read_cached_candle_date(ref)
+        except (CachedCandleObjectMissing, CachedCandleObjectInvalid):
+            return False
+        return True
+
+    def clear_cached_candle_reads(self) -> None:
+        """Discard process-local frames before checking shared-cache health."""
+        self._read_verified_cache_frame.cache_clear()
+
+    def assemble_cache_snapshot(
+        self,
+        *,
+        run: dict,
+        completed_dates: list[dict],
+        fx_conversion: dict | None = None,
+        cache_version: str,
+    ) -> tuple[dict, dict]:
+        """Build replay indexes and coverage using shared cached date objects.
+
+        The run stores only cache references and small per-day index metadata;
+        candle bytes remain in the per-user shared cache.
+        """
+        context_start_ms = int(
+            run.get("context_start_utc_ms", run["start_utc_ms"])
+        )
+        end_ms = int(run["end_utc_ms"])
+        start_ms = int(run["start_utc_ms"])
+        ordered = sorted(
+            completed_dates,
+            key=lambda item: _as_date(item["utc_date"]),
+        )
+        frames: list[pd.DataFrame] = []
+        indexes: list[dict] = []
+        empty_dates: list[date] = []
+        available_dates: list[date] = []
+        next_source_index = 0
+        for checkpoint in ordered:
+            ref = checkpoint.get("cache_ref")
+            if not isinstance(ref, dict):
+                raise CachedCandleObjectInvalid(
+                    "A run preparation checkpoint has no shared-cache reference."
+                )
+            result = self.read_cached_candle_date(ref)
+            utc_date = _as_date(checkpoint["utc_date"])
+            if result["utc_date"] != utc_date:
+                raise CachedCandleObjectInvalid(
+                    "A shared-cache reference points to a different UTC date."
+                )
+            frame = pd.DataFrame(
+                result["candles"], columns=list(_CANDLE_COLUMNS)
+            )
+            if not frame.empty:
+                frame = frame[
+                    (frame["time_ms"] >= context_start_ms)
+                    & (frame["time_ms"] < end_ms)
+                ].sort_values("time_ms", kind="stable")
+            count = len(frame.index)
+            indexes.append(
+                {
+                    "utc_date": utc_date.isoformat(),
+                    "first_source_candle_index": next_source_index,
+                    "candle_count": count,
+                    "first_time_ms": int(frame.iloc[0]["time_ms"]) if count else None,
+                    "last_time_ms": int(frame.iloc[-1]["time_ms"]) if count else None,
+                    "cache_ref": ref,
+                }
+            )
+            next_source_index += count
+            if count:
+                frames.append(frame)
+                available_dates.append(utc_date)
+            elif (
+                result["outcome"] == "empty"
+                or _utc_day_end_ms(utc_date) > context_start_ms
+                and _utc_day_start_ms(utc_date) < end_ms
+            ):
+                empty_dates.append(utc_date)
+
+        frame = (
+            pd.concat(frames, ignore_index=True)
+            if frames
+            else pd.DataFrame(columns=list(_CANDLE_COLUMNS))
+        )
+        if not frame.empty:
+            frame = (
+                frame.drop_duplicates(subset=["time_ms"], keep="first")
+                .sort_values("time_ms", kind="stable")
+                .reset_index(drop=True)
+            )
+        replay_frame = frame[frame["time_ms"] >= start_ms].reset_index(drop=True)
+        warmup_frame = frame[frame["time_ms"] < start_ms].reset_index(drop=True)
+        replay_start_source_index = len(warmup_frame.index)
+        replay_start_time_ms = (
+            int(replay_frame.iloc[0]["time_ms"]) if not replay_frame.empty else None
+        )
+        selected_empty_dates = [
+            day for day in empty_dates
+            if _utc_day_end_ms(day) > start_ms and _utc_day_start_ms(day) < end_ms
+        ]
+        warmup_empty_dates = [
+            day for day in empty_dates
+            if _utc_day_end_ms(day) > context_start_ms
+            and _utc_day_start_ms(day) < start_ms
+        ]
+        replay_gaps = self._partial_gaps(replay_frame)
+        warmup_gaps = self._partial_gaps(warmup_frame)
+        coverage = self._coverage(replay_frame, selected_empty_dates, replay_gaps)
+        warmup_coverage = self._coverage(
+            warmup_frame, warmup_empty_dates, warmup_gaps
+        )
+        time_values = [int(value) for value in frame["time_ms"].tolist()]
+        snapshot = {
+            "storage_mode": "shared_cache",
+            "cache_version": cache_version,
+            "instrument": run["instrument"],
+            "source_side": run.get("source_side", "COMB"),
+            "price_mode": run.get("price_mode", "combined_midpoint"),
+            "volume_semantics": run.get(
+                "volume_semantics", "two_sided_quote_liquidity"
+            ),
+            "interval_minutes": 1,
+            "candle_count": len(frame.index),
+            "context_start_utc_ms": context_start_ms,
+            "end_utc_ms": end_ms,
+            "replay_start_source_index": replay_start_source_index,
+            "replay_start_time_ms": replay_start_time_ms,
+            "_normalization_reference_price": (
+                float(replay_frame.iloc[0]["open"])
+                if not replay_frame.empty
+                else None
+            ),
+            "replay_period_candle_count": len(replay_frame.index),
+            "warmup_coverage": warmup_coverage,
+            "first_time_ms": time_values[0] if time_values else None,
+            "last_time_ms": time_values[-1] if time_values else None,
+            "available_utc_dates": [
+                _utc_midnight(day) for day in sorted(set(available_dates))
+            ],
+            "_day_candle_indexes": indexes,
+            "gap_dates": [_utc_midnight(day) for day in selected_empty_dates],
+            "warmup_gap_dates": [_utc_midnight(day) for day in warmup_empty_dates],
+            "partial_gap_summary": replay_gaps,
+            "fetched_at": utc_now(),
+        }
+        fx_series = self._build_cache_fx_conversion_series(
+            run=run, conversion=fx_conversion
+        )
+        if fx_series:
+            snapshot["fx_conversion_series"] = fx_series
+        return snapshot, coverage
 
     def assemble_snapshot(
         self,
@@ -329,8 +525,33 @@ class SnapshotStore:
                     if str(item.get("quote_currency", "")).upper() == key
                 ),
                 None,
+        )
+        if not ref:
+            return []
+        cache_refs = ref.get("_cache_date_refs")
+        if isinstance(cache_refs, list):
+            frames = []
+            for cache_ref in cache_refs:
+                candles = self.read_cached_candle_date(cache_ref)["candles"]
+                if candles:
+                    frames.append(
+                        pd.DataFrame(candles, columns=list(_CANDLE_COLUMNS))
+                    )
+            if not frames:
+                return []
+            frame = pd.concat(frames, ignore_index=True)
+            frame = (
+                frame.drop_duplicates(subset=["time_ms"], keep="first")
+                .sort_values("time_ms", kind="stable")
             )
-        if not ref or not ref.get("object_key"):
+            start_ms = int(ref["source_start_utc_ms"])
+            end_ms = int(ref["source_end_utc_ms"])
+            frame = frame[
+                (frame["time_ms"] >= start_ms)
+                & (frame["time_ms"] < end_ms)
+            ]
+            return frame.loc[:, list(_FX_COLUMNS)].to_dict(orient="records")
+        if not ref.get("object_key"):
             return []
         frame = self._read_parquet(
             ref["object_key"], columns=list(_FX_COLUMNS)
@@ -338,7 +559,7 @@ class SnapshotStore:
         return frame.to_dict(orient="records")
 
     def read_snapshot_day(self, snapshot: dict, utc_date: str) -> pd.DataFrame:
-        """Read one immutable day partition, with legacy snapshot fallback."""
+        """Read a UTC-day partition through its shared cache reference."""
         indexes = snapshot.get("_day_candle_indexes")
         if isinstance(indexes, list):
             entry = next(
@@ -351,6 +572,18 @@ class SnapshotStore:
             )
             if entry is None:
                 return pd.DataFrame(columns=list(_CANDLE_COLUMNS))
+            cache_ref = entry.get("cache_ref")
+            if isinstance(cache_ref, dict):
+                result = self.read_cached_candle_date(cache_ref)
+                frame = pd.DataFrame(
+                    result["candles"], columns=list(_CANDLE_COLUMNS)
+                ).sort_values("time_ms", kind="stable")
+                if not frame.empty:
+                    frame = frame[
+                        (frame["time_ms"] >= int(snapshot.get("context_start_utc_ms", 0)))
+                        & (frame["time_ms"] < int(snapshot.get("end_utc_ms", 2**63 - 1)))
+                    ]
+                return frame
             return self._read_parquet(entry["object_key"])
 
         # Snapshots created before day partitions were introduced remain
@@ -369,7 +602,7 @@ class SnapshotStore:
     def read_snapshot_candle_time(
         self, snapshot: dict, source_candle_index: int
     ) -> int | None:
-        """Resolve a global row index by reading only its UTC-day time column."""
+        """Resolve a global source index through its shared cache date."""
         indexes = snapshot.get("_day_candle_indexes")
         if isinstance(indexes, list):
             for entry in indexes:
@@ -377,6 +610,17 @@ class SnapshotStore:
                 count = int(entry["candle_count"])
                 if first <= source_candle_index < first + count:
                     relative_index = source_candle_index - first
+                    cache_ref = entry.get("cache_ref")
+                    if isinstance(cache_ref, dict):
+                        times = tuple(
+                            int(value)
+                            for value in self.read_snapshot_day(
+                                snapshot, entry["utc_date"]
+                            )["time_ms"].tolist()
+                        )
+                        if relative_index >= len(times):
+                            return None
+                        return times[relative_index]
                     times = self._read_day_time_index(entry["object_key"])
                     if relative_index >= len(times):
                         return None
@@ -391,6 +635,55 @@ class SnapshotStore:
         if source_candle_index >= len(times):
             return None
         return int(times[source_candle_index])
+
+    def source_index_at_or_before(self, snapshot: dict, time_ms: int) -> int | None:
+        """Return the latest source index whose candle time is <= the given time."""
+        indexes = snapshot.get("_day_candle_indexes")
+        if not isinstance(indexes, list):
+            return None
+        last_candidate = None
+        for entry in reversed(indexes):
+            count = int(entry.get("candle_count", 0))
+            last_time = entry.get("last_time_ms")
+            if count < 1 or last_time is None:
+                continue
+            if int(last_time) <= time_ms:
+                last_candidate = (
+                    int(entry["first_source_candle_index"]) + count - 1
+                )
+                break
+            first_time = entry.get("first_time_ms")
+            if first_time is None or int(first_time) > time_ms:
+                continue
+            frame = self.read_snapshot_day(snapshot, entry["utc_date"])
+            times = [int(value) for value in frame["time_ms"].tolist()]
+            index = bisect_right(times, time_ms) - 1
+            if index >= 0:
+                return int(entry["first_source_candle_index"]) + index
+        return last_candidate
+
+    def source_index_after_time(self, snapshot: dict, time_ms: int) -> int | None:
+        """Return the first source index whose candle time is strictly later."""
+        indexes = snapshot.get("_day_candle_indexes")
+        if not isinstance(indexes, list):
+            return None
+        for entry in indexes:
+            count = int(entry.get("candle_count", 0))
+            first_time = entry.get("first_time_ms")
+            last_time = entry.get("last_time_ms")
+            if (
+                count < 1
+                or first_time is None
+                or last_time is None
+                or int(last_time) <= time_ms
+            ):
+                continue
+            frame = self.read_snapshot_day(snapshot, entry["utc_date"])
+            times = [int(value) for value in frame["time_ms"].tolist()]
+            index = bisect_right(times, time_ms)
+            if index < len(times):
+                return int(entry["first_source_candle_index"]) + index
+        return None
 
     def remove_prefix(self, prefix: str) -> None:
         client = self._client
@@ -428,7 +721,19 @@ class SnapshotStore:
                 release_conn()
 
     def _put(self, object_key: str, payload: bytes) -> None:
-        self._client.put_object(
+        client = self._client
+        try:
+            self._put_bytes(client, object_key, payload)
+        except S3Error as exc:
+            if exc.code != "NoSuchBucket":
+                raise
+            # The MinIO volume may have been replaced while the API process
+            # remained alive, so startup bucket initialization is insufficient.
+            ensure_bucket_exists(client, self._bucket)
+            self._put_bytes(client, object_key, payload)
+
+    def _put_bytes(self, client, object_key: str, payload: bytes) -> None:
+        client.put_object(
             self._bucket,
             object_key,
             BytesIO(payload),
@@ -539,6 +844,70 @@ class SnapshotStore:
                 "source_last_time_ms": times[-1] if times else None,
                 "candle_count": len(times),
                 "object_key": object_key,
+            })
+        return series
+
+    def _build_cache_fx_conversion_series(
+        self, *, run: dict, conversion: dict | None
+    ) -> list[dict]:
+        """Describe frozen conversion inputs using shared per-day cache refs."""
+        if not conversion:
+            return []
+        currency = str(conversion.get("quote_currency", "")).upper()
+        if not currency or conversion.get("supported") is False:
+            return []
+        route = conversion.get("route")
+        if not isinstance(route, list):
+            route = (
+                [{
+                    "instrument": conversion.get("instrument"),
+                    "direction": conversion.get("direction"),
+                }]
+                if conversion.get("instrument")
+                and conversion.get("direction") in {"direct", "inverse"}
+                else []
+            )
+        start_ms = int(run.get("context_start_utc_ms", run["start_utc_ms"]))
+        end_ms = int(run["end_utc_ms"])
+        series = []
+        for leg in route:
+            if not isinstance(leg, dict) or not leg.get("instrument"):
+                continue
+            instrument = str(leg["instrument"]).upper()
+            cache_refs = []
+            first_time_ms = None
+            last_time_ms = None
+            candle_count = 0
+            for checkpoint in conversion.get("completed_utc_dates", []):
+                refs = checkpoint.get("cache_refs")
+                cache_ref = refs.get(instrument) if isinstance(refs, dict) else None
+                if not isinstance(cache_ref, dict):
+                    continue
+                cache_refs.append(cache_ref)
+                candles = self.read_cached_candle_date(cache_ref)["candles"]
+                times = [
+                    int(candle["time_ms"])
+                    for candle in candles
+                    if start_ms <= int(candle["time_ms"]) < end_ms
+                ]
+                if times:
+                    candle_count += len(times)
+                    if first_time_ms is None:
+                        first_time_ms = times[0]
+                    last_time_ms = times[-1]
+            series.append({
+                "quote_currency": currency,
+                "instrument": instrument,
+                "direction": leg.get("direction"),
+                "from_currency": leg.get("from_currency"),
+                "to_currency": leg.get("to_currency"),
+                "interval_minutes": 1,
+                "source_start_utc_ms": start_ms,
+                "source_end_utc_ms": end_ms,
+                "source_first_time_ms": first_time_ms,
+                "source_last_time_ms": last_time_ms,
+                "candle_count": candle_count,
+                "_cache_date_refs": cache_refs,
             })
         return series
 

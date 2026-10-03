@@ -167,8 +167,8 @@ def test_expired_assembly_cannot_publish_ready_snapshot(app, monkeypatch):
     class ExpiringSnapshotStore(SnapshotStore):
         expire_during_assembly = True
 
-        def assemble_snapshot(self, **kwargs):
-            result = super().assemble_snapshot(**kwargs)
+        def assemble_cache_snapshot(self, **kwargs):
+            result = super().assemble_cache_snapshot(**kwargs)
             if self.expire_during_assembly:
                 self.expire_during_assembly = False
                 clock.expire()

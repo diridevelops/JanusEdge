@@ -400,6 +400,210 @@ def test_overlapping_run_fetches_only_uncached_days(app, client, monkeypatch):
     assert provider.calls == [("EUR-USD", jan_8)]
 
 
+def test_missing_shared_cache_is_restored_only_after_choice_and_keeps_simulation(
+    app, client, monkeypatch
+):
+    from bson import ObjectId
+    from app.backtests.worker import BacktestWorker
+    from app.extensions import mongo
+    from app.storage import get_client, get_market_data_bucket
+
+    _patch_catalog(monkeypatch)
+    owner = _register(client, "cache-recovery-owner")
+    run_id, run, original_provider = _create_ready_run(app, client, owner)
+    replay_start = run["snapshot"]["replay_start_source_index"]
+
+    submitted = client.post(
+        f"/api/backtest/runs/{run_id}/simulation/orders",
+        json={
+            "client_operation_id": "cache-recovery-entry",
+            "expected_revision": 0,
+            "side": "buy",
+            "order_type": "market",
+            "auto_size": False,
+            "lots": 0.1,
+            "stop_loss": 1.0,
+            "take_profit": 1.5,
+        },
+        headers=owner,
+    )
+    assert submitted.status_code == 200, submitted.json
+    advanced = client.post(
+        f"/api/backtest/runs/{run_id}/simulation/advance",
+        json={
+            "client_operation_id": "cache-recovery-entry-fill",
+            "expected_revision": submitted.json["control_revision"],
+            "target_source_index": replay_start + 1,
+        },
+        headers=owner,
+    )
+    assert advanced.status_code == 200, advanced.json
+    before = client.get(
+        f"/api/backtest/runs/{run_id}/simulation", headers=owner
+    )
+    assert before.status_code == 200
+    assert len(before.json["fills"]) == 1
+    assert len(before.json["positions"]) == 1
+
+    with app.app_context():
+        run_doc = mongo.db.backtest_runs.find_one({"_id": ObjectId(run_id)})
+        missing_refs = [
+            day["cache_ref"]
+            for day in run_doc["snapshot"]["_day_candle_indexes"]
+            if day["utc_date"] in {"2026-01-05", "2026-01-06"}
+        ]
+        for ref in missing_refs:
+            get_client().remove_object(
+                get_market_data_bucket(), ref["object_key"]
+            )
+
+    original_provider.calls.clear()
+    status = client.get(
+        f"/api/backtest/runs/{run_id}/cache-status", headers=owner
+    )
+    assert status.status_code == 200
+    assert status.json["state"] == "missing"
+    assert status.json["missing_references"] == [
+        {
+            "instrument": "EUR-USD",
+            "utc_date": "2026-01-05",
+            "kind": "replay",
+        },
+        {
+            "instrument": "EUR-USD",
+            "utc_date": "2026-01-06",
+            "kind": "replay",
+        },
+    ]
+    assert original_provider.calls == []
+    assert client.get(
+        f"/api/backtest/runs/{run_id}/simulation", headers=owner
+    ).status_code == 409
+
+    queued = client.post(
+        f"/api/backtest/runs/{run_id}/cache-recovery", headers=owner
+    )
+    assert queued.status_code == 202
+    assert queued.json["state"] == "queued"
+    assert original_provider.calls == []
+
+    jan_5 = date(2026, 1, 5)
+    jan_6 = date(2026, 1, 6)
+    class FailingProvider:
+        def fetch_day(self, instrument, utc_date):
+            raise RuntimeError("Dukascopy is temporarily unavailable.")
+
+    with app.app_context():
+        assert BacktestWorker(
+            provider=FailingProvider(), clock=_Clock()
+        ).process_one()
+
+    failed = client.get(
+        f"/api/backtest/runs/{run_id}/cache-status", headers=owner
+    )
+    assert failed.status_code == 200
+    assert failed.json["state"] == "failed"
+    assert "temporarily unavailable" in failed.json["error"]
+    retry = client.post(
+        f"/api/backtest/runs/{run_id}/cache-recovery", headers=owner
+    )
+    assert retry.status_code == 202
+    assert retry.json["state"] == "queued"
+
+    refreshed_provider = _Provider(
+        {
+            jan_5: _day_result(jan_5, [_candle(jan_5, 0, 1.11)]),
+            jan_6: _day_result(jan_6, []),
+        }
+    )
+    with app.app_context():
+        worker = BacktestWorker(provider=refreshed_provider, clock=_Clock())
+        assert worker.process_one()
+
+    restored = client.get(
+        f"/api/backtest/runs/{run_id}/cache-status", headers=owner
+    )
+    assert restored.status_code == 200
+    assert restored.json["state"] == "available"
+    assert restored.json["refreshed_at"] is not None
+    assert refreshed_provider.calls == [
+        ("EUR-USD", jan_5),
+        ("EUR-USD", jan_6),
+    ]
+
+    after = client.get(
+        f"/api/backtest/runs/{run_id}/simulation", headers=owner
+    )
+    assert after.status_code == 200
+    for field in (
+        "committed_sequence",
+        "current_balance_usd",
+        "fills",
+    ):
+        assert after.json[field] == before.json[field]
+
+    def order_state(state):
+        stable_fields = (
+            "order_id",
+            "role",
+            "status",
+            "lots",
+            "eligible_after_time_ms",
+            "entry_price",
+            "stop_loss_price",
+            "take_profit_price",
+        )
+        return sorted(
+            [
+                {field: order.get(field) for field in stable_fields}
+                for order in state["orders"]
+            ],
+            key=lambda order: order["order_id"],
+        )
+
+    def position_state(state):
+        stable_fields = (
+            "position_id",
+            "side",
+            "status",
+            "remaining_lots",
+            "max_lots",
+            "weighted_entry_price",
+            "stop_loss_price",
+            "take_profit_price",
+            "stop_loss_eligible_after_time_ms",
+            "take_profit_eligible_after_time_ms",
+        )
+        return sorted(
+            [
+                {field: position.get(field) for field in stable_fields}
+                for position in state["positions"]
+            ],
+            key=lambda position: position["position_id"],
+        )
+
+    assert order_state(after.json) == order_state(before.json)
+    assert position_state(after.json) == position_state(before.json)
+    assert after.json["positions"][0]["stop_loss_eligible_source_index"] == 2
+    assert after.json["cursor"]["time_ms"] == 1767571200000
+
+    public_run = client.get(
+        f"/api/backtest/runs/{run_id}", headers=owner
+    ).json["run"]
+    assert public_run["snapshot"]["storage_mode"] == "shared_cache"
+    assert public_run["snapshot"]["cache_version"]
+    assert "object_key" not in public_run["snapshot"]
+    with app.app_context():
+        remaining_run_objects = list(
+            get_client().list_objects(
+                get_market_data_bucket(),
+                prefix=f"backtests/{run_doc['user_id']}/{run_id}/",
+                recursive=True,
+            )
+        )
+    assert remaining_run_objects == []
+
+
 def test_replay_cursor_accepts_valid_selection_and_intentional_step_back(
     app, client, monkeypatch
 ):
@@ -1433,7 +1637,11 @@ def test_pending_order_remains_working_and_obeys_eligibility_after_rewind(
     state_at_eligibility = client.get(
         f"/api/backtest/runs/{run_id}/simulation", headers=owner
     ).json
-    assert state_at_eligibility["orders"][0]["status"] == "filled", state_at_eligibility
+    entry_order = next(
+        order for order in state_at_eligibility["orders"]
+        if order["role"] == "entry"
+    )
+    assert entry_order["status"] == "filled", state_at_eligibility
     assert len(state_at_eligibility["fills"]) == 1
     assert state_at_eligibility["fills"][0]["source_candle_index"] == replay_start + 2
     position = state_at_eligibility["positions"][0]

@@ -178,6 +178,51 @@ class _DeletionLeaseHeartbeat:
                 continue
 
 
+class _CacheRecoveryLeaseHeartbeat:
+    """Keep a shared-cache recovery claim live while source days are fetched."""
+
+    def __init__(self, worker, run, app):
+        self.worker = worker
+        self.run = run
+        self.app = app
+        self.stop_event = threading.Event()
+        self.lost = threading.Event()
+        self.thread = threading.Thread(
+            target=self._run,
+            name=f"backtest-cache-recovery-{run['_id']}",
+            daemon=True,
+        )
+
+    def start(self):
+        self.thread.start()
+
+    def stop(self):
+        self.stop_event.set()
+        if self.thread.is_alive():
+            self.thread.join(timeout=2)
+
+    def check(self):
+        if self.lost.is_set():
+            raise LeaseLostError("Backtest cache recovery lease was lost.")
+
+    def _run(self):
+        interval = max(1, min(30, self.worker.lease_seconds // 3))
+        while not self.stop_event.wait(interval):
+            try:
+                with self.app.app_context():
+                    renewed = self.worker.repository.renew_cache_recovery(
+                        self.run["_id"],
+                        self.worker.worker_id,
+                        now=_as_utc(self.worker.clock()),
+                        lease_seconds=self.worker.lease_seconds,
+                    )
+                if not renewed:
+                    self.lost.set()
+                    return
+            except Exception:
+                continue
+
+
 class BacktestWorker:
     """Claim and process one durable preparation job at a time."""
 
@@ -219,6 +264,8 @@ class BacktestWorker:
             )
         now = _as_utc(self.clock())
         if self._process_deleting_run(now):
+            return True
+        if self._process_cache_recovery(now):
             return True
         candidate = self.job_repository.find_candidate(now=now)
         if candidate is None:
@@ -333,6 +380,274 @@ class BacktestWorker:
         )
         result = service.resume_pending_operations(limit=100)
         return result["completed"] > 0
+
+    def _process_cache_recovery(self, now) -> bool:
+        """Restore missing cache days only after an owner queued recovery."""
+        run = self.repository.claim_cache_recovery(
+            self.worker_id,
+            now=now,
+            lease_seconds=self.lease_seconds,
+        )
+        if run is None:
+            return False
+        heartbeat = _CacheRecoveryLeaseHeartbeat(
+            self, run, current_app._get_current_object()
+        )
+        heartbeat.start()
+        try:
+            self._restore_run_cache(run, heartbeat)
+        except LeaseLostError:
+            return True
+        except Exception as exc:
+            logging.getLogger(__name__).exception(
+                "Backtest cache recovery failed for run %s", run.get("_id")
+            )
+            self.repository.fail_cache_recovery(
+                run["_id"],
+                self.worker_id,
+                message=str(exc) or "Candle data could not be restored.",
+                now=_as_utc(self.clock()),
+            )
+        finally:
+            heartbeat.stop()
+        return True
+
+    def _restore_run_cache(self, run: dict, heartbeat) -> None:
+        """Fetch missing cache days, then republish only the run manifest."""
+        user_id = run["user_id"]
+        snapshot = run.get("snapshot") or {}
+        recovery = run.get("cache_recovery") or {}
+        missing = recovery.get("missing_references") or []
+        completed = 0
+        for item in missing:
+            heartbeat.check()
+            instrument = str(item["instrument"]).upper()
+            utc_date = date.fromisoformat(str(item["utc_date"]))
+            conversion_fetcher = getattr(
+                self.provider, "fetch_conversion_day", None
+            )
+            fetcher = (
+                conversion_fetcher
+                if item.get("kind") == "conversion" and callable(conversion_fetcher)
+                else self.provider.fetch_day
+            )
+            self._fetch_cached_day(
+                user_id, instrument, utc_date, fetcher, heartbeat
+            )
+            self.candle_cache.get_reference(
+                user_id=user_id, instrument=instrument, utc_date=utc_date
+            )
+            completed += 1
+            if not self.repository.update_cache_recovery_progress(
+                run["_id"],
+                self.worker_id,
+                completed=completed,
+                now=_as_utc(self.clock()),
+            ):
+                raise LeaseLostError("Backtest cache recovery lease was lost.")
+
+        base_dates = []
+        for item in snapshot.get("_day_candle_indexes", []):
+            heartbeat.check()
+            utc_date = date.fromisoformat(str(item["utc_date"]))
+            ref = self.candle_cache.get_reference(
+                user_id=user_id,
+                instrument=run["instrument"],
+                utc_date=utc_date,
+            )
+            base_dates.append({
+                "utc_date": _date_instant(utc_date),
+                "outcome": ref["outcome"],
+                "cache_ref": ref,
+            })
+
+        fx_conversion = self._restored_fx_conversion(run, snapshot)
+        rebuilt, coverage = self.snapshot_store.assemble_cache_snapshot(
+            run=run,
+            completed_dates=base_dates,
+            fx_conversion=fx_conversion,
+            cache_version=self.candle_cache.cache_version,
+        )
+        if not rebuilt.get("replay_period_candle_count"):
+            raise RuntimeError(
+                "Restored data contains no candles in the selected replay period."
+            )
+
+        cursor = self._remap_saved_cursor(run, rebuilt)
+        eligibility_anchors = self._build_simulation_eligibility_anchors(run)
+        heartbeat.check()
+        if not self.repository.complete_cache_recovery(
+            run["_id"],
+            self.worker_id,
+            snapshot=rebuilt,
+            coverage=coverage,
+            warmup_coverage=rebuilt["warmup_coverage"],
+            replay_cursor=cursor,
+            eligibility_anchors=eligibility_anchors,
+            completed=int(recovery.get("total", completed)),
+            now=_as_utc(self.clock()),
+        ):
+            raise LeaseLostError("Backtest cache recovery lease was lost before publish.")
+
+    def _restored_fx_conversion(self, run: dict, snapshot: dict) -> dict | None:
+        """Rebuild the frozen conversion route from manifest date references."""
+        series = snapshot.get("fx_conversion_series") or []
+        if not series:
+            return None
+        route = []
+        by_date: dict[date, dict[str, dict]] = {}
+        for item in series:
+            instrument = str(item.get("instrument", "")).upper()
+            if not instrument:
+                continue
+            route.append({
+                key: item.get(key)
+                for key in ("instrument", "direction", "from_currency", "to_currency")
+            })
+            for ref in item.get("_cache_date_refs", []):
+                utc_date = date.fromisoformat(str(ref["utc_date"]))
+                fresh = self.candle_cache.get_reference(
+                    user_id=run["user_id"],
+                    instrument=instrument,
+                    utc_date=utc_date,
+                )
+                by_date.setdefault(utc_date, {})[instrument] = fresh
+        if not route:
+            return None
+        checkpoints = []
+        for utc_date in sorted(by_date):
+            refs = by_date[utc_date]
+            checkpoints.append({
+                "utc_date": _date_instant(utc_date),
+                "outcome": (
+                    "data"
+                    if any(ref["outcome"] == "data" for ref in refs.values())
+                    else "empty"
+                ),
+                "cache_refs": refs,
+            })
+        return {
+            "quote_currency": str(series[0].get("quote_currency", "")).upper(),
+            "supported": True,
+            "route": route,
+            "completed_utc_dates": checkpoints,
+        }
+
+    def _remap_saved_cursor(self, run: dict, snapshot: dict) -> dict:
+        """Map saved cursor times to the latest restored candle at or before them."""
+        saved = run.get("replay_cursor") or {}
+        old_snapshot = run.get("snapshot") or {}
+        replay_start = int(snapshot["replay_start_source_index"])
+        total = int(snapshot["candle_count"])
+        if total <= replay_start:
+            raise RuntimeError("Restored data contains no replay candles.")
+
+        def map_time(target):
+            if isinstance(target, bool) or not isinstance(target, int):
+                target = saved.get("time_ms")
+            if isinstance(target, bool) or not isinstance(target, int):
+                target = self.snapshot_store.read_snapshot_candle_time(
+                    old_snapshot,
+                    int(saved.get("source_candle_index", replay_start)),
+                )
+            index = (
+                self.snapshot_store.source_index_at_or_before(snapshot, target)
+                if isinstance(target, int)
+                else None
+            )
+            if index is None:
+                index = replay_start
+            index = min(max(int(index), replay_start), total - 1)
+            actual_time = self.snapshot_store.read_snapshot_candle_time(
+                snapshot, index
+            )
+            if actual_time is None:
+                raise RuntimeError("Restored replay cursor could not be resolved.")
+            return index, int(actual_time)
+
+        cursor_index, cursor_time = map_time(saved.get("time_ms"))
+        furthest_target = saved.get("furthest_time_ms", saved.get("time_ms"))
+        furthest_index, furthest_time = map_time(furthest_target)
+        if furthest_index < cursor_index:
+            furthest_index, furthest_time = cursor_index, cursor_time
+        return {
+            "source_candle_index": cursor_index,
+            "time_ms": cursor_time,
+            "furthest_source_candle_index": furthest_index,
+            "furthest_time_ms": furthest_time,
+            "revision": int(saved.get("revision", -1)) + 1,
+            "updated_at": _as_utc(self.clock()),
+        }
+
+    def _build_simulation_eligibility_anchors(self, run: dict) -> dict:
+        """Capture stable event times for active state before replacing indexes."""
+        simulation = BacktestSimulationRepository()
+        control = run.get("simulation_control") or {}
+        sequence = int(control.get("committed_sequence", 0))
+        generation = int(control.get("reset_generation", 0))
+        user_id = run["user_id"]
+        run_id = run["_id"]
+        old_snapshot = run.get("snapshot") or {}
+        fallback_time = int(
+            (run.get("replay_cursor") or {}).get(
+                "furthest_time_ms",
+                (run.get("replay_cursor") or {}).get("time_ms", 0),
+            )
+        )
+
+        def anchor_time(document, time_field, index_field):
+            value = document.get(time_field)
+            if isinstance(value, int) and not isinstance(value, bool):
+                return value
+            eligible_index = document.get(index_field)
+            if isinstance(eligible_index, int) and not isinstance(eligible_index, bool):
+                previous = max(0, eligible_index - 1)
+                try:
+                    value = self.snapshot_store.read_snapshot_candle_time(
+                        old_snapshot, previous
+                    )
+                except Exception:
+                    value = None
+                if value is not None:
+                    return int(value)
+            return fallback_time
+
+        anchors = {"orders": {}, "positions": {}}
+        orders = simulation.list_visible_orders(
+            user_id,
+            run_id,
+            reset_generation=generation,
+            committed_sequence=sequence,
+            limit=500,
+        )
+        for order in orders:
+            if order.get("status") != "pending" or order.get("order_id") is None:
+                continue
+            anchor = anchor_time(
+                order, "eligible_after_time_ms", "eligible_source_index"
+            )
+            anchors["orders"][str(order["order_id"])] = anchor
+
+        positions = simulation.list_visible_positions(
+            user_id,
+            run_id,
+            reset_generation=generation,
+            committed_sequence=sequence,
+            open_only=True,
+            limit=500,
+        )
+        for position in positions:
+            if position.get("position_id") is None:
+                continue
+            position_anchors = {}
+            for label in ("stop_loss", "take_profit"):
+                time_field = f"{label}_eligible_after_time_ms"
+                index_field = f"{label}_eligible_source_index"
+                position_anchors[label] = anchor_time(
+                    position, time_field, index_field
+                )
+            anchors["positions"][str(position["position_id"])] = position_anchors
+        return anchors
 
     def _process_deleting_run(self, now) -> bool:
         """Resume one confirmed deletion before claiming preparation work."""
@@ -787,23 +1102,16 @@ class BacktestWorker:
                         heartbeat,
                     )
                     candles = self._validated_candles(result, utc_date, run)
+                    cache_ref = self.candle_cache.get_reference(
+                        user_id=user_id,
+                        instrument=run["instrument"],
+                        utc_date=utc_date,
+                    )
                 except Exception as exc:
                     self._fail_provider_job(job, run, heartbeat, exc)
                     return
 
                 outcome = "data" if candles else "empty"
-                object_key = self.snapshot_store.write_staged_date(
-                    user_id,
-                    run_id,
-                    utc_date,
-                    candles,
-                    before_write=lambda: self._renew_or_lose(
-                        job, run, heartbeat
-                    ),
-                    after_write=lambda key: self._verify_preparation_write(
-                        job, run, heartbeat, key
-                    ),
-                )
                 next_date = utc_date + timedelta(days=1)
                 now = _as_utc(self.clock())
                 self._renew_or_lose(job, run, heartbeat)
@@ -813,7 +1121,7 @@ class BacktestWorker:
                     now=now,
                     utc_date=_date_instant(utc_date),
                     outcome=outcome,
-                    object_key=object_key,
+                    cache_ref=cache_ref,
                     next_utc_date=_date_instant(next_date),
                 )
                 if not checkpointed:
@@ -821,11 +1129,11 @@ class BacktestWorker:
                 completed[utc_date] = {
                     "utc_date": _date_instant(utc_date),
                     "outcome": outcome,
-                    "object_key": object_key,
+                    "cache_ref": cache_ref,
                 }
 
             if needs_fx_series and not fx_done:
-                object_keys = {}
+                cache_refs = {}
                 conversion_outcome = "empty"
                 try:
                     fetch_conversion_day = getattr(
@@ -845,23 +1153,14 @@ class BacktestWorker:
                         fx_candles = self._validated_candles(
                             fx_result, utc_date, run
                         )
+                        cache_ref = self.candle_cache.get_reference(
+                            user_id=user_id,
+                            instrument=instrument,
+                            utc_date=utc_date,
+                        )
                         if fx_candles:
                             conversion_outcome = "data"
-                        fx_object_key = self.snapshot_store.write_staged_conversion_date(
-                            user_id,
-                            run_id,
-                            instrument,
-                            utc_date,
-                            fx_candles,
-                            before_write=lambda: self._renew_or_lose(
-                                job, run, heartbeat
-                            ),
-                            after_write=lambda key: self._verify_preparation_write(
-                                job, run, heartbeat, key
-                            ),
-                        )
-                        if fx_object_key:
-                            object_keys[instrument] = fx_object_key
+                        cache_refs[instrument] = cache_ref
                 except Exception as exc:
                     self._fail_provider_job(job, run, heartbeat, exc)
                     return
@@ -870,7 +1169,7 @@ class BacktestWorker:
                 checkpoint = {
                     "utc_date": _date_instant(utc_date),
                     "outcome": conversion_outcome,
-                    "object_keys": object_keys,
+                    "cache_refs": cache_refs,
                     "completed_at": _as_utc(self.clock()),
                 }
                 if not self._add_fx_checkpoint(job, checkpoint):
@@ -893,15 +1192,11 @@ class BacktestWorker:
             now=_as_utc(self.clock()),
         ):
             raise LeaseLostError("Backtest preparation lease was lost.")
-        snapshot, coverage = self.snapshot_store.assemble_snapshot(
-            user_id=user_id,
+        snapshot, coverage = self.snapshot_store.assemble_cache_snapshot(
             run=run,
             completed_dates=checkpoints,
             fx_conversion=latest_job.get("fx_conversion"),
-            before_publish=lambda: self._renew_or_lose(job, run, heartbeat),
-            after_publish=lambda key: self._verify_preparation_write(
-                job, run, heartbeat, key
-            ),
+            cache_version=self.candle_cache.cache_version,
         )
         if not snapshot.get("replay_period_candle_count"):
             self._renew_or_lose(job, run, heartbeat)

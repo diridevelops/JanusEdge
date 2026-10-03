@@ -228,10 +228,12 @@ def init_db(db: Database) -> None:
             ("updated_at", 1),
         ]
     )
-    # Snapshot objects are run-owned and immutable; sparse keeps preparing
-    # runs without a completed snapshot out of this uniqueness constraint.
     db.backtest_runs.create_index(
-        [("snapshot.object_key", 1)], unique=True, sparse=True
+        [
+            ("cache_availability", 1),
+            ("cache_recovery.state", 1),
+            ("cache_recovery.lease_expires_at", 1),
+        ]
     )
     db.trade_accounts.create_index(
         [("user_id", 1), ("backtest_run_id", 1)],

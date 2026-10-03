@@ -5,6 +5,7 @@ from datetime import date, datetime, timezone
 import threading
 import time
 
+import pytest
 from bson import ObjectId
 
 
@@ -174,3 +175,133 @@ def test_cache_format_version_uses_a_separate_namespace(app, monkeypatch):
         )
 
     assert len(calls) == 2
+
+
+def test_cache_hit_rechecks_minio_and_rebuilds_missing_bucket(app):
+    from minio.error import S3Error
+
+    from app.backtests.candle_cache import BacktestCandleCache
+    from app.storage import get_client, get_market_data_bucket
+
+    day = date(2026, 2, 6)
+    user_id = ObjectId()
+    cache = BacktestCandleCache()
+    old_candle = {
+        "time_ms": int(
+            datetime(2026, 2, 6, tzinfo=timezone.utc).timestamp() * 1000
+        ),
+        "open": 1.0,
+        "high": 1.0,
+        "low": 1.0,
+        "close": 1.0,
+        "volume": 1,
+    }
+    refreshed_candle = {**old_candle, "close": 1.25}
+    fetch_calls = []
+
+    def fetch(candle):
+        def _fetch():
+            fetch_calls.append(candle)
+            return _day(day, [candle])
+
+        return _fetch
+
+    def missing_bucket_error():
+        return S3Error(
+            "NoSuchBucket",
+            "The specified bucket does not exist.",
+            None,
+            None,
+            None,
+            None,
+        )
+
+    with app.app_context():
+        client = get_client()
+        bucket = get_market_data_bucket()
+        first = cache.get_or_fetch(
+            user_id=user_id,
+            instrument="EUR-USD",
+            utc_date=day,
+            fetcher=fetch(old_candle),
+        )
+        assert first["candles"] == [old_candle]
+
+        # Model a removed MinIO volume and a client that rejects writes until
+        # the application recreates the configured bucket.
+        client.buckets.discard(bucket)
+        client.objects = {
+            key: value
+            for key, value in client.objects.items()
+            if key[0] != bucket
+        }
+        original_put = client.put_object.side_effect
+
+        def put_only_if_bucket_exists(
+            put_bucket,
+            object_name,
+            data,
+            length,
+            content_type=None,
+        ):
+            if put_bucket not in client.buckets:
+                raise missing_bucket_error()
+            return original_put(
+                put_bucket,
+                object_name,
+                data,
+                length,
+                content_type,
+            )
+
+        client.put_object.side_effect = put_only_if_bucket_exists
+        restored = cache.get_or_fetch(
+            user_id=user_id,
+            instrument="EUR-USD",
+            utc_date=day,
+            fetcher=fetch(refreshed_candle),
+        )
+
+    assert fetch_calls == [old_candle, refreshed_candle]
+    assert restored["candles"] == [refreshed_candle]
+    assert bucket in client.buckets
+
+
+def test_missing_bucket_is_reported_as_missing_cache_data(app):
+    from minio.error import S3Error
+
+    from app.backtests.snapshot_store import (
+        CachedCandleObjectMissing,
+        SnapshotStore,
+    )
+    from app.storage import get_client
+
+    store = SnapshotStore()
+    entry = {
+        "object_key": "backtests/user/shared-candles/day.parquet",
+        "sha256": "unused",
+        "candle_count": 0,
+        "outcome": "empty",
+        "utc_date": "2026-02-07",
+    }
+
+    missing_bucket = S3Error(
+        "NoSuchBucket",
+        "The specified bucket does not exist.",
+        None,
+        None,
+        None,
+        None,
+    )
+    with app.app_context():
+        client = get_client()
+        client.get_object.side_effect = missing_bucket
+        with pytest.raises(CachedCandleObjectMissing):
+            store.read_cached_candle_date(entry)
+
+        client.get_object.side_effect = None
+        client.stat_object.side_effect = missing_bucket
+        with pytest.raises(CachedCandleObjectMissing):
+            store.read_cached_candle_date(
+                entry, check_object_exists=True
+            )
