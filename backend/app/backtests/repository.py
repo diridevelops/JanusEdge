@@ -49,7 +49,7 @@ class BacktestRepository(BaseRepository):
             {
                 "user_id": ObjectId(user_id),
                 "status": {
-                    "$in": ["selecting_period", "preparing", "ready", "deleting"]
+                    "$in": ["selecting_period", "preparing", "ready", "complete", "deleting"]
                 },
             },
             sort=[("created_at", -1), ("_id", -1)],
@@ -703,7 +703,7 @@ class BacktestRepository(BaseRepository):
             {
                 "_id": run_oid,
                 "user_id": ObjectId(user_id),
-                "status": "ready",
+                "status": {"$in": ["ready", "complete"]},
                 "replay_cursor.revision": expected_revision,
             },
             {
@@ -953,7 +953,7 @@ class BacktestRepository(BaseRepository):
             {
                 "_id": run_oid,
                 "user_id": user_oid,
-                "status": "ready",
+                "status": {"$in": ["ready", "complete"]},
                 "simulation_control.pending_operation_id": operation_oid,
                 "simulation_control.committed_sequence": sequence,
                 "simulation_control.reset_generation": reset_generation,

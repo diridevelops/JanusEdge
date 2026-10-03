@@ -772,7 +772,7 @@ class BacktestService:
         )
         result = serialize_run(run, account)
         result["tabs"] = []
-        if run["status"] == "ready":
+        if run["status"] in {"ready", "complete"}:
             result["tabs"] = [
                 {
                     "id": tab["id"],
@@ -1174,7 +1174,7 @@ class BacktestService:
         current_cursor = current.get("replay_cursor") or {}
         if current_cursor.get("revision") != expected_revision:
             raise ConflictError("Replay position revision is stale.")
-        if current.get("status") != "ready":
+        if current.get("status") not in {"ready", "complete"}:
             raise ConflictError("Backtest run is not ready for replay.")
         raise ConflictError("Replay position changed; reload and try again.")
 
@@ -1182,7 +1182,7 @@ class BacktestService:
         run = self.repository.find_owned_run(user_id, run_id)
         if run is None:
             raise NotFoundError("Backtest run not found.")
-        if run.get("status") != "ready" or not run.get("snapshot"):
+        if run.get("status") not in {"ready", "complete"} or not run.get("snapshot"):
             raise ConflictError("Backtest run is not ready for replay.")
         self._require_cache_available(run)
         return run

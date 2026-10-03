@@ -11,7 +11,7 @@ from bson import ObjectId
 from app.utils.datetime_utils import utc_now
 
 
-RUN_STATUSES = frozenset({"selecting_period", "preparing", "ready", "deleting"})
+RUN_STATUSES = frozenset({"selecting_period", "preparing", "ready", "complete", "deleting"})
 PRICE_MODE = "combined_midpoint"
 SOURCE_SIDE = "COMB"
 VOLUME_SEMANTICS = "two_sided_quote_liquidity"

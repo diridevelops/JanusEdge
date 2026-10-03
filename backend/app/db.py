@@ -158,6 +158,21 @@ def init_db(db: Database) -> None:
         ],
         partialFilterExpression={"backtest_run_id": {"$exists": True}},
     )
+    db.trades.create_index(
+        [
+            ("user_id", 1),
+            ("portable_backup_source.source_user_id", 1),
+            ("portable_backup_source.source_run_id", 1),
+            ("portable_backup_source.source_trade_id", 1),
+        ],
+        unique=True,
+        partialFilterExpression={
+            "backtest_run_id": {"$exists": True},
+            "portable_backup_source.source_user_id": {"$exists": True},
+            "portable_backup_source.source_run_id": {"$exists": True},
+            "portable_backup_source.source_trade_id": {"$exists": True},
+        },
+    )
 
     # Tags
     db.tags.create_index(
@@ -220,6 +235,18 @@ def init_db(db: Database) -> None:
 
     db.backtest_runs.create_index(
         [("user_id", 1), ("created_at", -1)]
+    )
+    db.backtest_runs.create_index(
+        [
+            ("user_id", 1),
+            ("portable_origin.source_user_id", 1),
+            ("portable_origin.source_run_id", 1),
+        ],
+        unique=True,
+        partialFilterExpression={
+            "portable_origin.source_user_id": {"$exists": True},
+            "portable_origin.source_run_id": {"$exists": True},
+        },
     )
     db.backtest_runs.create_index(
         [

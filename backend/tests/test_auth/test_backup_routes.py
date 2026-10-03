@@ -128,6 +128,17 @@ def clean_db(app):
             "media",
             "market_data_datasets",
             "market_data_import_batches",
+            "backtest_runs",
+            "backtest_candle_cache",
+            "backtest_preparation_jobs",
+            "backtest_simulation_operations",
+            "backtest_simulation_orders",
+            "backtest_simulation_positions",
+            "backtest_simulation_cost_profiles",
+            "backtest_chart_tabs",
+            "backtest_chart_workspaces",
+            "backtest_drawing_states",
+            "backtest_notices",
         ]:
             mongo.db[collection].delete_many({})
     yield
@@ -726,6 +737,45 @@ def _restore_archive(client, token: str, archive_bytes: bytes):
     )
 
 
+def test_backtest_export_contains_committed_graph_without_candle_objects(
+    client, app
+):
+    """Replayable runs export committed state and portable cache manifests."""
+    token, user_id = _register_and_login(client, "backtest-export")
+    seeded = _seed_backtest_backup_graph(app, user_id)
+    archive_bytes = _export_archive_bytes(client, token)
+    manifest, payload, names = _parse_archive(archive_bytes)
+
+    assert manifest["version"] == "1.1"
+    assert manifest["counts"]["backtest_runs"] == 1
+    backtests = payload["backtests"]
+    assert [str(run["_id"]) for run in backtests["runs"]] == [str(seeded["run_id"])]
+    assert backtests["runs"][0]["status"] == "complete"
+    assert "preparation_job_id" not in backtests["runs"][0]
+    assert "cache_recovery" not in backtests["runs"][0]
+    assert backtests["runs"][0]["simulation_control"]["pending_operation_id"] is None
+    assert len(backtests["simulation_operations"]) == 1
+    assert len(backtests["simulation_orders"]) == 2
+    assert {
+        item["operation_sequence"] for item in backtests["simulation_orders"]
+    } == {3, 4}
+    assert len(backtests["simulation_positions"]) == 2
+    assert len(backtests["simulation_cost_profiles"]) == 1
+    assert len(backtests["chart_tabs"]) == 1
+    assert len(backtests["chart_workspaces"]) == 1
+    assert len(backtests["drawing_states"]) == 1
+    assert len(payload["executions"]) == 2
+    assert "backtest_candle_cache" not in payload
+    assert not any(name.startswith("backtests/") for name in names)
+    for ref in (
+        backtests["runs"][0]["snapshot"]["_day_candle_indexes"][0]["cache_ref"],
+        backtests["runs"][0]["snapshot"]["fx_conversion_series"][0]["_cache_date_refs"][0],
+    ):
+        assert "object_key" not in ref
+        assert "cache_key" not in ref
+        assert ref["sha256"]
+
+
 def test_export_backup_is_complete_and_self_contained(
     client, app
 ):
@@ -737,7 +787,7 @@ def test_export_backup_is_complete_and_self_contained(
     manifest, payload, names = _parse_archive(archive_bytes)
 
     assert manifest["archive_type"] == "janusedge-portable-backup"
-    assert manifest["version"] == "1.0"
+    assert manifest["version"] == "1.1"
     assert manifest["counts"] == {
         "accounts": 2,
         "tags": 2,
@@ -746,6 +796,7 @@ def test_export_backup_is_complete_and_self_contained(
         "executions": 3,
         "media": 2,
         "market_data_datasets": 4,
+        "backtest_runs": 0,
     }
     assert payload["settings"] == {
         "timezone": "America/Chicago",
@@ -898,6 +949,339 @@ def test_legacy_user_backup_uses_safe_breakeven_defaults(client, app):
     _, payload, _ = _parse_archive(
         _export_archive_bytes(client, token)
     )
+
+
+def _seed_backtest_backup_graph(app, user_id: str) -> dict:
+    """Seed one completed run with committed simulation and chart records."""
+    with app.app_context():
+        from app.extensions import mongo
+
+        user_oid = ObjectId(user_id)
+        (
+            run_id,
+            account_id,
+            trade_id,
+            position_id,
+            order_id,
+            fill_id,
+            open_trade_id,
+            open_position_id,
+            open_order_id,
+            open_fill_id,
+        ) = [ObjectId() for _ in range(10)]
+        now = datetime(2026, 9, 30, 12, 0, tzinfo=timezone.utc)
+        replay_ref = {
+            "cache_key": "dukascopy-comb-1m-v1:EUR-USD:2026-09-30",
+            "cache_version": "dukascopy-comb-1m-v1",
+            "instrument": "EUR-USD",
+            "utc_date": "2026-09-30",
+            "object_key": f"backtests/{user_id}/private/replay.parquet",
+            "sha256": "replay-sha256",
+            "outcome": "data",
+            "candle_count": 20,
+        }
+        conversion_ref = {
+            **replay_ref,
+            "instrument": "EUR-GBP",
+            "cache_key": "dukascopy-comb-1m-v1:EUR-GBP:2026-09-30",
+            "object_key": f"backtests/{user_id}/private/conversion.parquet",
+            "sha256": "conversion-sha256",
+        }
+        account = create_trade_account_doc(
+            user_id=user_oid,
+            account_name="Backtest Account",
+            source_platform="backtest",
+            starting_balance_usd=10000.0,
+            risk_percent=1.0,
+        )
+        account.update(
+            {
+                "_id": account_id,
+                "workspace_mode": "backtest",
+                "backtest_run_id": run_id,
+            }
+        )
+        mongo.db.trade_accounts.insert_one(account)
+        mongo.db.backtest_runs.insert_one(
+            {
+                "_id": run_id,
+                "user_id": user_oid,
+                "instrument": "EUR-USD",
+                "status": "complete",
+                "account_id": account_id,
+                "requested_start_date": "2026-09-30",
+                "requested_end_date": "2026-09-30",
+                "display_timezone": "UTC",
+                "start_utc_ms": 1790772000000,
+                "end_utc_ms": 1790858399999,
+                "initial_balance_usd": 10000.0,
+                "current_balance_usd": 10020.0,
+                "risk_percent": 1.0,
+                "execution_costs": {"total_spread_pips": 0.2},
+                "instrument_metadata": {"price_precision": 5},
+                "snapshot": {
+                    "storage_mode": "shared_cache",
+                    "cache_version": "dukascopy-comb-1m-v1",
+                    "candle_count": 20,
+                    "_day_candle_indexes": [
+                        {"utc_date": "2026-09-30", "cache_ref": replay_ref}
+                    ],
+                    "fx_conversion_series": [
+                        {
+                            "instrument": "EUR-GBP",
+                            "direction": "direct",
+                            "_cache_date_refs": [conversion_ref],
+                        }
+                    ],
+                },
+                "coverage": {"candle_count": 20},
+                "warmup_coverage": {"candle_count": 0},
+                "replay_cursor": {
+                    "source_candle_index": 19,
+                    "time_ms": 1790773140000,
+                    "furthest_source_candle_index": 19,
+                    "furthest_time_ms": 1790773140000,
+                    "revision": 6,
+                },
+                "simulation_control": {
+                    "committed_sequence": 5,
+                    "control_revision": 6,
+                    "reset_generation": 0,
+                    "pending_operation_id": ObjectId(),
+                    "has_accepted_order": True,
+                },
+                "preparation_job_id": ObjectId(),
+                "preparation_lease_owner": "expired-worker",
+                "cache_recovery": {"state": "running", "lease_owner": "worker"},
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+        trade = create_trade_doc(
+            user_id=user_oid,
+            trade_account_id=account_id,
+            import_batch_id=None,
+            symbol="EUR-USD",
+            raw_symbol="EUR-USD",
+            side="Long",
+            total_quantity=1.0,
+            max_quantity=1.0,
+            avg_entry_price=1.12,
+            avg_exit_price=1.13,
+            gross_pnl=10.0,
+            fee=0.0,
+            fee_source="simulated_cost_profile",
+            net_pnl=10.0,
+            initial_risk=8.0,
+            entry_time=now,
+            exit_time=now,
+            holding_time_seconds=60,
+            execution_count=1,
+            source="backtest",
+            status="open",
+            instrument_type="cfd",
+            lot_size=1.0,
+            base_currency="EUR",
+            quote_currency="USD",
+            pip_size=0.0001,
+            price_precision=5,
+            contract_size=100000.0,
+        )
+        trade.update(
+            {
+                "_id": trade_id,
+                "backtest_run_id": run_id,
+                "simulation_generation": 0,
+                "simulation_operation_sequence": 3,
+                "simulated_position_id": position_id,
+            }
+        )
+        mongo.db.trades.insert_one(trade)
+        fill = {
+            "_id": fill_id,
+            "user_id": user_oid,
+            "trade_account_id": account_id,
+            "trade_id": trade_id,
+            "backtest_run_id": run_id,
+            "backtest_order_id": order_id,
+            "simulated_position_id": position_id,
+            "symbol": "EUR-USD",
+            "raw_symbol": "EUR-USD",
+            "reset_generation": 0,
+            "simulation_operation_sequence": 3,
+            "source_candle_index": 3,
+            "allocation_index": 0,
+            "timestamp": now,
+            "side": "Buy",
+            "quantity": 1.0,
+            "price": 1.12,
+            "entry_exit": "Entry",
+            "simulation_committed": True,
+        }
+        mongo.db.executions.insert_one(fill)
+        mongo.db.executions.insert_one(
+            {
+                **fill,
+                "_id": ObjectId(),
+                "simulation_committed": False,
+                "simulation_operation_sequence": 9,
+            }
+        )
+        mongo.db.executions.insert_one(
+            {
+                **fill,
+                "_id": open_fill_id,
+                "trade_id": open_trade_id,
+                "backtest_order_id": open_order_id,
+                "simulated_position_id": open_position_id,
+                "simulation_operation_sequence": 4,
+                "source_candle_index": 4,
+            }
+        )
+        mongo.db.backtest_simulation_operations.insert_many(
+            [
+                {
+                    "_id": ObjectId(),
+                    "user_id": user_oid,
+                    "run_id": run_id,
+                    "client_operation_id": "committed",
+                    "sequence": 5,
+                    "state": "committed",
+                    "final_state": "committed",
+                    "created_at": now,
+                },
+                {
+                    "_id": ObjectId(),
+                    "user_id": user_oid,
+                    "run_id": run_id,
+                    "client_operation_id": "pending",
+                    "sequence": 6,
+                    "state": "pending",
+                    "final_state": None,
+                    "created_at": now,
+                },
+            ]
+        )
+        mongo.db.backtest_simulation_orders.insert_many(
+            [
+                {
+                    "_id": ObjectId(),
+                    "user_id": user_oid,
+                    "run_id": run_id,
+                    "reset_generation": 0,
+                    "order_id": order_id,
+                    "operation_sequence": 3,
+                    "entity_version": 1,
+                    "status": "filled",
+                },
+                {
+                    "_id": ObjectId(),
+                    "user_id": user_oid,
+                    "run_id": run_id,
+                    "reset_generation": 0,
+                    "order_id": open_order_id,
+                    "operation_sequence": 4,
+                    "entity_version": 1,
+                    "status": "filled",
+                },
+                {
+                    "_id": ObjectId(),
+                    "user_id": user_oid,
+                    "run_id": run_id,
+                    "reset_generation": 0,
+                    "order_id": ObjectId(),
+                    "operation_sequence": 9,
+                    "entity_version": 1,
+                },
+            ]
+        )
+        mongo.db.backtest_simulation_positions.insert_one(
+            {
+                "_id": ObjectId(),
+                "user_id": user_oid,
+                "run_id": run_id,
+                "trade_account_id": account_id,
+                "reset_generation": 0,
+                "position_id": position_id,
+                "simulated_trade_id": trade_id,
+                "operation_sequence": 4,
+                "entity_version": 1,
+                "entry_fill_ids": [fill_id],
+                "status": "open",
+            }
+        )
+        mongo.db.backtest_simulation_positions.insert_one(
+            {
+                "_id": ObjectId(),
+                "user_id": user_oid,
+                "run_id": run_id,
+                "trade_account_id": account_id,
+                "reset_generation": 0,
+                "position_id": open_position_id,
+                "simulated_trade_id": open_trade_id,
+                "operation_sequence": 4,
+                "entity_version": 1,
+                "entry_fill_ids": [open_fill_id],
+                "status": "open",
+            }
+        )
+        mongo.db.backtest_simulation_cost_profiles.insert_one(
+            {
+                "_id": ObjectId(),
+                "user_id": user_oid,
+                "run_id": run_id,
+                "revision": 0,
+                "operation_sequence": 0,
+                "total_spread_pips": 0.2,
+                "updated_at": now,
+            }
+        )
+        mongo.db.backtest_chart_tabs.insert_one(
+            {
+                "_id": ObjectId(),
+                "user_id": user_oid,
+                "run_id": run_id,
+                "id": "primary",
+                "position": 0,
+                "interval_minutes": 1,
+            }
+        )
+        mongo.db.backtest_chart_workspaces.insert_one(
+            {
+                "_id": ObjectId(),
+                "user_id": user_oid,
+                "run_id": run_id,
+                "revision": 2,
+                "layout": {"tabs": ["primary"]},
+            }
+        )
+        mongo.db.backtest_drawing_states.insert_one(
+            {
+                "_id": ObjectId(),
+                "user_id": user_oid,
+                "run_id": run_id,
+                "interval_minutes": 1,
+                "serialized_state": "saved-drawing-state",
+            }
+        )
+        mongo.db.backtest_runs.insert_one(
+            {
+                "_id": ObjectId(),
+                "user_id": user_oid,
+                "status": "preparing",
+                "snapshot": None,
+            }
+        )
+        return {
+            "run_id": run_id,
+            "account_id": account_id,
+            "trade_id": trade_id,
+            "position_id": position_id,
+            "fill_id": fill_id,
+            "open_trade_id": open_trade_id,
+            "open_position_id": open_position_id,
+            "open_fill_id": open_fill_id,
+        }
     assert payload["settings"]["risk_breakeven_enabled"] is False
     assert payload["settings"]["risk_breakeven_r_threshold"] == 0.05
 
@@ -962,6 +1346,145 @@ def test_export_backup_dedupes_legacy_market_data_symbol_aliases(
     )
 
 
+def test_restore_backtest_graph_remaps_and_reuses_run(client, app):
+    """Imported completed runs expose missing-cache recovery and dedupe."""
+    source_token, source_user_id = _register_and_login(client, "backtest-source")
+    seeded = _seed_backtest_backup_graph(app, source_user_id)
+    archive_bytes = _export_archive_bytes(client, source_token)
+    destination_token, destination_user_id = _register_and_login(
+        client, "backtest-destination"
+    )
+
+    first = _restore_archive(client, destination_token, archive_bytes)
+    assert first.status_code == 200
+    assert first.get_json()["summary"]["backtest_runs"] == {"created": 1, "reused": 0}
+    with app.app_context():
+        from app.extensions import mongo
+
+        destination_oid = ObjectId(destination_user_id)
+        run = mongo.db.backtest_runs.find_one({"user_id": destination_oid})
+        assert run["status"] == "complete"
+        assert run["_id"] != seeded["run_id"]
+        assert run["portable_origin"] == {
+            "source_user_id": source_user_id,
+            "source_run_id": str(seeded["run_id"]),
+        }
+        assert run["simulation_control"]["pending_operation_id"] is None
+        assert run["cache_availability"] == "missing"
+        assert "object_key" not in run["snapshot"]["_day_candle_indexes"][0]["cache_ref"]
+        account = mongo.db.trade_accounts.find_one(
+            {"_id": run["account_id"], "user_id": destination_oid}
+        )
+        position = mongo.db.backtest_simulation_positions.find_one(
+            {
+                "run_id": run["_id"],
+                "user_id": destination_oid,
+                "position_id": seeded["position_id"],
+            }
+        )
+        open_position = mongo.db.backtest_simulation_positions.find_one(
+            {
+                "run_id": run["_id"],
+                "user_id": destination_oid,
+                "position_id": seeded["open_position_id"],
+            }
+        )
+        trade = mongo.db.trades.find_one(
+            {"backtest_run_id": run["_id"], "user_id": destination_oid}
+        )
+        fill = mongo.db.executions.find_one(
+            {
+                "backtest_run_id": run["_id"],
+                "user_id": destination_oid,
+                "simulated_position_id": seeded["position_id"],
+            }
+        )
+        open_fill = mongo.db.executions.find_one(
+            {
+                "backtest_run_id": run["_id"],
+                "user_id": destination_oid,
+                "simulated_position_id": seeded["open_position_id"],
+            }
+        )
+        assert account["backtest_run_id"] == run["_id"]
+        assert position["trade_account_id"] == account["_id"]
+        assert position["simulated_trade_id"] == trade["_id"]
+        assert position["entry_fill_ids"] == [fill["_id"]]
+        assert fill["trade_id"] == trade["_id"]
+        assert open_position["simulated_trade_id"] != seeded["open_trade_id"]
+        assert open_position["simulated_trade_id"] == open_fill["trade_id"]
+        assert open_position["entry_fill_ids"] == [open_fill["_id"]]
+        assert mongo.db.trades.find_one(
+            {"_id": open_position["simulated_trade_id"]}
+        ) is None
+        for collection in (
+            "backtest_chart_tabs",
+            "backtest_chart_workspaces",
+            "backtest_drawing_states",
+            "backtest_simulation_operations",
+            "backtest_simulation_cost_profiles",
+        ):
+            assert mongo.db[collection].count_documents({"run_id": run["_id"]}) == 1
+        assert mongo.db.backtest_simulation_orders.count_documents(
+            {"run_id": run["_id"]}
+        ) == 2
+
+    run_id = str(run["_id"])
+    listed = client.get("/api/backtest/runs", headers=_auth(destination_token))
+    assert listed.status_code == 200
+    assert any(item["id"] == run_id and item["status"] == "complete" for item in listed.get_json()["runs"])
+    cache_status = client.get(
+        f"/api/backtest/runs/{run_id}/cache-status",
+        headers=_auth(destination_token),
+    )
+    assert cache_status.status_code == 200
+    assert cache_status.get_json()["state"] == "missing"
+    assert {
+        (item["instrument"], item["kind"])
+        for item in cache_status.get_json()["missing_references"]
+    } == {("EUR-USD", "replay"), ("EUR-GBP", "conversion")}
+
+    second = _restore_archive(client, destination_token, archive_bytes)
+    assert second.status_code == 200
+    assert second.get_json()["summary"]["backtest_runs"] == {"created": 0, "reused": 1}
+    with app.app_context():
+        from app.extensions import mongo
+
+        run_oid = ObjectId(run_id)
+        assert mongo.db.backtest_runs.count_documents({"user_id": ObjectId(destination_user_id)}) == 1
+        assert mongo.db.backtest_simulation_orders.count_documents({"run_id": run_oid}) == 2
+        assert mongo.db.backtest_simulation_positions.count_documents({"run_id": run_oid}) == 2
+        assert mongo.db.executions.count_documents({"backtest_run_id": run_oid}) == 2
+
+
+def test_restore_accepts_legacy_v10_archive_without_backtests(client):
+    """Format 1.0 backups still restore without adding run records."""
+    source_token, _ = _register_and_login(client, "legacy-v10-source")
+    archive_bytes = _export_archive_bytes(client, source_token)
+    rewritten = BytesIO()
+    with zipfile.ZipFile(BytesIO(archive_bytes)) as source:
+        manifest = json.loads(source.read("manifest.json").decode("utf-8"))
+        payload = json_util.loads(source.read("data.json").decode("utf-8"))
+        entries = {
+            name: source.read(name)
+            for name in source.namelist()
+            if name not in {"manifest.json", "data.json"}
+        }
+    manifest["version"] = "1.0"
+    manifest["counts"].pop("backtest_runs", None)
+    payload.pop("backtests", None)
+    with zipfile.ZipFile(rewritten, "w", compression=zipfile.ZIP_DEFLATED) as target:
+        target.writestr("manifest.json", json.dumps(manifest).encode("utf-8"))
+        target.writestr("data.json", json_util.dumps(payload).encode("utf-8"))
+        for name, contents in entries.items():
+            target.writestr(name, contents)
+
+    destination_token, _ = _register_and_login(client, "legacy-v10-destination")
+    response = _restore_archive(client, destination_token, rewritten.getvalue())
+    assert response.status_code == 200
+    assert response.get_json()["summary"]["backtest_runs"] == {"created": 0, "reused": 0}
+
+
 def test_restore_into_different_user_remaps_graph_and_media(
     client, app
 ):
@@ -991,6 +1514,7 @@ def test_restore_into_different_user_remaps_graph_and_media(
         "skipped": 0,
     }
     assert summary["media"] == {"created": 2, "skipped": 0}
+    assert summary["backtest_runs"] == {"created": 0, "reused": 0}
     assert summary["market_data_datasets"] == {
         "upserted": 4,
         "objects_restored": 4,
@@ -1180,6 +1704,7 @@ def test_restore_merge_into_empty_user_creates_all_records(
         "trades": {"created": 2, "skipped": 0},
         "executions": {"created": 3, "skipped": 0},
         "media": {"created": 2, "skipped": 0},
+        "backtest_runs": {"created": 0, "reused": 0},
         "market_data_datasets": {
             "upserted": 4,
             "objects_restored": 4,
@@ -1282,6 +1807,7 @@ def test_restore_merge_skips_duplicates_and_reuses_natural_keys(
         "skipped": 2,
     }
     assert summary["media"] == {"created": 1, "skipped": 1}
+    assert summary["backtest_runs"] == {"created": 0, "reused": 0}
 
 
 def test_restore_duplicate_detection_uses_stable_trade_fingerprint_only(

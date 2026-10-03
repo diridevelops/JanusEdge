@@ -116,6 +116,7 @@ export interface RestoreSummary {
   trades: RestoreDuplicateSummary;
   executions: RestoreDuplicateSummary;
   media: RestoreDuplicateSummary;
+  backtest_runs: RestoreCountSummary;
   market_data_datasets?: RestoreMarketDataSummary;
   market_data_cache?: RestoreMarketDataSummary;
   settings: RestoreSettingsSummary;

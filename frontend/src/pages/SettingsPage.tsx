@@ -62,6 +62,7 @@ const RESTORE_SUMMARY_ITEMS: Array<{
   { key: 'trades', label: 'Trades' },
   { key: 'executions', label: 'Executions' },
   { key: 'media', label: 'Media' },
+  { key: 'backtest_runs', label: 'Backtest Runs' },
 ];
 
 function getErrorMessage(error: unknown, fallbackMessage: string): string {
@@ -1675,7 +1676,7 @@ export function SettingsPage() {
             </p>
           </div>
           <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
-            Restore merges data into the current account. Existing accounts, tags, and import batches are reused when possible, and duplicate trades are skipped.
+            Restore merges data into the current account. Existing accounts, tags, and import batches are reused when possible, and duplicate trades are skipped. Backups include ready and completed backtest runs with their saved trading and chart state, but not Dukascopy replay or conversion candles. Restored runs reuse matching local candle data or offer to download missing dates.
           </div>
         </div>
 

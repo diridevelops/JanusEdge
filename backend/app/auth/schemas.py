@@ -175,7 +175,7 @@ class BackupManifestSchema(Schema):
     )
     version = fields.Str(
         required=True,
-        validate=validate.OneOf(["1.0"]),
+        validate=validate.OneOf(["1.0", "1.1"]),
     )
     created_at = fields.Str(
         required=True,
