@@ -29,4 +29,4 @@ dev = [
 package = false
 
 [tool.uv.sources]
-dukascopy-market-data = { git = "https://github.com/diridevelops/dukascopy-market-data-cli.git", rev = "e8dd0b7fc01631e5d519b92b6eea34ed2f156957" }
+dukascopy-market-data = { git = "https://github.com/diridevelops/dukascopy-market-data-cli.git", rev = "60b20f3c16fa457edc3b0e9db4bc57919cd015df" }

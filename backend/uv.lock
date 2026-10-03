@@ -160,7 +160,7 @@ wheels = [
 [[package]]
 name = "dukascopy-market-data"
 version = "0.1.0"
-source = { git = "https://github.com/diridevelops/dukascopy-market-data-cli.git?rev=e8dd0b7fc01631e5d519b92b6eea34ed2f156957#e8dd0b7fc01631e5d519b92b6eea34ed2f156957" }
+source = { git = "https://github.com/diridevelops/dukascopy-market-data-cli.git?rev=60b20f3c16fa457edc3b0e9db4bc57919cd015df#60b20f3c16fa457edc3b0e9db4bc57919cd015df" }
 dependencies = [
     { name = "pyarrow" },
 ]
@@ -282,7 +282,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "bcrypt", specifier = "==4.2.1" },
-    { name = "dukascopy-market-data", git = "https://github.com/diridevelops/dukascopy-market-data-cli.git?rev=e8dd0b7fc01631e5d519b92b6eea34ed2f156957" },
+    { name = "dukascopy-market-data", git = "https://github.com/diridevelops/dukascopy-market-data-cli.git?rev=60b20f3c16fa457edc3b0e9db4bc57919cd015df" },
     { name = "flask", specifier = "==3.1.1" },
     { name = "flask-cors", specifier = "==5.0.1" },
     { name = "flask-jwt-extended", specifier = "==4.7.1" },
