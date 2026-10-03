@@ -137,6 +137,8 @@ describe('Backtest position overlay', () => {
       .toBe('position-entry-label-position-A');
     expect(byLabel(root, 'Move stop-loss for position position-A, 99.00').props.className)
       .toContain('left-0');
+    expect(byLabel(root, 'Move stop-loss for position position-A, 99.00').props.className)
+      .toContain('cursor-ns-resize');
     expect(byLabel(root, 'Move take-profit for position position-B, 104.00').props.className)
       .toContain('left-0');
   });

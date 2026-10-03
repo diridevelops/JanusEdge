@@ -217,7 +217,7 @@ export function BacktestPositionOverlay({
                     <button
                       type="button"
                       disabled={disabled}
-                      className="pointer-events-auto absolute -top-3 left-0 max-w-[42%] truncate rounded px-1.5 py-0.5 text-[10px] font-semibold text-white shadow"
+                      className="pointer-events-auto absolute -top-3 left-0 max-w-[42%] cursor-ns-resize truncate rounded px-1.5 py-0.5 text-[10px] font-semibold text-white shadow"
                       style={{ backgroundColor: level.color, marginTop: index * 15 }}
                       aria-label={`Move ${level.name === 'stop' ? 'stop-loss' : 'take-profit'} for position ${position.id}, ${level.price.toFixed(pricePrecision)}`}
                       onPointerDown={(event: ReactPointerEvent<HTMLButtonElement>) => {
