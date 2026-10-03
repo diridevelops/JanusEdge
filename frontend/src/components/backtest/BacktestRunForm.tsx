@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { createBacktestRun, getBacktestInstruments } from '../../api/backtests.api';
+import { InstrumentCombobox } from './InstrumentCombobox';
 import type {
   BacktestRunSummary,
   BacktestRandomPeriodMonths,
@@ -233,20 +234,17 @@ export function BacktestRunForm({
         <label htmlFor="backtest-instrument" className="mb-1 block text-sm font-medium text-gray-700 dark:text-gray-300">
           Instrument
         </label>
-        <select
+        <InstrumentCombobox
           id="backtest-instrument"
-          required
           value={instrument}
-          onChange={(event) => {
-            setInstrument(event.target.value);
+          instruments={instruments}
+          disabled={isLoadingInstruments || !instruments.length || isSubmitting}
+          placeholder={isLoadingInstruments ? 'Loading instruments…' : 'Select an instrument'}
+          onChange={(selectedInstrument) => {
+            setInstrument(selectedInstrument);
             setFormError(null);
           }}
-          disabled={isLoadingInstruments || !instruments.length || isSubmitting}
-          className="input-field"
-        >
-          <option value="" disabled>Select an instrument</option>
-          {instruments.map((code) => <option key={code} value={code}>{code}</option>)}
-        </select>
+        />
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">

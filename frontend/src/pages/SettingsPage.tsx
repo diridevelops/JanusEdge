@@ -17,6 +17,7 @@ import {
 import { getBacktestInstrumentSpecs } from '../api/backtests.api';
 import { createTag, createTagCategory, deleteTag, deleteTagCategory, listTagCategories, listTags, moveTag, updateTagCategory } from '../api/tags.api';
 import { PageHeader } from '../components/ui/PageHeader';
+import { filterInstrumentSearch } from '../utils/instrumentSearch';
 import { useAuth } from '../hooks/useAuth';
 import { useFilters } from '../hooks/useFilters';
 import { useToast } from '../hooks/useToast';
@@ -598,11 +599,11 @@ export function SettingsPage() {
   const restoreMarketDataSummary =
     restoreSummary?.market_data_datasets ?? restoreSummary?.market_data_cache ?? null;
   const instrumentPageSize = 100;
-  const filteredInstrumentRows = forexMappingRows.filter((row) => {
-    const query = instrumentSearch.trim().toUpperCase();
-    return !query || `${row.pair} ${row.baseCurrency} ${row.quoteCurrency}`
-      .toUpperCase().includes(query);
-  });
+  const filteredInstrumentRows = filterInstrumentSearch(
+    forexMappingRows,
+    instrumentSearch,
+    (row) => [row.pair, row.baseCurrency, row.quoteCurrency]
+  );
   const instrumentPageCount = Math.max(1, Math.ceil(filteredInstrumentRows.length / instrumentPageSize));
   const displayedInstrumentRows = filteredInstrumentRows.slice(
     instrumentPage * instrumentPageSize,
