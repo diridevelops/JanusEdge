@@ -23,6 +23,44 @@ export function BacktestReplayControls({
 }: BacktestReplayControlsProps) {
   const [replayState, setReplayState] = useState<ReplayState>(() => controller.getState());
   useEffect(() => controller.subscribe(setReplayState), [controller]);
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.defaultPrevented
+        || event.repeat
+        || event.altKey
+        || event.ctrlKey
+        || event.metaKey
+        || event.shiftKey
+        || navigationDisabled
+      ) return;
+
+      const target = event.target instanceof HTMLElement ? event.target : null;
+      if (
+        target?.isContentEditable
+        || target?.closest('input, textarea, select, [contenteditable], [role="textbox"], [role="combobox"], [role="slider"], [role="spinbutton"]')
+      ) return;
+
+      const state = controller.getState();
+      if (state.status !== 'ready') return;
+
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        controller.step(-1);
+      } else if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        controller.step(1);
+      } else if (event.code === 'Space' || event.key === ' ') {
+        if (target?.closest('button, [role="button"], a[href]')) return;
+        event.preventDefault();
+        if (state.playing) controller.pause();
+        else controller.play();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [controller, navigationDisabled]);
 
   const formatTime = useMemo(() => {
     const formatter = createBacktestTimeFormatters(displayTimezone, blindMode);
@@ -47,7 +85,8 @@ export function BacktestReplayControls({
           type="button"
           className="backtest-replay-segment"
           aria-label="Step back one candle"
-          title="Step back one candle"
+          aria-keyshortcuts="ArrowLeft"
+          title="Step back one candle (Left Arrow)"
           disabled={transportDisabled}
           onClick={() => controller.step(-1)}
         >
@@ -57,7 +96,8 @@ export function BacktestReplayControls({
           type="button"
           className="backtest-replay-segment backtest-replay-play"
           aria-label={isPlaying ? 'Pause replay' : 'Play replay'}
-          title={isPlaying ? 'Pause replay' : 'Play replay'}
+          aria-keyshortcuts="Space"
+          title={isPlaying ? 'Pause replay (Spacebar)' : 'Play replay (Spacebar)'}
           aria-pressed={isPlaying}
           disabled={transportDisabled}
           onClick={() => (isPlaying ? controller.pause() : controller.play())}
@@ -70,7 +110,8 @@ export function BacktestReplayControls({
           type="button"
           className="backtest-replay-segment"
           aria-label="Step forward one candle"
-          title="Step forward one candle"
+          aria-keyshortcuts="ArrowRight"
+          title="Step forward one candle (Right Arrow)"
           disabled={transportDisabled}
           onClick={() => controller.step(1)}
         >
