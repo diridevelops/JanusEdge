@@ -43,6 +43,7 @@ export interface BacktestSimulationChartUi {
   markPrice: number | null;
   pricePrecision: number;
   tickSize: number;
+  lotIncrement: number;
   pipSize: number;
   priceUnitLabel: string;
   disabled: boolean;

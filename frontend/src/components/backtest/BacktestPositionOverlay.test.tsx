@@ -39,8 +39,10 @@ interface ElementProps {
   onKeyDown?: (event: unknown) => void;
   onClick?: () => void;
   disabled?: boolean;
+  role?: string;
   'aria-label'?: string;
   'data-position-id'?: string;
+  'data-testid'?: string;
 }
 
 function descendants(node: unknown): Array<ReactElement<ElementProps>> {
@@ -130,7 +132,13 @@ describe('Backtest position overlay', () => {
     expect(buttonLabels.some((label) => label.includes('Move entry'))).toBe(false);
     expect(buttonLabels).toContain('Move stop-loss for position position-A, 99.00');
     expect(buttonLabels).toContain('Move take-profit for position position-B, 104.00');
-    expect(textContent(root)).toContain('LONG · 0.250 lot · $25.50');
+    expect(textContent(root)).toContain('LONG - 0.250 lot @100.00 - P&L +1.00 price');
+    expect(byLabel(root, 'long position controls for position-A').props['data-testid'])
+      .toBe('position-entry-label-position-A');
+    expect(byLabel(root, 'Move stop-loss for position position-A, 99.00').props.className)
+      .toContain('left-0');
+    expect(byLabel(root, 'Move take-profit for position position-B, 104.00').props.className)
+      .toContain('left-0');
   });
 
   it('routes stop and target keyboard edits to only the named position and level', () => {
@@ -245,35 +253,29 @@ describe('Backtest position overlay', () => {
     expect(props.onClose).toHaveBeenCalledWith('position-A');
     expect(byLabel(root, 'Move stop to break-even for position position-C').props.disabled).toBe(true);
     expect(byLabel(root, 'Move stop to break-even for position position-A').props.disabled).toBe(false);
+    expect(byLabel(root, 'Move stop to break-even for position position-A').props.className)
+      .toContain('border-white/70');
+    expect(byLabel(root, 'Close position position-A').props.className).toContain('bg-rose-700');
   });
 
-  it('shows open exposure and display-only P&L without rendering it as a closed trade', () => {
+  it('shows P&L and position controls inline at entry without a separate risk box', () => {
     const root = renderOverlay();
     const text = textContent(root);
-    const riskMarker = descendants(root).find((element) => (
-      element.type === 'div'
-      && element.props.className?.includes('bg-slate-950/90')
-      && textContent(element).includes('Risk $50.00')
-    ));
+    const entryGroups = descendants(root).filter((element) => element.props.role === 'group');
 
-    expect(text).toContain('Risk $40.00 · moved');
-    expect(text).toContain('SHORT · 0.100 lot · -$8.75');
-    expect(text).toContain('—');
+    expect(text).toContain('SHORT - 0.100 lot @105.00 - P&L +4.00 price');
+    expect(text).toContain('P&L +4.00 price');
     expect(text).not.toMatch(/closed trade|journal/i);
-    expect(riskMarker?.props.style?.top).toBe(100);
-    expect(riskMarker?.props.style?.transform).toBe('translateY(2px)');
-    expect(riskMarker?.props.className).toContain('py-0.5');
-    expect(descendants(riskMarker).find((element) => element.type === 'span')?.props.title)
-      .toBe('Initial risk $50.00');
-
-    const shortRoot = renderOverlay(makeOverlayProps({ positions: [positions[1]!] }));
-    const shortRiskMarker = descendants(shortRoot).find((element) => (
-      element.type === 'div'
-      && element.props.className?.includes('bg-slate-950/90')
-      && textContent(element).includes('Risk $40.00')
-    ));
-    expect(shortRiskMarker?.props.style?.top).toBe(95);
-    expect(shortRiskMarker?.props.style?.transform).toBe('translateY(calc(-100% - 2px))');
+    expect(descendants(root).some((element) => element.props.title === 'USD unrealized P&L unavailable'))
+      .toBe(true);
+    expect(entryGroups).toHaveLength(positions.length);
+    expect(entryGroups.map((element) => element.props['aria-label'])).toEqual([
+      'long position controls for position-A',
+      'short position controls for position-B',
+      'long position controls for position-C',
+    ]);
+    expect(descendants(root).some((element) => element.props.className?.includes('bg-slate-950/90')))
+      .toBe(false);
   });
 
   it('marks instrument-unit P&L at the latest price while the chart shows an earlier close', () => {
@@ -286,5 +288,29 @@ describe('Backtest position overlay', () => {
     }));
 
     expect(textContent(root)).toContain('P&L +3.0 pips');
+  });
+
+  it('formats lots to the configured increment precision and orders entry P&L before USD P&L', () => {
+    const displayPositions = [{ ...positions[0]!, remainingLots: 2, weightedEntryPrice: 341.946 }];
+    const sharedDisplayProps = {
+      positions: displayPositions,
+      pricePrecision: 3,
+      currentClose: 342.2,
+      priceToCoordinate: (price: number) => 400 - price,
+      pipSize: 0.01,
+      priceUnitLabel: 'points',
+    };
+    const root = renderOverlay(makeOverlayProps({
+      ...sharedDisplayProps,
+      lotIncrement: 1,
+    }));
+
+    expect(textContent(root)).toContain('LONG - 2 lot @341.946 - P&L +25.4 pts.');
+
+    const hundredthLotRoot = renderOverlay(makeOverlayProps({
+      ...sharedDisplayProps,
+      lotIncrement: 0.01,
+    }));
+    expect(textContent(hundredthLotRoot)).toContain('LONG - 2.00 lot @341.946 - P&L +25.4 pts.');
   });
 });

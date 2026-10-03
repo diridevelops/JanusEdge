@@ -611,6 +611,7 @@ function BacktestReplayWorkspaceRun({
     markPrice: positionMarkPrice,
     pricePrecision: displayedPricePrecision,
     tickSize: entryInstrument?.tickSize ?? displayedTickSize,
+    lotIncrement: entryInstrument?.lotIncrement ?? 0.001,
     pipSize: entryInstrument?.pipSize ?? 0,
     priceUnitLabel: entryInstrument?.priceUnitLabel ?? 'pips',
     disabled: simulationBusy || simulationState?.status !== 'ready',

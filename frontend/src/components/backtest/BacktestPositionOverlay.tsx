@@ -15,6 +15,7 @@ export interface BacktestOverlayPosition {
 interface BacktestPositionOverlayProps {
   positions: readonly BacktestOverlayPosition[];
   pricePrecision: number;
+  lotIncrement?: number;
   tickSize?: number;
   pipSize?: number;
   priceUnitLabel?: string;
@@ -47,6 +48,14 @@ function formatSignedAmount(value: number, precision: number): string {
   return `${sign}${Math.abs(rounded).toFixed(precision)}`;
 }
 
+function getIncrementDecimalPlaces(increment: number): number {
+  if (!Number.isFinite(increment) || increment <= 0) return 3;
+  const [coefficient = '', exponentText] = increment.toString().toLowerCase().split('e');
+  const exponent = Number(exponentText ?? 0);
+  const fractionalDigits = coefficient.split('.')[1]?.length ?? 0;
+  return Math.max(0, Math.min(100, fractionalDigits - exponent));
+}
+
 function formatPositionPnlInInstrumentUnits(
   position: BacktestOverlayPosition,
   currentClose: number | null,
@@ -60,7 +69,10 @@ function formatPositionPnlInInstrumentUnits(
     : position.weightedEntryPrice - currentClose;
   if (!Number.isFinite(priceMove)) return '—';
   if (Number.isFinite(pipSize) && pipSize > 0) {
-    return `${formatSignedAmount(priceMove / pipSize, 1)} ${priceUnitLabel}`;
+    const unitLabel = ['point', 'points', 'pt', 'pts'].includes(priceUnitLabel.trim().toLowerCase())
+      ? 'pts.'
+      : priceUnitLabel;
+    return `${formatSignedAmount(priceMove / pipSize, 1)} ${unitLabel}`;
   }
   return `${formatSignedAmount(priceMove, pricePrecision)} price`;
 }
@@ -90,6 +102,7 @@ export function clampPositionStopPrice(
 export function BacktestPositionOverlay({
   positions,
   pricePrecision,
+  lotIncrement = 0.001,
   tickSize: configuredTickSize,
   pipSize = 0,
   priceUnitLabel = 'pips',
@@ -106,6 +119,7 @@ export function BacktestPositionOverlay({
   const tickSize = Number.isFinite(configuredTickSize) && (configuredTickSize ?? 0) > 0
     ? Number(configuredTickSize)
     : 10 ** -pricePrecision;
+  const lotPrecision = getIncrementDecimalPlaces(lotIncrement);
   const layerRef = useRef<HTMLDivElement>(null);
   const [height, setHeight] = useState(0);
   const [drag, setDrag] = useState<ActiveDrag | null>(null);
@@ -185,10 +199,6 @@ export function BacktestPositionOverlay({
           && (position.side === 'long'
             ? currentClose > position.weightedEntryPrice
             : currentClose < position.weightedEntryPrice);
-        const entryY = priceToCoordinate(position.weightedEntryPrice) ?? 10;
-        const shortMarkerY = entryY - index * 16;
-        const markerAboveEntry = position.side === 'short' && shortMarkerY >= 28;
-        const riskMarkerY = markerAboveEntry ? shortMarkerY : entryY + index * 16;
 
         return (
           <div key={position.id} data-position-id={position.id} aria-label={`${position.side} position ${position.id}`}>
@@ -207,7 +217,7 @@ export function BacktestPositionOverlay({
                     <button
                       type="button"
                       disabled={disabled}
-                      className="pointer-events-auto absolute -top-3 right-0 max-w-[42%] truncate rounded px-1.5 py-0.5 text-[10px] font-semibold text-white shadow"
+                      className="pointer-events-auto absolute -top-3 left-0 max-w-[42%] truncate rounded px-1.5 py-0.5 text-[10px] font-semibold text-white shadow"
                       style={{ backgroundColor: level.color, marginTop: index * 15 }}
                       aria-label={`Move ${level.name === 'stop' ? 'stop-loss' : 'take-profit'} for position ${position.id}, ${level.price.toFixed(pricePrecision)}`}
                       onPointerDown={(event: ReactPointerEvent<HTMLButtonElement>) => {
@@ -247,35 +257,35 @@ export function BacktestPositionOverlay({
                       {level.name === 'stop' ? 'SL' : 'TP'} {displayedPrice.toFixed(pricePrecision)}
                     </button>
                   ) : (
-                    <span className="absolute -top-3 left-0 rounded px-1.5 py-0.5 text-[10px] font-semibold text-white shadow" style={{ backgroundColor: level.color }}>
-                      {position.side.toUpperCase()} · {position.remainingLots.toFixed(3)} lot · {position.unrealizedPnlUsd == null ? '—' : usd.format(position.unrealizedPnlUsd)}
-                    </span>
+                    <div
+                      role="group"
+                      aria-label={`${position.side} position controls for ${position.id}`}
+                      data-testid={`position-entry-label-${position.id}`}
+                      className="pointer-events-auto absolute -top-3 left-0 inline-flex max-w-full items-center gap-0.5 whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-semibold text-white shadow"
+                      style={{ backgroundColor: level.color }}
+                    >
+                      <span className="min-w-0 truncate">
+                        {position.side.toUpperCase()} - {position.remainingLots.toFixed(lotPrecision)} lot @{position.weightedEntryPrice.toFixed(pricePrecision)} -{' '}
+                      </span>
+                      <span
+                        className="px-1"
+                        title={`USD unrealized P&L ${position.unrealizedPnlUsd == null ? 'unavailable' : usd.format(position.unrealizedPnlUsd)}`}
+                      >
+                        P&amp;L {formatPositionPnlInInstrumentUnits(
+                          position,
+                          markPrice === undefined ? currentClose : markPrice,
+                          pipSize,
+                          pricePrecision,
+                          priceUnitLabel,
+                        )}
+                      </span>
+                      <button type="button" className="cursor-pointer rounded border border-white/70 bg-slate-950/80 px-1.5 py-0.5 font-bold leading-none text-white shadow-sm hover:bg-slate-700 focus-visible:outline focus-visible:outline-1 focus-visible:outline-white disabled:cursor-not-allowed disabled:opacity-40" aria-label={`Move stop to break-even for position ${position.id}`} title="Move stop to entry" disabled={!beAllowed || disabled} onClick={() => onBreakEven(position.id, position.weightedEntryPrice)}>BE</button>
+                      <button type="button" className="cursor-pointer rounded border border-rose-200 bg-rose-700 px-1.5 py-0.5 font-bold leading-none text-white shadow-sm hover:bg-rose-600 focus-visible:outline focus-visible:outline-1 focus-visible:outline-white disabled:cursor-not-allowed disabled:opacity-40" aria-label={`Close position ${position.id}`} title="Close this position" disabled={disabled} onClick={() => onClose(position.id)}>X</button>
+                    </div>
                   )}
                 </div>
               );
             })}
-            <div className="pointer-events-auto absolute right-14 flex items-center gap-0.5 whitespace-nowrap rounded-md border border-slate-500/40 bg-slate-950/90 px-1 py-0.5 text-[10px] leading-none text-white shadow" style={{
-              top: Math.min(height - 28, Math.max(2, riskMarkerY)),
-              transform: markerAboveEntry ? 'translateY(calc(-100% - 2px))' : 'translateY(2px)',
-            }}>
-              <span className="sr-only" title={`Initial risk ${usd.format(position.initialRiskUsd)}${position.stopMoved ? ' · stop-moved' : ''}`}>
-                Risk {usd.format(position.initialRiskUsd)}{position.stopMoved ? ' · moved' : ''}
-              </span>
-              <span
-                className="px-1"
-                title={`USD unrealized P&L ${position.unrealizedPnlUsd == null ? 'unavailable' : usd.format(position.unrealizedPnlUsd)}`}
-              >
-                P&amp;L {formatPositionPnlInInstrumentUnits(
-                  position,
-                  markPrice === undefined ? currentClose : markPrice,
-                  pipSize,
-                  pricePrecision,
-                  priceUnitLabel,
-                )}
-              </span>
-              <button type="button" className="rounded px-1.5 py-0.5 leading-none hover:bg-white/15 disabled:opacity-40" aria-label={`Move stop to break-even for position ${position.id}`} title="Move stop to entry" disabled={!beAllowed || disabled} onClick={() => onBreakEven(position.id, position.weightedEntryPrice)}>BE</button>
-              <button type="button" className="rounded px-1.5 py-0.5 leading-none hover:bg-rose-500/30 disabled:opacity-40" aria-label={`Close position ${position.id}`} title="Close this position" disabled={disabled} onClick={() => onClose(position.id)}>×</button>
-            </div>
           </div>
         );
       })}
