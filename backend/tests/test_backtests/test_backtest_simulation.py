@@ -11,6 +11,7 @@ from app.backtests.simulation_engine import (
     default_bracket_for_budget,
     entry_order_fill,
     normalize_market_reference_price,
+    oldest_same_side_position,
     protective_exit_fill,
     projected_risk_usd,
     realized_native_pnl,
@@ -284,6 +285,45 @@ def test_opposing_fill_allocation_is_fifo_and_returns_reverse_excess():
     assert excess == Decimal("0.050")
 
 
+def test_same_side_scale_in_selects_oldest_open_position():
+    positions = [
+        {
+            "position_id": "newer",
+            "side": "long",
+            "status": "open",
+            "remaining_lots": 0.1,
+            "opened_sequence": 3,
+        },
+        {
+            "position_id": "closed",
+            "side": "long",
+            "status": "closed",
+            "remaining_lots": 0.2,
+            "opened_sequence": 0,
+        },
+        {
+            "position_id": "older",
+            "side": "long",
+            "status": "open",
+            "remaining_lots": 0.2,
+            "opened_sequence": 1,
+        },
+        {
+            "position_id": "short",
+            "side": "short",
+            "status": "open",
+            "remaining_lots": 0.4,
+            "opened_sequence": 0,
+        },
+    ]
+
+    assert oldest_same_side_position("buy", positions)["position_id"] == "older"
+    assert oldest_same_side_position("sell", positions)["position_id"] == "short"
+    assert oldest_same_side_position(
+        "buy", [{"side": "short", "status": "open", "remaining_lots": 0.1}]
+    ) is None
+
+
 def test_native_pnl_is_quote_currency_and_directional():
     assert realized_native_pnl(
         side="long",
@@ -299,3 +339,13 @@ def test_native_pnl_is_quote_currency_and_directional():
         lots=0.1,
         metadata=EURUSD,
     ) == Decimal("-10.00000")
+
+
+def test_native_pnl_accepts_off_tick_weighted_entry_price():
+    assert realized_native_pnl(
+        side="long",
+        entry_price=Decimal("1.100005"),
+        exit_price=1.10001,
+        lots=0.1,
+        metadata=EURUSD,
+    ) == Decimal("0.0500000")

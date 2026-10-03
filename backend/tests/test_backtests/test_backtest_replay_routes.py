@@ -2,6 +2,8 @@
 
 from datetime import date, datetime, timezone
 
+import pytest
+
 
 def _patch_catalog(monkeypatch):
     import app.backtests.service as service_module
@@ -83,6 +85,7 @@ def _create_ready_run(
     *,
     current_candle_overrides=None,
     next_candle_overrides=None,
+    following_candle_overrides=None,
     execution_costs=None,
 ):
     from app.backtests.worker import BacktestWorker
@@ -112,10 +115,15 @@ def _create_ready_run(
     current_candle.update(current_candle_overrides or {})
     next_candle = _candle(jan_5, 1, 1.2)
     next_candle.update(next_candle_overrides or {})
+    jan_5_candles = [current_candle, next_candle]
+    if following_candle_overrides is not None:
+        following_candle = _candle(jan_5, 2, 1.3)
+        following_candle.update(following_candle_overrides)
+        jan_5_candles.append(following_candle)
     provider = _Provider(
         {
             dec_5: _day_result(dec_5, [_candle(dec_5, 0, 0.9)]),
-            jan_5: _day_result(jan_5, [current_candle, next_candle]),
+            jan_5: _day_result(jan_5, jan_5_candles),
             jan_6: _day_result(jan_6, []),
             jan_7: _day_result(jan_7, [_candle(jan_7, 0, 1.3)]),
         }
@@ -623,6 +631,255 @@ def test_simulation_routes_accept_exact_limit_touch_and_return_committed_positio
     assert mongo.db.tag_categories.find_one({"_id": tag["category_id"]})[
         "system_key"
     ] == "general"
+
+
+def test_same_side_entry_scales_into_one_position_and_trade_with_average_entry(
+    app, client, monkeypatch
+):
+    _patch_catalog(monkeypatch)
+    owner = _register(client, "simulation-scale-in-owner")
+    run_id, run, _ = _create_ready_run(
+        app,
+        client,
+        owner,
+        following_candle_overrides={},
+    )
+    replay_start = run["snapshot"]["replay_start_source_index"]
+
+    first_entry = client.post(
+        f"/api/backtest/runs/{run_id}/simulation/orders",
+        json={
+            "client_operation_id": "scale-in-first-entry",
+            "expected_revision": 0,
+            "side": "buy",
+            "order_type": "market",
+            "auto_size": False,
+            "lots": 0.1,
+            "stop_loss": 1.0,
+            "take_profit": 1.5,
+        },
+        headers=owner,
+    )
+    assert first_entry.status_code == 200, first_entry.json
+    first_advance = client.post(
+        f"/api/backtest/runs/{run_id}/simulation/advance",
+        json={
+            "client_operation_id": "scale-in-first-fill",
+            "expected_revision": first_entry.json["control_revision"],
+            "target_source_index": replay_start + 1,
+        },
+        headers=owner,
+    )
+    assert first_advance.status_code == 200, first_advance.json
+
+    second_entry = client.post(
+        f"/api/backtest/runs/{run_id}/simulation/orders",
+        json={
+            "client_operation_id": "scale-in-second-entry",
+            "expected_revision": first_advance.json["control_revision"],
+            "side": "buy",
+            "order_type": "market",
+            "auto_size": False,
+            "lots": 0.2,
+            # These bracket levels belong to this order only if the first
+            # position is no longer open when the market order fills.
+            "stop_loss": 1.19,
+            "take_profit": 1.4,
+        },
+        headers=owner,
+    )
+    assert second_entry.status_code == 200, second_entry.json
+    second_advance = client.post(
+        f"/api/backtest/runs/{run_id}/simulation/advance",
+        json={
+            "client_operation_id": "scale-in-second-fill",
+            "expected_revision": second_entry.json["control_revision"],
+            "target_source_index": replay_start + 2,
+        },
+        headers=owner,
+    )
+    assert second_advance.status_code == 200, second_advance.json
+
+    state_response = client.get(
+        f"/api/backtest/runs/{run_id}/simulation", headers=owner
+    )
+    assert state_response.status_code == 200
+    state = state_response.json
+    assert len(state["positions"]) == 1
+    position = state["positions"][0]
+    assert position["remaining_lots"] == 0.3
+    assert position["weighted_entry_price"] == pytest.approx(
+        (1.2 * 0.1 + 1.3 * 0.2) / 0.3
+    )
+    assert position["stop_loss_price"] == 1.0
+    assert position["take_profit_price"] == 1.5
+    assert position["initial_risk_usd"] == pytest.approx(8_000)
+    entry_fills = [fill for fill in state["fills"] if fill["entry_exit"] == "Entry"]
+    assert len(entry_fills) == 2
+    assert {fill["simulated_position_id"] for fill in entry_fills} == {
+        position["position_id"]
+    }
+    assert [fill["lots"] for fill in entry_fills] == [0.1, 0.2]
+    assert entry_fills[0]["trade_id"] == entry_fills[1]["trade_id"]
+
+    protection_orders = [
+        order
+        for order in state["orders"]
+        if order["role"] in {"protective_stop", "protective_target"}
+    ]
+    assert len(protection_orders) == 2
+    assert {order["lots"] for order in protection_orders} == {0.3}
+    assert {
+        order["stop_loss_price"]
+        for order in protection_orders
+        if order["role"] == "protective_stop"
+    } == {1.0}
+    assert {
+        order["take_profit_price"]
+        for order in protection_orders
+        if order["role"] == "protective_target"
+    } == {1.5}
+
+    closed = client.post(
+        f"/api/backtest/runs/{run_id}/simulation/positions/{position['position_id']}/close",
+        json={
+            "client_operation_id": "close-scaled-position",
+            "expected_revision": second_advance.json["control_revision"],
+        },
+        headers=owner,
+    )
+    assert closed.status_code == 200, closed.json
+    assert closed.json.get("result", {}).get("closed") is True, closed.json
+    from app.extensions import mongo
+    from bson import ObjectId
+
+    trade_doc = mongo.db.trades.find_one(
+        {
+            "backtest_run_id": ObjectId(run_id),
+            "simulated_position_id": ObjectId(position["position_id"]),
+            "status": "closed",
+        }
+    )
+    assert trade_doc is not None
+    trade_id = str(trade_doc["_id"])
+    mode = client.put(
+        "/api/workspace/mode",
+        json={"active_mode": "backtest"},
+        headers=owner,
+    )
+    assert mode.status_code == 200, mode.json
+    details = client.get(f"/api/trades/{trade_id}", headers=owner)
+    assert details.status_code == 200, details.json
+    trade = details.json["trade"]
+    assert trade["avg_entry_price"] == pytest.approx(
+        (1.2 * 0.1 + 1.3 * 0.2) / 0.3
+    )
+    assert trade["total_quantity"] == pytest.approx(0.3)
+    assert len(details.json["executions"]) == 3
+    assert [execution["entry_exit"] for execution in details.json["executions"]] == [
+        "Entry",
+        "Entry",
+        "Exit",
+    ]
+
+
+def test_scale_in_after_partial_scale_out_updates_open_exposure_and_protection(
+    app, client, monkeypatch
+):
+    _patch_catalog(monkeypatch)
+    owner = _register(client, "simulation-scale-out-in-owner")
+    run_id, run, _ = _create_ready_run(app, client, owner)
+    replay_start = run["snapshot"]["replay_start_source_index"]
+
+    initial = client.post(
+        f"/api/backtest/runs/{run_id}/simulation/orders",
+        json={
+            "client_operation_id": "scale-out-in-initial",
+            "expected_revision": 0,
+            "side": "buy",
+            "order_type": "market",
+            "auto_size": False,
+            "lots": 0.2,
+            "stop_loss": 1.0,
+            "take_profit": 1.5,
+        },
+        headers=owner,
+    )
+    assert initial.status_code == 200, initial.json
+    initial_advance = client.post(
+        f"/api/backtest/runs/{run_id}/simulation/advance",
+        json={
+            "client_operation_id": "scale-out-in-initial-fill",
+            "expected_revision": initial.json["control_revision"],
+            "target_source_index": replay_start + 1,
+        },
+        headers=owner,
+    )
+    assert initial_advance.status_code == 200, initial_advance.json
+
+    scale_out = client.post(
+        f"/api/backtest/runs/{run_id}/simulation/orders",
+        json={
+            "client_operation_id": "scale-out-in-partial-exit",
+            "expected_revision": initial_advance.json["control_revision"],
+            "side": "sell",
+            "order_type": "market",
+            "auto_size": False,
+            "lots": 0.1,
+            "stop_loss": 1.5,
+            "take_profit": 1.0,
+        },
+        headers=owner,
+    )
+    assert scale_out.status_code == 200, scale_out.json
+    scale_in = client.post(
+        f"/api/backtest/runs/{run_id}/simulation/orders",
+        json={
+            "client_operation_id": "scale-out-in-additional-entry",
+            "expected_revision": scale_out.json["control_revision"],
+            "side": "buy",
+            "order_type": "market",
+            "auto_size": False,
+            "lots": 0.1,
+            "stop_loss": 1.19,
+            "take_profit": 1.4,
+        },
+        headers=owner,
+    )
+    assert scale_in.status_code == 200, scale_in.json
+    advanced = client.post(
+        f"/api/backtest/runs/{run_id}/simulation/advance",
+        json={
+            "client_operation_id": "scale-out-in-process-orders",
+            "expected_revision": scale_in.json["control_revision"],
+            "target_source_index": replay_start + 2,
+        },
+        headers=owner,
+    )
+    assert advanced.status_code == 200, advanced.json
+
+    state_response = client.get(
+        f"/api/backtest/runs/{run_id}/simulation", headers=owner
+    )
+    assert state_response.status_code == 200
+    state = state_response.json
+    assert len(state["positions"]) == 1
+    position = state["positions"][0]
+    assert position["remaining_lots"] == pytest.approx(0.2)
+    assert position["weighted_entry_price"] == pytest.approx(
+        (1.2 * 0.2 + 1.3 * 0.1) / 0.3
+    )
+    assert position["stop_loss_price"] == 1.0
+    assert position["take_profit_price"] == 1.5
+    assert len([fill for fill in state["fills"] if fill["entry_exit"] == "Entry"]) == 2
+    assert len([fill for fill in state["fills"] if fill["entry_exit"] == "Exit"]) == 1
+    protection_orders = [
+        order
+        for order in state["orders"]
+        if order["role"] in {"protective_stop", "protective_target"}
+    ]
+    assert len(protection_orders) == 2
+    assert {order["lots"] for order in protection_orders} == {0.2}
 
 
 def test_short_position_accepts_favorable_stop_below_entry_but_above_close(

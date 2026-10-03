@@ -574,11 +574,40 @@ def allocate_opposing_fill_fifo(
     return allocations, remaining
 
 
+def oldest_same_side_position(
+    incoming_side: str,
+    positions: list[Mapping[str, Any]],
+) -> Mapping[str, Any] | None:
+    """Return the oldest open position that an entry can scale into."""
+    side = str(incoming_side).lower()
+    if side not in {"buy", "sell"}:
+        raise SimulationRuleError("Fill side must be buy or sell.")
+    matching_side = "long" if side == "buy" else "short"
+    candidates = [
+        position
+        for position in positions
+        if position.get("status", "open") == "open"
+        and str(position.get("side", "")).lower() == matching_side
+        and _decimal(position.get("remaining_lots"), "remaining_lots") > 0
+    ]
+    candidates.sort(
+        key=lambda position: (
+            position.get("opened_sequence", position.get("operation_sequence", 0)),
+            str(position.get("position_id", position.get("_id", ""))),
+        )
+    )
+    return candidates[0] if candidates else None
+
+
 def realized_native_pnl(
     *, side: str, entry_price: Any, exit_price: Any, lots: Any, metadata: Mapping[str, Any]
 ) -> Decimal:
-    """Compute quote-currency gross P&L before separately accounted costs."""
-    entry = validate_price(entry_price, metadata, "entry_price")
+    """Compute quote-currency gross P&L before separately accounted costs.
+
+    The entry price may be a weighted average of several tick-aligned fills,
+    which is not necessarily itself on the instrument's tick grid.
+    """
+    entry = _decimal(entry_price, "entry_price")
     exit_value = validate_price(exit_price, metadata, "exit_price")
     quantity = validate_lots(lots, metadata)
     contract_size = _positive_metadata_decimal(metadata, "contract_size")

@@ -29,6 +29,7 @@ from app.backtests.simulation_engine import (
     default_bracket_for_budget,
     entry_order_fill,
     normalize_market_reference_price,
+    oldest_same_side_position,
     protective_exit_fill,
     projected_risk_usd,
     realized_native_pnl,
@@ -1197,7 +1198,7 @@ class BacktestSimulationEffects:
                 )
                 total_lots = float(order["lots"])
                 allocation_index = 0
-                opened_position_id = None
+                filled_position_id = None
                 for allocation in allocated:
                     allocated_lots = float(allocation["lots"])
                     share = allocated_lots / total_lots
@@ -1232,25 +1233,48 @@ class BacktestSimulationEffects:
                     excess_lots = float(excess)
                     share = excess_lots / total_lots
                     allocation_fill = self._scaled_fill(entry_fill, share)
-                    position, entry_doc = self._open_position(
-                        operation,
-                        run,
-                        context,
-                        candle,
-                        order,
-                        allocation_fill,
-                        profile,
-                        rate,
-                        order_index=order_index,
-                        allocation_index=allocation_index,
-                        lots=excess_lots,
+                    position_to_scale = oldest_same_side_position(
+                        order["side"], list(current_positions.values())
                     )
-                    opened_position_id = position["position_id"]
-                    for child_order in position.pop("_created_order_versions", []):
-                        current_orders[str(child_order["order_id"])] = child_order
-                        changed_orders[str(child_order["order_id"])] = child_order
-                    current_positions[str(opened_position_id)] = position
-                    changed_positions[str(opened_position_id)] = position
+                    if position_to_scale is not None:
+                        position, entry_doc = self._scale_in_position(
+                            operation,
+                            run,
+                            context,
+                            candle,
+                            order,
+                            position_to_scale,
+                            allocation_fill,
+                            profile,
+                            rate,
+                            allocation_index=allocation_index,
+                            lots=excess_lots,
+                            current_orders=current_orders,
+                            changed_orders=changed_orders,
+                            current_positions=current_positions,
+                            changed_positions=changed_positions,
+                        )
+                        filled_position_id = position["position_id"]
+                    else:
+                        position, entry_doc = self._open_position(
+                            operation,
+                            run,
+                            context,
+                            candle,
+                            order,
+                            allocation_fill,
+                            profile,
+                            rate,
+                            order_index=order_index,
+                            allocation_index=allocation_index,
+                            lots=excess_lots,
+                        )
+                        filled_position_id = position["position_id"]
+                        for child_order in position.pop("_created_order_versions", []):
+                            current_orders[str(child_order["order_id"])] = child_order
+                            changed_orders[str(child_order["order_id"])] = child_order
+                        current_positions[str(filled_position_id)] = position
+                        changed_positions[str(filled_position_id)] = position
                     new_fills.append(entry_doc)
 
                 staged_order = self._stage_order(
@@ -1260,7 +1284,7 @@ class BacktestSimulationEffects:
                     order["order_id"],
                     {
                         "status": "filled",
-                        "linked_position_id": opened_position_id,
+                        "linked_position_id": filled_position_id,
                         "updated_at": utc_now(),
                     },
                 )
@@ -1300,6 +1324,154 @@ class BacktestSimulationEffects:
         for field in ("spread_cost", "slippage_cost", "commission_usd"):
             result[field] = float(fill.get(field, 0.0)) * factor
         return result
+
+    def _scale_in_position(
+        self,
+        operation: dict,
+        run: dict,
+        context: dict,
+        candle: dict,
+        entry_order: dict,
+        position: dict,
+        fill: dict,
+        profile: dict,
+        quote_rate: float,
+        *,
+        allocation_index: int,
+        lots: float,
+        current_orders: dict[str, dict],
+        changed_orders: dict[str, dict],
+        current_positions: dict[str, dict],
+        changed_positions: dict[str, dict],
+    ) -> tuple[dict, dict]:
+        """Add an entry fill to an existing same-direction trade position."""
+        metadata = context["metadata"]
+        quantity = float(validate_lots(lots, metadata))
+        prior_entry_lots = float(
+            position.get("max_lots", position["remaining_lots"])
+        )
+        next_entry_lots = prior_entry_lots + quantity
+        next_remaining_lots = float(position["remaining_lots"]) + quantity
+        fill_price = float(validate_price(fill["fill_price"], metadata, "fill_price"))
+        reference_price = float(
+            validate_price(fill["reference_price"], metadata, "reference_price")
+        )
+        weighted_entry_price = (
+            float(position["weighted_entry_price"]) * prior_entry_lots
+            + fill_price * quantity
+        ) / next_entry_lots
+        weighted_reference_price = (
+            float(
+                position.get(
+                    "weighted_reference_price", position["weighted_entry_price"]
+                )
+            )
+            * prior_entry_lots
+            + reference_price * quantity
+        ) / next_entry_lots
+        stop = float(position["stop_loss_price"])
+        added_risk_usd = projected_risk_usd(
+            lots=quantity,
+            entry_price=fill_price,
+            stop_loss=stop,
+            quote_to_usd_rate=quote_rate,
+            metadata=metadata,
+            cost_profile=profile,
+        )
+        added_risk_native = (
+            abs(fill_price - stop) * float(metadata["contract_size"]) * quantity
+        )
+        entry_cost_native = float(fill.get("spread_cost", 0.0)) + float(
+            fill.get("slippage_cost", 0.0)
+        )
+        previous_quote_rate = float(
+            position.get("entry_quote_to_usd_rate", quote_rate)
+        )
+
+        entry_fill_doc = self._new_fill(
+            operation,
+            run,
+            context,
+            order_id=entry_order["order_id"],
+            position=position,
+            candle=candle,
+            allocation_index=allocation_index,
+            lots=quantity,
+            fill=fill,
+            order_type=entry_order["order_type"],
+            entry_exit="Entry",
+            quote_rate=quote_rate,
+        )
+        next_position = self._stage_position(
+            context,
+            changed_positions,
+            current_positions,
+            position["position_id"],
+            {
+                "remaining_lots": round(next_remaining_lots, 9),
+                "max_lots": round(next_entry_lots, 9),
+                "weighted_entry_price": weighted_entry_price,
+                "weighted_reference_price": weighted_reference_price,
+                "entry_fill_ids": [
+                    *position.get("entry_fill_ids", []),
+                    entry_fill_doc["_id"],
+                ],
+                "initial_risk_native": float(
+                    position.get("initial_risk_native", 0.0)
+                )
+                + added_risk_native,
+                "initial_risk_usd": float(position["initial_risk_usd"])
+                + float(added_risk_usd),
+                "entry_quote_to_usd_rate": (
+                    previous_quote_rate * prior_entry_lots
+                    + quote_rate * quantity
+                )
+                / next_entry_lots,
+                "applied_spread_cost": float(
+                    position.get("applied_spread_cost", 0.0)
+                )
+                + float(fill.get("spread_cost", 0.0)),
+                "applied_slippage_cost": float(
+                    position.get("applied_slippage_cost", 0.0)
+                )
+                + float(fill.get("slippage_cost", 0.0)),
+                "applied_commission_usd": float(
+                    position.get("applied_commission_usd", 0.0)
+                )
+                + float(fill.get("commission_usd", 0.0)),
+                "entry_spread_slippage_native_remaining": float(
+                    position.get("entry_spread_slippage_native_remaining", 0.0)
+                )
+                + entry_cost_native,
+                "entry_spread_slippage_usd_remaining": float(
+                    position.get("entry_spread_slippage_usd_remaining", 0.0)
+                )
+                + entry_cost_native * quote_rate,
+                "updated_at": utc_now(),
+            },
+        )
+
+        for child_id in (
+            next_position.get("stop_loss_order_id"),
+            next_position.get("take_profit_order_id"),
+        ):
+            if child_id is None:
+                continue
+            child = current_orders.get(str(child_id))
+            if child is None or child.get("status") != "pending":
+                continue
+            self._stage_order(
+                context,
+                changed_orders,
+                current_orders,
+                child_id,
+                {
+                    "entry_price": weighted_entry_price,
+                    "lots": float(next_position["remaining_lots"]),
+                    "updated_at": utc_now(),
+                },
+            )
+        return next_position, entry_fill_doc
 
     def _open_position(
         self,
