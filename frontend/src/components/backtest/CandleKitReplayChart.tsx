@@ -278,6 +278,9 @@ export function CandleKitReplayChart({
       : normalizeBacktestPrice(price, referencePrice));
   }, [blindMode, normalizedReferencePrice]);
   const chartOptions = useMemo(() => ({
+    handleScale: {
+      axisPressedMouseMove: { time: true, price: true },
+    },
     localization: { timeFormatter: timeFormatters.timeFormatter },
     timeScale: { tickMarkFormatter: timeFormatters.tickMarkFormatter },
   }), [timeFormatters]);
