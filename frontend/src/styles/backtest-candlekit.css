@@ -933,16 +933,16 @@
   gap: 4px;
   border: 1px solid var(--ck-border, #d1d5db);
   border-radius: 7px;
-  padding: 3px;
+  padding: 2px;
   background: var(--ck-bg, #fff);
   box-shadow: 0 2px 7px rgb(15 23 42 / 0.25);
 }
 
 .backtest-bracket-preview-actions button {
-  min-height: 25px;
+  min-height: 19px;
   border: 0;
   border-radius: 5px;
-  padding: 0 8px;
+  padding: 0 7px;
   font: inherit;
   font-size: 10px;
   font-weight: 650;

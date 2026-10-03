@@ -43,10 +43,10 @@ export function BacktestWorkingOrderOverlay({
 
   return (
     <div ref={layerRef} className="backtest-working-order-overlay" data-testid="backtest-working-order-overlay">
-      {orders.map((order, index) => {
+      {orders.map((order) => {
         const y = priceToCoordinate(order.entryPrice);
         if (y == null || !Number.isFinite(y) || y < 0 || y > height) return null;
-        const labelTop = Math.min(Math.max(1, y - 10 + (index % 3) * 14), Math.max(1, height - 23));
+        const labelTop = Math.min(Math.max(1, y - 10), Math.max(1, height - 23));
         const orderDescription = `Pending ${order.side.toUpperCase()} ${order.orderType.toUpperCase()} order, ${order.lots.toFixed(3)} lots at ${order.entryPrice.toFixed(pricePrecision)}`;
 
         return (

@@ -142,7 +142,7 @@ function installDragEffect() {
 describe('Backtest bracket preview', () => {
   beforeEach(() => prepareHooks());
 
-  it('renders a draggable limit bracket with submit and cancel controls at the entry level', () => {
+  it('renders a draggable limit bracket with compact submit and cancel controls below the entry line', () => {
     const root = renderPreview(makePreviewProps());
     const elements = descendants(root);
 
@@ -155,7 +155,7 @@ describe('Backtest bracket preview', () => {
     expect(elements.some((element) => element.props.className?.includes('selection-frame'))).toBe(true);
     expect(elements.some((element) => element.props.className?.includes('preview-summary'))).toBe(true);
     const actions = elementByClass(root, 'backtest-bracket-preview-actions');
-    expect(actions.props.style?.top).toBe(180);
+    expect(actions.props.style?.top).toBe(196);
     expect(actions.props.style?.transform).toBe('translateY(-50%)');
     expect(elementByClass(root, 'backtest-bracket-preview-submit').props.children).toBe('Submit');
     expect(elementByClass(root, 'backtest-bracket-preview-cancel').props.children).toBe('Cancel');

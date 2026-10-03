@@ -200,7 +200,7 @@ export function BacktestBracketPreview({
   const entryLabelTop = clamp(entryY - 27, 2, Math.max(2, size.height - 25));
   const targetLabelTop = clamp(targetY - 22, 2, Math.max(2, size.height - 22));
   const stopLabelTop = clamp(stopY + 7, 2, Math.max(2, size.height - 22));
-  const actionBarTop = clamp(entryY, 16, Math.max(16, size.height - 16));
+  const actionBarTop = clamp(entryY + 16, 13, Math.max(13, size.height - 13));
   const actionBarLeft = Math.max(plotLeft + 4, plotRight - 124);
   const targetDistancePips = pipSize > 0 ? Math.abs(takeProfitPrice - entryPrice) / pipSize : null;
   const stopDistancePips = pipSize > 0 ? Math.abs(entryPrice - stopLossPrice) / pipSize : null;
