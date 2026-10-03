@@ -1014,13 +1014,37 @@ class BacktestService:
             raise ValidationError("end must be later than start.")
 
         # Trade-detail charts request full UTC days. Clip that request to the
-        # exact immutable run context so warm-up and selected-period boundaries
-        # remain authoritative.
+        # exact immutable run context and the furthest candle the replay has
+        # reached, so chart requests cannot reveal unvisited run data.
         range_start_ms = max(
             start_ms,
             int(run.get("context_start_utc_ms", run["start_utc_ms"])),
         )
-        range_end_ms = min(end_ms, int(run["end_utc_ms"]))
+        cursor = run.get("replay_cursor") or {}
+        furthest_time_ms = cursor.get("furthest_time_ms")
+        if (
+            isinstance(furthest_time_ms, bool)
+            or not isinstance(furthest_time_ms, int)
+            or furthest_time_ms < 0
+        ):
+            # Cursors saved before the furthest-position field was introduced
+            # only have the currently saved replay time.
+            furthest_time_ms = cursor.get("time_ms")
+        if (
+            isinstance(furthest_time_ms, bool)
+            or not isinstance(furthest_time_ms, int)
+            or furthest_time_ms < 0
+        ):
+            raise ConflictError("Backtest replay cursor is unavailable.")
+
+        # Cursor timestamps identify the opening minute of the current source
+        # candle. Add one minute because the endpoint's upper bound is exclusive.
+        furthest_candle_end_ms = furthest_time_ms + 60_000
+        range_end_ms = min(
+            end_ms,
+            int(run["end_utc_ms"]),
+            furthest_candle_end_ms,
+        )
         if range_end_ms <= range_start_ms:
             return []
 

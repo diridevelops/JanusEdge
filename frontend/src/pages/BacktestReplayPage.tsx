@@ -1,5 +1,5 @@
 import { type CSSProperties, type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Maximize2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Maximize2, X } from 'lucide-react';
 import { Link, useOutletContext, useParams } from 'react-router-dom';
 import { getBacktestCacheStatus, getBacktestChartWorkspace, getBacktestRun, saveBacktestChartWorkspace, startBacktestCacheRecovery } from '../api/backtests.api';
 import {
@@ -69,6 +69,9 @@ function ignoreRejectedMutation(promise: Promise<unknown>): void {
 export function BacktestReplayPage() {
   const { runId } = useParams<{ runId: string }>();
   const [run, setRun] = useState<BacktestRunDetail | null>(null);
+  const [dismissedCacheNoticeKey, setDismissedCacheNoticeKey] = useState<
+    string | null
+  >(null);
   const [cacheStatus, setCacheStatus] = useState<BacktestCacheStatus | null>(null);
   const [recoveryRequestError, setRecoveryRequestError] = useState<string | null>(null);
   const [isRequestingRecovery, setIsRequestingRecovery] = useState(false);
@@ -283,11 +286,26 @@ export function BacktestReplayPage() {
     );
   }
 
+  const cacheNoticeKey = run.cache_refreshed_at
+    ? `${run.id}:${run.cache_refreshed_at}`
+    : null;
+
   return (
     <div className="space-y-3">
-      {run.cache_refreshed_at && (
-        <div className="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200" role="status">
-          Historical candles may differ because missing data was downloaded again. Saved orders, fills, positions, and balance were preserved.
+      {cacheNoticeKey && dismissedCacheNoticeKey !== cacheNoticeKey && (
+        <div className="flex items-start justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
+          <p role="status">
+            Historical candles may differ because missing data was downloaded again. Saved orders, fills, positions, and balance were preserved.
+          </p>
+          <button
+            type="button"
+            onClick={() => setDismissedCacheNoticeKey(cacheNoticeKey)}
+            aria-label="Dismiss historical candle notice"
+            title="Dismiss notice"
+            className="-mr-1 -mt-1 shrink-0 rounded p-1 hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 dark:hover:bg-amber-900/60"
+          >
+            <X aria-hidden="true" className="h-4 w-4" />
+          </button>
         </div>
       )}
       <BacktestReplayRunView key={run.id} run={run} />

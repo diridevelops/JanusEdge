@@ -311,7 +311,17 @@ def test_chart_candles_aggregate_run_snapshot_and_allow_completed_runs(
     _patch_catalog(monkeypatch)
     owner = _register(client, "chart-snapshot-owner")
     other_user = _register(client, "chart-snapshot-other")
-    run_id, _, _ = _create_ready_run(app, client, owner)
+    run_id, run, _ = _create_ready_run(app, client, owner)
+    advanced = client.put(
+        f"/api/backtest/runs/{run_id}/replay-position",
+        json={
+            "source_candle_index": run["snapshot"]["candle_count"] - 1,
+            "time_ms": run["snapshot"]["last_time_ms"],
+            "expected_revision": 0,
+        },
+        headers=owner,
+    )
+    assert advanced.status_code == 200, advanced.json
     with app.app_context():
         mongo.db.backtest_runs.update_one(
             {"_id": ObjectId(run_id)}, {"$set": {"status": "complete"}}
@@ -365,6 +375,136 @@ def test_chart_candles_aggregate_run_snapshot_and_allow_completed_runs(
         f"/api/backtest/runs/{run_id}/chart-candles?{params}",
         headers=other_user,
     ).status_code == 404
+
+
+def test_chart_candles_stop_at_furthest_candle_after_rewind_and_support_legacy_cursor(
+    app, client, monkeypatch
+):
+    from bson import ObjectId
+    from app.extensions import mongo
+
+    _patch_catalog(monkeypatch)
+    owner = _register(client, "chart-progress-cap-owner")
+    run_id, run, _ = _create_ready_run(
+        app,
+        client,
+        owner,
+        following_candle_overrides={},
+    )
+    initial = run["replay_cursor"]
+    params = "start=2026-01-05T00:00:00Z&end=2026-01-06T00:00:00Z"
+    at_initial = client.get(
+        f"/api/backtest/runs/{run_id}/chart-candles?{params}&interval=1m",
+        headers=owner,
+    )
+    assert at_initial.status_code == 200, at_initial.json
+    assert [candle["time_ms"] for candle in at_initial.json["candles"]] == [
+        initial["time_ms"]
+    ]
+
+    advanced = client.put(
+        f"/api/backtest/runs/{run_id}/replay-position",
+        json={
+            "source_candle_index": initial["source_candle_index"] + 1,
+            "time_ms": initial["time_ms"] + 60_000,
+            "expected_revision": initial["revision"],
+        },
+        headers=owner,
+    )
+    assert advanced.status_code == 200, advanced.json
+
+    rewound = client.put(
+        f"/api/backtest/runs/{run_id}/replay-position",
+        json={
+            "source_candle_index": initial["source_candle_index"],
+            "time_ms": initial["time_ms"],
+            "expected_revision": advanced.json["replay_cursor"]["revision"],
+        },
+        headers=owner,
+    )
+    assert rewound.status_code == 200, rewound.json
+    assert rewound.json["replay_cursor"]["time_ms"] == initial["time_ms"]
+    assert (
+        rewound.json["replay_cursor"]["furthest_time_ms"]
+        == initial["time_ms"] + 60_000
+    )
+
+    one_minute = client.get(
+        f"/api/backtest/runs/{run_id}/chart-candles?{params}&interval=1m",
+        headers=owner,
+    )
+    assert one_minute.status_code == 200, one_minute.json
+    assert [candle["time_ms"] for candle in one_minute.json["candles"]] == [
+        initial["time_ms"],
+        initial["time_ms"] + 60_000,
+    ]
+
+    expected_partial_bucket = {
+        "time_ms": initial["time_ms"],
+        "open": 1.1,
+        "high": 1.201,
+        "low": 1.099,
+        "close": 1.2005,
+        "volume": 61.0,
+    }
+    for interval in ("5m", "15m", "1h"):
+        response = client.get(
+            f"/api/backtest/runs/{run_id}/chart-candles?{params}&interval={interval}",
+            headers=owner,
+        )
+        assert response.status_code == 200, response.json
+        assert response.json["candles"][0] == pytest.approx(
+            expected_partial_bucket
+        )
+        assert len(response.json["candles"]) == 1
+
+    # Older replay cursors lack furthest_time_ms; chart availability then ends
+    # at their saved cursor time.
+    with app.app_context():
+        mongo.db.backtest_runs.update_one(
+            {"_id": ObjectId(run_id)},
+            {
+                "$unset": {
+                    "replay_cursor.furthest_time_ms": "",
+                    "replay_cursor.furthest_source_candle_index": "",
+                }
+            },
+        )
+    legacy = client.get(
+        f"/api/backtest/runs/{run_id}/chart-candles?{params}&interval=1m",
+        headers=owner,
+    )
+    assert legacy.status_code == 200, legacy.json
+    assert [candle["time_ms"] for candle in legacy.json["candles"]] == [
+        initial["time_ms"]
+    ]
+
+    # The run boundary still wins if a stored furthest time is later than the
+    # selected period end, and no request can read cache dates beyond the run.
+    with app.app_context():
+        mongo.db.backtest_runs.update_one(
+            {"_id": ObjectId(run_id)},
+            {
+                "$set": {
+                    "replay_cursor.furthest_time_ms": run["end_utc_ms"]
+                    + 5 * 60_000
+                }
+            },
+        )
+    run_end = datetime.fromtimestamp(
+        run["end_utc_ms"] / 1000, tz=timezone.utc
+    ).isoformat()
+    after_run_end = datetime.fromtimestamp(
+        (run["end_utc_ms"] + 60 * 60_000) / 1000,
+        tz=timezone.utc,
+    ).isoformat()
+    beyond_run = client.get(
+        f"/api/backtest/runs/{run_id}/chart-candles",
+        query_string={"start": run_end, "end": after_run_end, "interval": "1m"},
+        headers=owner,
+    )
+    assert beyond_run.status_code == 200, beyond_run.json
+    assert beyond_run.json["candles"] == []
 
 
 def test_overlapping_run_fetches_only_uncached_days(app, client, monkeypatch):
