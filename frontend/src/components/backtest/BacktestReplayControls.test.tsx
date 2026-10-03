@@ -8,7 +8,10 @@ vi.mock('@getcandlekit/charts/react', () => ({
 }));
 
 describe('Backtest replay controls', () => {
-  const controller = {} as ReplayController;
+  const controller = {
+    getState: () => ({ status: 'ready', playing: false, speed: 1 }),
+    subscribe: vi.fn(() => () => undefined),
+  } as unknown as ReplayController;
 
   it('shows an enabled return-to-latest button while behind the persisted cursor', () => {
     const html = renderToStaticMarkup(
@@ -21,7 +24,7 @@ describe('Backtest replay controls', () => {
       />
     );
 
-    expect(html).toMatch(/<button[^>]*class="backtest-replay-return-latest"[^>]*>Return to latest<\/button>/);
+    expect(html).toMatch(/<button[^>]*class="backtest-replay-segment backtest-replay-return-latest"[^>]*aria-label="Return to latest candle"[^>]*>/);
     expect(html).not.toMatch(/class="backtest-replay-return-latest"[^>]*disabled=""/);
   });
 
@@ -46,7 +49,7 @@ describe('Backtest replay controls', () => {
       />
     );
 
-    expect(atLatest).toMatch(/class="backtest-replay-return-latest"[^>]*disabled=""/);
-    expect(busy).toMatch(/class="backtest-replay-return-latest"[^>]*disabled=""/);
+    expect(atLatest).toMatch(/aria-label="Return to latest candle"[^>]*disabled=""/);
+    expect(busy).toMatch(/aria-label="Return to latest candle"[^>]*disabled=""/);
   });
 });
