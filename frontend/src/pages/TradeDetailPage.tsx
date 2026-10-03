@@ -648,7 +648,7 @@ export function TradeDetailPage() {
           <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wider mb-3 dark:text-gray-100">
             Executions ({executions.length})
           </h2>
-          <ExecutionList executions={executions} />
+          <ExecutionList executions={executions} pricePrecision={trade.price_precision} />
         </div>
 
         {/* Notes and Tags */}
