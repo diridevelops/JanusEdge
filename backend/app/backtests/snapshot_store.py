@@ -6,8 +6,10 @@ import hashlib
 from datetime import date, datetime, time, timedelta, timezone
 from functools import lru_cache
 from io import BytesIO
+import re
 
 import pandas as pd
+from minio.error import S3Error
 
 from app.storage import get_client, get_market_data_bucket
 from app.utils.datetime_utils import utc_now
@@ -15,6 +17,14 @@ from app.utils.datetime_utils import utc_now
 
 _CANDLE_COLUMNS = ("time_ms", "open", "high", "low", "close", "volume")
 _FX_COLUMNS = ("time_ms", "open", "high", "low", "close")
+
+
+class CachedCandleObjectMissing(RuntimeError):
+    """Raised when a cache manifest points to a missing MinIO object."""
+
+
+class CachedCandleObjectInvalid(RuntimeError):
+    """Raised when a cached candle object fails its stored integrity checks."""
 
 
 def _utc_midnight(value: date) -> datetime:
@@ -97,6 +107,60 @@ class SnapshotStore:
         if after_write is not None:
             after_write(key)
         return key
+
+    def write_cached_candle_date(
+        self,
+        user_id,
+        instrument: str,
+        utc_date: date,
+        candles: list[dict],
+        *,
+        cache_version: str,
+    ) -> tuple[str, str]:
+        """Write a reusable user-owned UTC day, including known-empty days."""
+        payload = self._parquet_bytes(candles)
+        checksum = hashlib.sha256(payload).hexdigest()
+        safe_instrument = re.sub(r"[^A-Z0-9._-]", "_", instrument.upper())
+        key = (
+            f"backtests/{user_id}/shared-candles/{cache_version}/"
+            f"{safe_instrument}/{utc_date.isoformat()}/{checksum}.parquet"
+        )
+        self._put(key, payload)
+        return key, checksum
+
+    def read_cached_candle_date(self, entry: dict) -> dict:
+        """Read and verify a normalized reusable candle date from MinIO."""
+        object_key = entry.get("object_key")
+        if not isinstance(object_key, str) or not object_key:
+            raise CachedCandleObjectInvalid("Cached candle object key is missing.")
+        try:
+            payload = self._read_bytes(object_key)
+        except KeyError as exc:
+            raise CachedCandleObjectMissing(object_key) from exc
+        except S3Error as exc:
+            if exc.code in {"NoSuchKey", "NotFound"}:
+                raise CachedCandleObjectMissing(object_key) from exc
+            raise
+
+        if hashlib.sha256(payload).hexdigest() != entry.get("sha256"):
+            raise CachedCandleObjectInvalid("Cached candle checksum does not match.")
+        try:
+            frame = pd.read_parquet(BytesIO(payload))
+        except Exception as exc:
+            raise CachedCandleObjectInvalid("Cached candle Parquet is invalid.") from exc
+        if not set(_CANDLE_COLUMNS).issubset(frame.columns):
+            raise CachedCandleObjectInvalid("Cached candle columns are incomplete.")
+        if len(frame.index) != int(entry.get("candle_count", -1)):
+            raise CachedCandleObjectInvalid("Cached candle row count does not match.")
+        candles = frame.loc[:, list(_CANDLE_COLUMNS)].to_dict(orient="records")
+        outcome = entry.get("outcome")
+        if outcome not in {"data", "empty"} or (outcome == "data") != bool(candles):
+            raise CachedCandleObjectInvalid("Cached candle outcome does not match.")
+        try:
+            utc_date = date.fromisoformat(str(entry["utc_date"]))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise CachedCandleObjectInvalid("Cached candle date is invalid.") from exc
+        return {"utc_date": utc_date, "outcome": outcome, "candles": candles}
 
     def assemble_snapshot(
         self,
@@ -350,15 +414,18 @@ class SnapshotStore:
     def _read_parquet(
         self, object_key: str, *, columns: list[str] | None = None
     ) -> pd.DataFrame:
+        payload = self._read_bytes(object_key)
+        return pd.read_parquet(BytesIO(payload), columns=columns)
+
+    def _read_bytes(self, object_key: str) -> bytes:
         response = self._client.get_object(self._bucket, object_key)
         try:
-            payload = response.read()
+            return response.read()
         finally:
             response.close()
             release_conn = getattr(response, "release_conn", None)
             if release_conn is not None:
                 release_conn()
-        return pd.read_parquet(BytesIO(payload), columns=columns)
 
     def _put(self, object_key: str, payload: bytes) -> None:
         self._client.put_object(

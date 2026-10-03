@@ -118,6 +118,18 @@ export async function getBacktestCandlesForDate(
   return response.data.candles;
 }
 
+/** Fetch interval candles from an owned run's immutable snapshot. */
+export async function getBacktestChartCandles(
+  runId: string,
+  params: { start: string; end: string; interval: '1m' | '5m' | '15m' | '1h' }
+): Promise<BacktestCandle[]> {
+  const response = await apiClient.get<{ candles: BacktestCandle[] }>(
+    `/backtest/runs/${encodeURIComponent(runId)}/chart-candles`,
+    { params }
+  );
+  return response.data.candles;
+}
+
 /** Persist a cursor choice with an optimistic revision check. */
 export async function saveBacktestReplayPosition(
   runId: string,

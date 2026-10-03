@@ -36,6 +36,7 @@ def clean_backtest_collections(app):
             "backtest_chart_tabs",
             "backtest_chart_workspaces",
             "backtest_preparation_jobs",
+            "backtest_candle_cache",
             "backtest_notices",
             "trade_accounts",
         ):

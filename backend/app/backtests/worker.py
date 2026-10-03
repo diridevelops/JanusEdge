@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 from bson import ObjectId
 from flask import current_app, has_app_context
 
+from app.backtests.candle_cache import BacktestCandleCache
 from app.backtests.dukascopy_provider import DukascopyProvider
 from app.backtests.fx_conversion import (
     build_conversion_spec,
@@ -188,6 +189,7 @@ class BacktestWorker:
         repository=None,
         job_repository=None,
         snapshot_store=None,
+        candle_cache=None,
         random_source=None,
         worker_id: str | None = None,
         lease_seconds: int | None = None,
@@ -197,12 +199,17 @@ class BacktestWorker:
         self.repository = repository or BacktestRepository()
         self.job_repository = job_repository or PreparationJobRepository()
         self.snapshot_store = snapshot_store or SnapshotStore()
-        self.random_source = random_source or random.SystemRandom()
-        self.worker_id = worker_id or f"{os.getpid()}-{uuid.uuid4().hex}"
         self.lease_seconds = int(
             lease_seconds
             or os.environ.get("BACKTEST_JOB_LEASE_SECONDS", "300")
         )
+        self.candle_cache = candle_cache or BacktestCandleCache(
+            snapshot_store=self.snapshot_store,
+            clock=self.clock,
+            lease_seconds=self.lease_seconds,
+        )
+        self.random_source = random_source or random.SystemRandom()
+        self.worker_id = worker_id or f"{os.getpid()}-{uuid.uuid4().hex}"
 
     def process_one(self) -> bool:
         """Process one claimed job; return False when the queue is empty."""
@@ -586,17 +593,14 @@ class BacktestWorker:
         ).date()
         for utc_date in self._date_range(first_utc_date, last_utc_date):
             self._renew_or_lose(job, run, heartbeat)
-            result = self.provider.fetch_day(instrument, utc_date)
-            if (
-                not isinstance(result, dict)
-                or _as_date(result.get("utc_date")) != utc_date
-                or result.get("outcome") not in {"data", "empty"}
-                or not isinstance(result.get("candles"), list)
-            ):
-                raise ValueError("Downloader returned an invalid date result.")
+            result = self._fetch_cached_day(
+                run["user_id"],
+                instrument,
+                utc_date,
+                self.provider.fetch_day,
+                heartbeat,
+            )
             candles = result["candles"]
-            if (result["outcome"] == "data") != bool(candles):
-                raise ValueError("Downloader date outcome disagrees with its candles.")
             for candle in candles:
                 if not isinstance(candle, dict) or "time_ms" not in candle:
                     raise ValueError("Downloader returned a malformed candle.")
@@ -775,7 +779,13 @@ class BacktestWorker:
                 raise LeaseLostError("Backtest preparation lease was lost.")
             if not base_done:
                 try:
-                    result = self.provider.fetch_day(run["instrument"], utc_date)
+                    result = self._fetch_cached_day(
+                        user_id,
+                        run["instrument"],
+                        utc_date,
+                        self.provider.fetch_day,
+                        heartbeat,
+                    )
                     candles = self._validated_candles(result, utc_date, run)
                 except Exception as exc:
                     self._fail_provider_job(job, run, heartbeat, exc)
@@ -825,7 +835,13 @@ class BacktestWorker:
                         fetch_conversion_day = self.provider.fetch_day
                     for leg in conversion_legs:
                         instrument = leg["instrument"]
-                        fx_result = fetch_conversion_day(instrument, utc_date)
+                        fx_result = self._fetch_cached_day(
+                            user_id,
+                            instrument,
+                            utc_date,
+                            fetch_conversion_day,
+                            heartbeat,
+                        )
                         fx_candles = self._validated_candles(
                             fx_result, utc_date, run
                         )
@@ -1094,6 +1110,27 @@ class BacktestWorker:
             ) from error
         self._finish_outcome(run, terminal_job, heartbeat)
 
+    def _fetch_cached_day(
+        self, user_id, instrument, utc_date, fetcher, heartbeat
+    ) -> dict:
+        """Reuse one normalized source day across probes and run preparation."""
+        def fetch_normalized():
+            result = fetcher(instrument, utc_date)
+            candles = self._validated_candles(result, utc_date)
+            return {
+                "utc_date": utc_date,
+                "outcome": "data" if candles else "empty",
+                "candles": candles,
+            }
+
+        return self.candle_cache.get_or_fetch(
+            user_id=user_id,
+            instrument=instrument,
+            utc_date=utc_date,
+            fetcher=fetch_normalized,
+            check_wait=heartbeat.check,
+        )
+
     def _finish_outcome(
         self,
         run: dict,
@@ -1234,7 +1271,9 @@ class BacktestWorker:
         return [start + timedelta(days=offset) for offset in range(count)]
 
     @staticmethod
-    def _validated_candles(result, utc_date: date, run: dict) -> list[dict]:
+    def _validated_candles(
+        result, utc_date: date, run: dict | None = None
+    ) -> list[dict]:
         if not isinstance(result, dict) or _as_date(result.get("utc_date")) != utc_date:
             raise ValueError("Downloader returned an unexpected UTC date.")
         if result.get("outcome") not in {"data", "empty"}:
@@ -1244,8 +1283,17 @@ class BacktestWorker:
             raise ValueError("Downloader returned an invalid candle list.")
         normalized = []
         seen = set()
-        start_ms = int(run.get("context_start_utc_ms", run["start_utc_ms"]))
-        end_ms = int(run["end_utc_ms"])
+        day_start_ms = int(
+            datetime.combine(utc_date, time.min, tzinfo=timezone.utc).timestamp()
+            * 1000
+        )
+        day_end_ms = day_start_ms + 86_400_000
+        start_ms = (
+            int(run.get("context_start_utc_ms", run["start_utc_ms"]))
+            if run is not None
+            else day_start_ms
+        )
+        end_ms = int(run["end_utc_ms"]) if run is not None else day_end_ms
         for candle in candles:
             if not isinstance(candle, dict):
                 raise ValueError("Downloader returned a malformed candle.")
@@ -1253,7 +1301,12 @@ class BacktestWorker:
             # The provider reads whole UTC days. Enforce the run's exact local
             # calendar selection here so edge-day bars outside [start,end)
             # never enter the staging object or immutable snapshot.
-            if timestamp < start_ms or timestamp >= end_ms:
+            if (
+                timestamp < day_start_ms
+                or timestamp >= day_end_ms
+                or timestamp < start_ms
+                or timestamp >= end_ms
+            ):
                 continue
             if timestamp in seen:
                 continue
@@ -1261,10 +1314,12 @@ class BacktestWorker:
             row = {"time_ms": timestamp}
             for key in ("open", "high", "low", "close"):
                 row[key] = float(candle[key])
-            if "volume" in candle and candle["volume"] is not None:
-                row["volume"] = float(candle["volume"])
+            volume = candle.get("volume", 0)
+            row["volume"] = float(volume) if volume is not None else 0.0
             normalized.append(row)
         normalized.sort(key=lambda item: item["time_ms"])
+        if run is None and (result["outcome"] == "data") != bool(normalized):
+            raise ValueError("Downloader date outcome disagrees with its candles.")
         return normalized
 
 

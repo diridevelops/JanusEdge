@@ -244,6 +244,12 @@ def init_db(db: Database) -> None:
     db.backtest_preparation_jobs.create_index(
         [("state", 1), ("lease_expires_at", 1), ("created_at", 1)]
     )
+    db.backtest_candle_cache.create_index(
+        [("user_id", 1), ("cache_key", 1)], unique=True
+    )
+    db.backtest_candle_cache.create_index(
+        [("state", 1), ("lease_expires_at", 1)]
+    )
     db.backtest_chart_tabs.create_index(
         [("user_id", 1), ("run_id", 1), ("id", 1)], unique=True
     )

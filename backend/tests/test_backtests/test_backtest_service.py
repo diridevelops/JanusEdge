@@ -129,7 +129,7 @@ def test_create_run_persists_default_balance_and_risk_on_run_and_account(
     assert metadata["price_precision"] == 5
     assert metadata["contract_size"] == 100_000.0
     assert metadata["min_lots"] == 0.01
-    assert metadata["lot_increment"] == 0.00001
+    assert metadata["lot_increment"] == 0.01
     assert metadata["pip_value_per_standard_lot"] == 10.0
     assert metadata["conversion_spec"]["supported"] is True
     assert metadata["conversion_spec"]["route"] == []

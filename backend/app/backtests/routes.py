@@ -171,6 +171,19 @@ def get_candles_for_date(run_id: str):
     return jsonify({"candles": candles}), 200
 
 
+@backtest_bp.route("/runs/<run_id>/chart-candles", methods=["GET"])
+@jwt_required()
+def get_chart_candles(run_id: str):
+    candles = backtest_service.get_chart_candles(
+        get_jwt_identity(),
+        run_id,
+        start=request.args.get("start"),
+        end=request.args.get("end"),
+        interval=request.args.get("interval", "1m"),
+    )
+    return jsonify({"candles": candles}), 200
+
+
 @backtest_bp.route("/runs/<run_id>/replay-position", methods=["PUT"])
 @jwt_required()
 def save_replay_position(run_id: str):

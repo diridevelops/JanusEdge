@@ -14,6 +14,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import { useTheme } from '../../hooks/useTheme';
 import type { Execution } from '../../types/execution.types';
 import type { ChartInterval, OHLCDataPoint } from '../../types/marketData.types';
+import { getExecutionMarkerStyle } from '../../utils/executionMarkerStyle';
 
 const CHART_INTERVALS: ChartInterval[] = ['1m', '5m', '15m', '1h'];
 
@@ -122,16 +123,17 @@ export function CandlestickChart({
 
     return executions
       .map((exec) => {
+        const style = getExecutionMarkerStyle(exec.side);
         const utcEpoch = Math.floor(new Date(exec.timestamp).getTime() / 1000);
         // Floor to the start of the bar interval so
         // markers align with the correct candlestick
         const floored = Math.floor(utcEpoch / intervalSec) * intervalSec;
         return {
           time: shiftTime(floored) as Time,
-          position: (exec.side === 'Buy' ? 'belowBar' : 'aboveBar') as 'belowBar' | 'aboveBar',
-          color: exec.side === 'Buy' ? '#22c55e' : '#ef4444',
-          shape: (exec.side === 'Buy' ? 'arrowUp' : 'arrowDown') as 'arrowUp' | 'arrowDown',
-          text: `${exec.side} ${exec.quantity} @ ${exec.price.toFixed(pricePrecision)}`,
+          position: style.position,
+          color: style.color,
+          shape: style.shape,
+          text: `${style.label} ${exec.quantity} @ ${exec.price.toFixed(pricePrecision)}`,
         };
       })
       .sort((a, b) => (a.time as number) - (b.time as number));

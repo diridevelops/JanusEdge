@@ -470,7 +470,8 @@ def test_local_day_probe_uses_dst_adjusted_display_timezone_bounds(
     assert bounds[1] - bounds[0] == expected_hours * 60 * 60 * 1000
 
 
-def test_local_day_probe_excludes_candles_outside_dst_adjusted_day():
+def test_local_day_probe_excludes_candles_outside_dst_adjusted_day(app):
+    from bson import ObjectId
     from app.backtests.worker import BacktestWorker
 
     local_day = date(2026, 3, 29)
@@ -491,21 +492,29 @@ def test_local_day_probe_excludes_candles_outside_dst_adjusted_day():
             return {
                 "utc_date": utc_date,
                 "outcome": "data",
-                "candles": [{"time_ms": timestamp}],
+                "candles": [{
+                    "time_ms": timestamp,
+                    "open": 1.0,
+                    "high": 1.0,
+                    "low": 1.0,
+                    "close": 1.0,
+                    "volume": 1.0,
+                }],
             }
 
     provider = BoundaryProvider()
     worker = BacktestWorker(provider=provider)
     worker._renew_or_lose = lambda *args: None
 
-    has_candles = worker._probe_local_date(
-        "EUR-USD",
-        local_day,
-        timezone_info,
-        {},
-        {},
-        type("Heartbeat", (), {"check": lambda self: None})(),
-    )
+    with app.app_context():
+        has_candles = worker._probe_local_date(
+            "EUR-USD",
+            local_day,
+            timezone_info,
+            {},
+            {"user_id": ObjectId()},
+            type("Heartbeat", (), {"check": lambda self: None})(),
+        )
 
     assert has_candles is False
     assert provider.calls == [date(2026, 3, 28), date(2026, 3, 29)]

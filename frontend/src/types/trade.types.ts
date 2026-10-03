@@ -4,6 +4,7 @@ export interface Trade {
   user_id: string;
   trade_account_id: string;
   import_batch_id: string | null;
+  backtest_run_id?: string | null;
   symbol: string;
   raw_symbol: string;
   side: 'Long' | 'Short';
@@ -47,7 +48,7 @@ export interface Trade {
   exit_time: string;
   holding_time_seconds: number;
   execution_count: number;
-  source: 'imported' | 'manual';
+  source: 'imported' | 'manual' | 'backtest';
   status: 'open' | 'closed' | 'deleted';
   tag_ids: string[];
   strategy: string | null;

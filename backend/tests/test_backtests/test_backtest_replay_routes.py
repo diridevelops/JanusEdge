@@ -302,6 +302,104 @@ def test_available_utc_dates_and_day_candles_are_read_from_owned_snapshot(
     ).status_code == 404
 
 
+def test_chart_candles_aggregate_run_snapshot_and_allow_completed_runs(
+    app, client, monkeypatch
+):
+    from bson import ObjectId
+    from app.extensions import mongo
+
+    _patch_catalog(monkeypatch)
+    owner = _register(client, "chart-snapshot-owner")
+    other_user = _register(client, "chart-snapshot-other")
+    run_id, _, _ = _create_ready_run(app, client, owner)
+    with app.app_context():
+        mongo.db.backtest_runs.update_one(
+            {"_id": ObjectId(run_id)}, {"$set": {"status": "complete"}}
+        )
+
+    params = (
+        "start=2026-01-05T00:00:00Z&end=2026-01-05T00:10:00Z"
+    )
+    one_minute = client.get(
+        f"/api/backtest/runs/{run_id}/chart-candles?{params}&interval=1m",
+        headers=owner,
+    )
+    five_minute = client.get(
+        f"/api/backtest/runs/{run_id}/chart-candles?{params}&interval=5m",
+        headers=owner,
+    )
+    fifteen_minute = client.get(
+        f"/api/backtest/runs/{run_id}/chart-candles?{params}&interval=15m",
+        headers=owner,
+    )
+    one_hour = client.get(
+        f"/api/backtest/runs/{run_id}/chart-candles?{params}&interval=1h",
+        headers=owner,
+    )
+
+    assert one_minute.status_code == 200
+    assert [candle["time_ms"] for candle in one_minute.json["candles"]] == [
+        1767571200000,
+        1767571260000,
+    ]
+    expected = {
+        "time_ms": 1767571200000,
+        "open": 1.1,
+        "high": 1.201,
+        "low": 1.099,
+        "close": 1.2005,
+        "volume": 61.0,
+    }
+    assert five_minute.status_code == 200
+    for response in (five_minute, fifteen_minute, one_hour):
+        assert len(response.json["candles"]) == 1
+        candle = response.json["candles"][0]
+        assert candle["time_ms"] == expected["time_ms"]
+        for key in ("open", "high", "low", "close", "volume"):
+            assert candle[key] == pytest.approx(expected[key])
+    assert client.get(
+        f"/api/backtest/runs/{run_id}/chart-candles?{params}&interval=2m",
+        headers=owner,
+    ).status_code == 400
+    assert client.get(
+        f"/api/backtest/runs/{run_id}/chart-candles?{params}",
+        headers=other_user,
+    ).status_code == 404
+
+
+def test_overlapping_run_fetches_only_uncached_days(app, client, monkeypatch):
+    _patch_catalog(monkeypatch)
+    owner = _register(client, "reused-candle-owner")
+    _create_ready_run(app, client, owner)
+
+    response = client.post(
+        "/api/backtest/runs",
+        headers=owner,
+        json={
+            "instrument": "EUR-USD",
+            "start_date": "2026-01-06",
+            "end_date": "2026-01-08",
+            "display_timezone": "UTC",
+            "warmup_days": 0,
+        },
+    )
+    assert response.status_code == 202
+    run_id = response.json["run"]["id"]
+    jan_8 = date(2026, 1, 8)
+    provider = _Provider(
+        {jan_8: _day_result(jan_8, [_candle(jan_8, 0, 1.4)])}
+    )
+    from app.backtests.worker import BacktestWorker
+
+    with app.app_context():
+        assert BacktestWorker(provider=provider, clock=_Clock()).process_one()
+
+    stored = client.get(f"/api/backtest/runs/{run_id}", headers=owner)
+    assert stored.status_code == 200
+    assert stored.json["run"]["status"] == "ready"
+    assert provider.calls == [("EUR-USD", jan_8)]
+
+
 def test_replay_cursor_accepts_valid_selection_and_intentional_step_back(
     app, client, monkeypatch
 ):

@@ -1,7 +1,6 @@
 import { ArrowLeft, RefreshCw, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { getOHLC } from '../api/marketData.api';
 import { deleteTrade, getTrade, getTradeRunningPnL } from '../api/trades.api';
 import { CandlestickChart } from '../components/charts/CandlestickChart';
 import { RunningPnLChart } from '../components/charts/RunningPnLChart';
@@ -29,11 +28,13 @@ import {
   formatQuantity,
 } from '../utils/formatters';
 import { getTradeRMultiple } from '../utils/tradeMetrics';
+import { getTradeChartCandles } from '../utils/tradeChartData';
 
-const ALL_INTERVALS: ChartInterval[] = ['1m', '5m', '15m', '1h'];
+type TradeChartInterval = Exclude<ChartInterval, '1d'>;
+const ALL_INTERVALS: TradeChartInterval[] = ['1m', '5m', '15m', '1h'];
 
 /** Pick the most relevant chart interval based on trade duration. */
-function bestInterval(holdingSeconds: number): ChartInterval {
+function bestInterval(holdingSeconds: number): TradeChartInterval {
   if (holdingSeconds < 20 * 60) return '1m';
   if (holdingSeconds < 60 * 60) return '5m';
   if (holdingSeconds < 4 * 60 * 60) return '15m';
@@ -42,6 +43,10 @@ function bestInterval(holdingSeconds: number): ChartInterval {
 
 function getMarketDataFailureMessage(): string {
   return 'No stored market data was found for this trade window. Import a NinjaTrader tick-data file from Market Data to populate candles for this symbol.';
+}
+
+function getBacktestChartFailureMessage(): string {
+  return 'No candles were found in the linked backtest run for this trade window.';
 }
 
 function getRunningPnLEmptyStateMessage(
@@ -189,7 +194,9 @@ export function TradeDetailPage() {
       chartRequestIdRef.current = requestId;
       setIsChartLoading(true);
       setChartError(null);
-      const failureMessage = getMarketDataFailureMessage();
+      const failureMessage = tradeToLoad.backtest_run_id
+        ? getBacktestChartFailureMessage()
+        : getMarketDataFailureMessage();
       const { forceRefresh = false, notifyOnMissing = false } = options;
 
       try {
@@ -219,14 +226,13 @@ export function TradeDetailPage() {
 
         const results = await Promise.allSettled(
           ALL_INTERVALS.map(async (iv) => {
-            const data = await getOHLC({
-              symbol: tradeToLoad.symbol,
-              raw_symbol: tradeToLoad.raw_symbol,
-              interval: iv,
-              start: dayStart.toISOString(),
-              end: dayEnd.toISOString(),
-              force_refresh: forceRefresh,
-            });
+            const data = await getTradeChartCandles(
+              tradeToLoad,
+              iv,
+              dayStart.toISOString(),
+              dayEnd.toISOString(),
+              forceRefresh
+            );
 
             return {
               interval: iv,
@@ -383,9 +389,19 @@ export function TradeDetailPage() {
     if (!trade) return;
     const ok = await fetchAllCharts(trade, { forceRefresh: true });
     if (ok === true) {
-      addToast('success', 'Stored candles refreshed');
+      addToast(
+        'success',
+        trade.backtest_run_id
+          ? 'Backtest candles reloaded from the run snapshot'
+          : 'Stored candles refreshed'
+      );
     } else if (ok === false) {
-      addToast('error', getMarketDataFailureMessage());
+      addToast(
+        'error',
+        trade.backtest_run_id
+          ? getBacktestChartFailureMessage()
+          : getMarketDataFailureMessage()
+      );
     }
   }
 
@@ -574,7 +590,9 @@ export function TradeDetailPage() {
               onClick={handleRefreshChartData}
               disabled={isChartLoading}
               className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600 hover:text-gray-800 disabled:opacity-50 dark:text-gray-400 dark:hover:text-gray-200"
-              title="Reload stored candles for this trade day"
+              title={trade.backtest_run_id
+                ? 'Reload candles from the linked backtest snapshot'
+                : 'Reload stored candles for this trade day'}
             >
               <RefreshCw className={`h-4 w-4 ${isChartLoading ? 'animate-spin' : ''}`} />
               Refresh Data

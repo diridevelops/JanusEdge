@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import calendar
 import json
 import math
 from datetime import date, datetime, time, timedelta, timezone
@@ -71,6 +72,19 @@ def _parse_date(value, field_name: str) -> date:
     if parsed.isoformat() != value:
         raise ValidationError(f"{field_name} must use YYYY-MM-DD format.")
     return parsed
+
+
+def _parse_iso_timestamp_ms(value, field_name: str) -> int:
+    """Parse an ISO timestamp as UTC milliseconds for candle range queries."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValidationError(f"{field_name} must be an ISO timestamp.")
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValidationError(f"{field_name} must be an ISO timestamp.") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return int(parsed.astimezone(timezone.utc).timestamp() * 1000)
 
 
 def _stored_utc_date(value) -> date:
@@ -858,6 +872,95 @@ class BacktestService:
             (frame["time_ms"] >= day_start_ms)
             & (frame["time_ms"] < day_end_ms)
         ].sort_values("time_ms", kind="stable")
+        return [
+            {
+                "time_ms": int(row.time_ms),
+                "open": float(row.open),
+                "high": float(row.high),
+                "low": float(row.low),
+                "close": float(row.close),
+                "volume": float(row.volume),
+            }
+            for row in frame.itertuples(index=False)
+        ]
+
+    def get_chart_candles(
+        self,
+        user_id: str,
+        run_id,
+        *,
+        start: str,
+        end: str,
+        interval: str = "1m",
+    ) -> list[dict]:
+        """Read and optionally aggregate candles from an owned run snapshot."""
+        run = self.repository.find_owned_run(user_id, run_id)
+        if run is None:
+            raise NotFoundError("Backtest run not found.")
+        if run.get("status") not in {"ready", "complete"} or not run.get("snapshot"):
+            raise ConflictError("Backtest run candles are not available.")
+
+        interval_minutes = {"1m": 1, "5m": 5, "15m": 15, "1h": 60}.get(interval)
+        if interval_minutes is None:
+            raise ValidationError("interval must be 1m, 5m, 15m, or 1h.")
+        start_ms = _parse_iso_timestamp_ms(start, "start")
+        end_ms = _parse_iso_timestamp_ms(end, "end")
+        if end_ms <= start_ms:
+            raise ValidationError("end must be later than start.")
+
+        # Trade-detail charts request full UTC days. Clip that request to the
+        # exact immutable run context so warm-up and selected-period boundaries
+        # remain authoritative.
+        range_start_ms = max(
+            start_ms,
+            int(run.get("context_start_utc_ms", run["start_utc_ms"])),
+        )
+        range_end_ms = min(end_ms, int(run["end_utc_ms"]))
+        if range_end_ms <= range_start_ms:
+            return []
+
+        first_date = datetime.fromtimestamp(
+            range_start_ms / 1000, tz=timezone.utc
+        ).date()
+        last_date = datetime.fromtimestamp(
+            (range_end_ms - 1) / 1000, tz=timezone.utc
+        ).date()
+        frames = []
+        for day_offset in range((last_date - first_date).days + 1):
+            utc_date = first_date + timedelta(days=day_offset)
+            frame = self.snapshot_store.read_snapshot_day(
+                run["snapshot"], utc_date.isoformat()
+            )
+            if frame.empty:
+                continue
+            frame = frame[
+                (frame["time_ms"] >= range_start_ms)
+                & (frame["time_ms"] < range_end_ms)
+            ]
+            if not frame.empty:
+                frames.append(frame)
+        if not frames:
+            return []
+
+        import pandas as pd
+
+        frame = pd.concat(frames, ignore_index=True)
+        frame = frame.drop_duplicates(subset=["time_ms"], keep="first")
+        frame = frame.sort_values("time_ms", kind="stable")
+        if interval_minutes > 1:
+            interval_ms = interval_minutes * 60_000
+            frame["bucket_ms"] = (frame["time_ms"] // interval_ms) * interval_ms
+            frame = (
+                frame.groupby("bucket_ms", sort=True, as_index=False)
+                .agg(
+                    open=("open", "first"),
+                    high=("high", "max"),
+                    low=("low", "min"),
+                    close=("close", "last"),
+                    volume=("volume", "sum"),
+                )
+                .rename(columns={"bucket_ms": "time_ms"})
+            )
         return [
             {
                 "time_ms": int(row.time_ms),

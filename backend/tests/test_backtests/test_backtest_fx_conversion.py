@@ -217,9 +217,11 @@ def test_worker_checkpoints_and_publishes_inverse_conversion_data(app, monkeypat
 
     class Provider:
         def __init__(self):
+            self.base_calls = []
             self.conversion_calls = []
 
         def fetch_day(self, instrument, utc_date):
+            self.base_calls.append((instrument, utc_date))
             time_ms = int(
                 datetime.combine(
                     utc_date, datetime.min.time(), tzinfo=timezone.utc
@@ -267,7 +269,10 @@ def test_worker_checkpoints_and_publishes_inverse_conversion_data(app, monkeypat
     assert ref["quote_currency"] == "JPY"
     assert ref["instrument"] == "USD-JPY"
     assert ref["direction"] == "inverse"
-    assert ref["candle_count"] == 32
-    assert len(provider.conversion_calls) == 32
-    assert all(item[0] == "USD-JPY" for item in provider.conversion_calls)
-    assert len(stored_job["fx_conversion"]["completed_utc_dates"]) == 32
+    assert ref["candle_count"] == 1
+    assert len(provider.base_calls) == 1
+    assert all(item[0] == "USD-JPY" for item in provider.base_calls)
+    # The base series is also the conversion instrument, so its cached UTC
+    # dates are reused instead of being downloaded a second time.
+    assert provider.conversion_calls == []
+    assert len(stored_job["fx_conversion"]["completed_utc_dates"]) == 1
