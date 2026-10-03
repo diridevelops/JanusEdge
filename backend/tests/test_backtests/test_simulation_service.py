@@ -318,6 +318,84 @@ def test_pending_operation_replays_idempotent_effects_then_commits(app):
         assert run["simulation_control"]["pending_operation_id"] is None
 
 
+def test_rewind_from_complete_preserves_orders_and_initializes_legacy_highwater(app):
+    with app.app_context():
+        user_id, run_id = _seed_run(
+            status="complete", sequence=2, revision=2, generation=0
+        )
+        user_oid = ObjectId(user_id)
+        mongo.db.backtest_runs.update_one(
+            {"_id": run_id},
+            {
+                "$set": {
+                    "current_balance_usd": 9_250.0,
+                    "simulation_control.has_accepted_order": True,
+                }
+            },
+        )
+        order_id = ObjectId()
+        BacktestSimulationRepository().insert_order_version(
+            {
+                "user_id": user_oid,
+                "run_id": run_id,
+                "reset_generation": 0,
+                "order_id": order_id,
+                "operation_sequence": 2,
+                "entity_version": 1,
+                "status": "pending",
+            }
+        )
+
+        service = _service()
+        rewound = _execute(
+            service,
+            user_id,
+            run_id,
+            key="legacy-complete-rewind",
+            revision=2,
+            request={"source_candle_index": 9, "time_ms": 900},
+            kind="rewind",
+            handler=lambda _operation, _run: {
+                "result": {"cursor": {"source_candle_index": 9, "time_ms": 900}},
+                "run_updates": {
+                    "replay_cursor": {"source_candle_index": 9, "time_ms": 900},
+                    "status": "ready",
+                },
+            },
+        )
+        run = mongo.db.backtest_runs.find_one({"_id": run_id})
+        assert rewound["state"] == "committed"
+        assert run["status"] == "ready"
+        assert run["current_balance_usd"] == 9_250.0
+        assert run["simulation_control"]["has_accepted_order"] is True
+        assert run["replay_cursor"]["source_candle_index"] == 9
+        assert run["replay_cursor"]["furthest_source_candle_index"] == 10
+        assert run["replay_cursor"]["furthest_time_ms"] == 1_000
+        assert BacktestSimulationRepository().list_visible_orders(
+            user_id, run_id, reset_generation=0, committed_sequence=3
+        )[0]["status"] == "pending"
+
+        advanced = _execute(
+            service,
+            user_id,
+            run_id,
+            key="legacy-advance-new-highwater",
+            revision=rewound["control_revision"],
+            request={"target_source_index": 12},
+            kind="advance",
+            handler=lambda _operation, _run: {
+                "result": {"cursor": {"source_candle_index": 12, "time_ms": 1_200}},
+                "run_updates": {
+                    "replay_cursor": {"source_candle_index": 12, "time_ms": 1_200}
+                },
+            },
+        )
+        assert advanced["state"] == "committed"
+        run = mongo.db.backtest_runs.find_one({"_id": run_id})
+        assert run["replay_cursor"]["furthest_source_candle_index"] == 12
+        assert run["replay_cursor"]["furthest_time_ms"] == 1_200
+
+
 def test_reset_changes_generation_and_keeps_mutations_fenced_until_cleanup(app):
     with app.app_context():
         user_id, run_id = _seed_run(
@@ -437,6 +515,8 @@ def test_reset_changes_generation_and_keeps_mutations_fenced_until_cleanup(app):
         assert control["pending_operation_id"] is not None
         assert run["current_balance_usd"] == run["initial_balance_usd"]
         assert run["replay_cursor"]["source_candle_index"] == 4
+        assert run["replay_cursor"]["furthest_source_candle_index"] == 4
+        assert run["replay_cursor"]["furthest_time_ms"] == 4_000
         assert mongo.db.trades.find_one({"_id": old_generation_trade_id}) is None
         assert mongo.db.executions.find_one(
             {"_id": old_generation_execution_id}

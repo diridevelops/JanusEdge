@@ -532,6 +532,7 @@ class SimulationStateResponseSchema(SimulationSchema):
     initial_balance_usd = PositiveFiniteFloat(required=True)
     risk_percent = PositiveFiniteFloat(required=True)
     current_balance_usd = FiniteFloat(required=True)
+    mark_price = FiniteFloat(allow_none=True, load_default=None)
     current_quote_to_usd_rate = PositiveFiniteFloat(allow_none=True, load_default=None)
     cost_profile = fields.Nested(BacktestCostProfileSchema, required=True)
     orders = fields.List(fields.Nested(BacktestOrderSchema), required=True)

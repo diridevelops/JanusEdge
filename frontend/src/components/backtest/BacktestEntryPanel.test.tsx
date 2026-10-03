@@ -83,6 +83,20 @@ describe('Backtest entry panel and bracket sizing', () => {
     expect(html).not.toMatch(/<input type="checkbox" checked=""/);
   });
 
+  it('disables new order choices with guidance while replay is behind the latest candle', () => {
+    const html = renderToStaticMarkup(
+      <BacktestEntryPanel
+        {...makePanelProps({
+          orderEntryDisabled: true,
+          orderEntryDisabledReason: 'Return to the last viewed candle before placing a new order.',
+        })}
+      />
+    );
+
+    expect((html.match(/class="backtest-entry-panel-order-option"[^>]*disabled=""/g) ?? [])).toHaveLength(4);
+    expect(html).toContain('Return to the last viewed candle before placing a new order.');
+  });
+
   it('steps manual lots using the instrument minimum and exact lot increment', () => {
     expect(stepManualLotsValue(0.01, 1, 0.01, 0.00001)).toBe(0.01001);
     expect(stepManualLotsValue(0.01001, -1, 0.01, 0.00001)).toBe(0.01);

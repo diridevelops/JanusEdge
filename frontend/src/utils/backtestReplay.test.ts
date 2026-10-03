@@ -153,6 +153,35 @@ describe('createCandleKitControlsAdapter', () => {
 
     expect(step).toHaveBeenCalledWith(-1);
   });
+
+  it('routes backward seeks through simulation rewind without an order-history lock', async () => {
+    const seek = vi.fn();
+    const onRewind = vi.fn(async () => undefined);
+    const controls = createCandleKitControlsAdapter(
+      {
+        getState: () => ({
+          status: 'ready' as const,
+          cursor: { ts: minute, seq: 2 },
+          speed: 1,
+          playing: false,
+          window: { from: 0, to: 2 * minute },
+          activeSeries: [],
+          dataVersion: 1,
+        }),
+        pause: vi.fn(),
+        seek,
+      } as unknown as ReplayController,
+      [0, minute, 2 * minute],
+      {
+        onAdvance: vi.fn(async () => undefined),
+        onRewind,
+      }
+    );
+
+    controls.seek(0);
+    await vi.waitFor(() => expect(onRewind).toHaveBeenCalledWith(0, 0));
+    expect(seek).toHaveBeenCalledWith(0);
+  });
 });
 
 describe('createReplayPositionWriter', () => {

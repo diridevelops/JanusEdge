@@ -19,6 +19,8 @@ export interface BacktestEntryPanelProps extends BacktestBracketPrices {
   entryType: BacktestEntryType;
   direction: BacktestTradeDirection;
   onOrderSelectionChange: (entryType: BacktestEntryType, direction: BacktestTradeDirection) => void;
+  orderEntryDisabled?: boolean;
+  orderEntryDisabledReason?: string;
   /** Omit autoSize to use the component's default-on local setting. */
   autoSize?: boolean;
   onAutoSizeChange?: (enabled: boolean) => void;
@@ -71,6 +73,8 @@ export function BacktestEntryPanel({
   entryType,
   direction,
   onOrderSelectionChange,
+  orderEntryDisabled = false,
+  orderEntryDisabledReason,
   entryPrice,
   stopLossPrice,
   takeProfitPrice,
@@ -132,6 +136,7 @@ export function BacktestEntryPanel({
             type="button"
             className="backtest-entry-panel-order-option"
             data-side="buy"
+            disabled={orderEntryDisabled}
             onClick={() => onOrderSelectionChange('market', 'long')}
           >
             Buy Market
@@ -140,6 +145,7 @@ export function BacktestEntryPanel({
             type="button"
             className="backtest-entry-panel-order-option"
             data-side="sell"
+            disabled={orderEntryDisabled}
             onClick={() => onOrderSelectionChange('market', 'short')}
           >
             Sell Market
@@ -148,6 +154,7 @@ export function BacktestEntryPanel({
             type="button"
             className="backtest-entry-panel-order-option"
             data-side="buy"
+            disabled={orderEntryDisabled}
             onClick={() => onOrderSelectionChange('limit', 'long')}
           >
             Buy Limit
@@ -156,11 +163,17 @@ export function BacktestEntryPanel({
             type="button"
             className="backtest-entry-panel-order-option"
             data-side="sell"
+            disabled={orderEntryDisabled}
             onClick={() => onOrderSelectionChange('limit', 'short')}
           >
             Sell Limit
           </button>
         </div>
+        {orderEntryDisabledReason && (
+          <p className="backtest-entry-panel-order-disabled-reason" role="status">
+            {orderEntryDisabledReason}
+          </p>
+        )}
 
         <section className="backtest-entry-panel-sizing" aria-label="Quantity and projected risk">
           <div className="backtest-entry-panel-sizing-heading">

@@ -159,6 +159,7 @@ function BacktestSimulationChartLayer() {
           pipSize={ui.pipSize}
           priceUnitLabel={ui.priceUnitLabel}
           currentClose={ui.currentClose}
+          markPrice={ui.markPrice}
           priceToCoordinate={priceToCoordinate}
           coordinateToPrice={coordinateToPrice}
           onMoveStop={ui.onMoveStop}

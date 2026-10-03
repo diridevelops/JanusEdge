@@ -121,9 +121,6 @@ class SimulationService:
             raise ConflictError("Simulation control revision is stale.")
         if control.get("pending_operation_id") is not None:
             raise ConflictError("Another simulation operation is still pending.")
-        if kind == "rewind" and control.get("has_accepted_order"):
-            raise ConflictError("Reset is required before moving backward.")
-
         sequence = control["committed_sequence"] + 1
         operation_id = ObjectId()
         operation = make_simulation_operation_doc(
@@ -324,7 +321,7 @@ class SimulationService:
         status = run.get("status")
         if status == "deleting":
             raise ConflictError("Backtest run is being deleted.")
-        if status == "complete" and kind != "reset":
+        if status == "complete" and kind not in {"reset", "rewind"}:
             raise ConflictError("Completed runs must be reset before mutation.")
         if status not in {"ready", "complete"}:
             raise ConflictError("Backtest run is not ready for simulation.")
@@ -517,7 +514,7 @@ class SimulationService:
                 operation["kind"] == "submit_order"
                 and operation["final_state"] == "committed"
             ),
-            allow_complete=operation["kind"] == "reset",
+            allow_complete=operation["kind"] in {"reset", "rewind"},
         )
         if not committed:
             run_now = self.backtest_repository.find_owned_run(user_id, run_id)
@@ -777,8 +774,17 @@ class SimulationService:
         if not set(updates).issubset(allowed):
             raise ValueError("Simulation handler returned unsupported run updates.")
         if "status" in updates:
-            if operation["kind"] != "advance" or updates["status"] != "complete":
-                raise ValueError("Only final-candle advance may complete a run.")
+            status = updates["status"]
+            can_complete = operation["kind"] == "advance" and status == "complete"
+            can_reopen = (
+                operation["kind"] == "rewind"
+                and run.get("status") == "complete"
+                and status == "ready"
+            )
+            if not (can_complete or can_reopen):
+                raise ValueError(
+                    "Only final-candle advance may complete a run, and only rewind may reopen one."
+                )
         if "current_balance_usd" in updates:
             balance = updates["current_balance_usd"]
             if (
@@ -819,6 +825,14 @@ class SimulationService:
                 raise ValueError("Handler returned an invalid replay cursor.")
             current_cursor = run.get("replay_cursor") or {}
             current_index = current_cursor.get("source_candle_index")
+            current_time_ms = current_cursor.get("time_ms")
+            if (
+                isinstance(current_index, bool)
+                or not isinstance(current_index, int)
+                or isinstance(current_time_ms, bool)
+                or not isinstance(current_time_ms, int)
+            ):
+                raise ValueError("Saved replay cursor is invalid.")
             if (
                 operation["kind"] == "advance"
                 and isinstance(current_index, int)
@@ -831,9 +845,30 @@ class SimulationService:
                 and index >= current_index
             ):
                 raise ValueError("Rewind cursor must move backward.")
+            furthest_index = current_cursor.get(
+                "furthest_source_candle_index", current_index
+            )
+            furthest_time_ms = current_cursor.get("furthest_time_ms", current_time_ms)
+            if (
+                isinstance(furthest_index, bool)
+                or not isinstance(furthest_index, int)
+                or furthest_index < current_index
+                or isinstance(furthest_time_ms, bool)
+                or not isinstance(furthest_time_ms, int)
+                or furthest_time_ms < 0
+            ):
+                raise ValueError("Saved furthest replay cursor is invalid.")
+            if operation["kind"] == "reset":
+                furthest_index = index
+                furthest_time_ms = time_ms
+            elif index > furthest_index:
+                furthest_index = index
+                furthest_time_ms = time_ms
             updates["replay_cursor"] = {
                 "source_candle_index": index,
                 "time_ms": time_ms,
+                "furthest_source_candle_index": furthest_index,
+                "furthest_time_ms": furthest_time_ms,
                 "revision": int(current_cursor.get("revision", -1)) + 1,
                 "updated_at": utc_now(),
             }
@@ -850,8 +885,6 @@ class SimulationService:
         control = self._control(run)
         if control.get("pending_operation_id") is not None:
             raise ConflictError("Another simulation operation is still pending.")
-        if kind == "rewind" and control.get("has_accepted_order"):
-            raise ConflictError("Reset is required before moving backward.")
         raise ConflictError("Simulation control revision is stale.")
 
     @staticmethod

@@ -19,6 +19,7 @@ interface BacktestPositionOverlayProps {
   pipSize?: number;
   priceUnitLabel?: string;
   currentClose: number | null;
+  markPrice?: number | null;
   priceToCoordinate: (price: number) => number | null;
   coordinateToPrice: (y: number) => number | null;
   onMoveStop: (positionId: string, price: number) => void;
@@ -93,6 +94,7 @@ export function BacktestPositionOverlay({
   pipSize = 0,
   priceUnitLabel = 'pips',
   currentClose,
+  markPrice,
   priceToCoordinate,
   coordinateToPrice,
   onMoveStop,
@@ -263,7 +265,13 @@ export function BacktestPositionOverlay({
                 className="px-1"
                 title={`USD unrealized P&L ${position.unrealizedPnlUsd == null ? 'unavailable' : usd.format(position.unrealizedPnlUsd)}`}
               >
-                P&amp;L {formatPositionPnlInInstrumentUnits(position, currentClose, pipSize, pricePrecision, priceUnitLabel)}
+                P&amp;L {formatPositionPnlInInstrumentUnits(
+                  position,
+                  markPrice === undefined ? currentClose : markPrice,
+                  pipSize,
+                  pricePrecision,
+                  priceUnitLabel,
+                )}
               </span>
               <button type="button" className="rounded px-1.5 py-0.5 leading-none hover:bg-white/15 disabled:opacity-40" aria-label={`Move stop to break-even for position ${position.id}`} title="Move stop to entry" disabled={!beAllowed || disabled} onClick={() => onBreakEven(position.id, position.weightedEntryPrice)}>BE</button>
               <button type="button" className="rounded px-1.5 py-0.5 leading-none hover:bg-rose-500/30 disabled:opacity-40" aria-label={`Close position ${position.id}`} title="Close this position" disabled={disabled} onClick={() => onClose(position.id)}>×</button>

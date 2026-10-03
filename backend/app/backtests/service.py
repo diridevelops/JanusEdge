@@ -909,6 +909,19 @@ class BacktestService:
                 "snapshot candle."
             )
 
+        furthest_index = cursor.get("furthest_source_candle_index", cursor.get("source_candle_index"))
+        furthest_time_ms = cursor.get("furthest_time_ms", cursor.get("time_ms"))
+        if (
+            isinstance(furthest_index, bool)
+            or not isinstance(furthest_index, int)
+            or isinstance(furthest_time_ms, bool)
+            or not isinstance(furthest_time_ms, int)
+        ):
+            raise ConflictError("The saved furthest replay cursor is invalid.")
+        if source_candle_index > furthest_index:
+            furthest_index = source_candle_index
+            furthest_time_ms = time_ms
+
         now = utc_now()
         saved = self.repository.compare_and_set_replay_cursor(
             user_id,
@@ -916,6 +929,8 @@ class BacktestService:
             expected_revision=expected_revision,
             source_candle_index=source_candle_index,
             time_ms=time_ms,
+            furthest_source_candle_index=furthest_index,
+            furthest_time_ms=furthest_time_ms,
             now=now,
         )
         if saved is not None:

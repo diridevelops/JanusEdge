@@ -6,6 +6,9 @@ interface BacktestReplayControlsProps {
   controller: ReplayController;
   displayTimezone: string;
   blindMode: boolean;
+  latestTimeMs: number | null;
+  isAtLatest: boolean;
+  navigationDisabled?: boolean;
 }
 
 /** Keep CandleKit's transport and seek controls, restricting speed choices to the product rates. */
@@ -13,6 +16,9 @@ export function BacktestReplayControls({
   controller,
   displayTimezone,
   blindMode,
+  latestTimeMs,
+  isAtLatest,
+  navigationDisabled = false,
 }: BacktestReplayControlsProps) {
   const formatTime = useMemo(() => {
     const formatter = createBacktestTimeFormatters(displayTimezone, blindMode);
@@ -27,6 +33,17 @@ export function BacktestReplayControls({
         showProgress
         className="ck-replay backtest-candlekit-replay"
       />
+      <button
+        type="button"
+        className="backtest-replay-return-latest"
+        disabled={navigationDisabled || isAtLatest || latestTimeMs == null}
+        title={isAtLatest ? 'Already at the last viewed candle' : 'Return to the last viewed candle'}
+        onClick={() => {
+          if (latestTimeMs != null) controller.seek(latestTimeMs);
+        }}
+      >
+        Return to latest
+      </button>
     </div>
   );
 }

@@ -275,4 +275,16 @@ describe('Backtest position overlay', () => {
     expect(shortRiskMarker?.props.style?.top).toBe(95);
     expect(shortRiskMarker?.props.style?.transform).toBe('translateY(calc(-100% - 2px))');
   });
+
+  it('marks instrument-unit P&L at the latest price while the chart shows an earlier close', () => {
+    const root = renderOverlay(makeOverlayProps({
+      positions: [positions[0]!],
+      currentClose: 99,
+      markPrice: 101.5,
+      pipSize: 0.5,
+      priceUnitLabel: 'pips',
+    }));
+
+    expect(textContent(root)).toContain('P&L +3.0 pips');
+  });
 });

@@ -138,7 +138,6 @@ export function createCandleKitControlsAdapter(
   gatedActions?: {
     onAdvance: (selectedIndex: number, timeMs: number) => Promise<void>;
     onRewind: (selectedIndex: number, timeMs: number) => Promise<void>;
-    canRewind: () => boolean;
   }
 ): ReplayController {
   const firstEligibleTime = sortedCandleTimes[0];
@@ -188,7 +187,6 @@ export function createCandleKitControlsAdapter(
       if (state.status !== 'ready') return;
       const currentIndex = sortedCandleTimes.indexOf(state.cursor.ts);
       if (currentIndex === index) return;
-      if (currentIndex > index && !gatedActions.canRewind()) return;
       pending = true;
       try {
         if (index > currentIndex) await gatedActions.onAdvance(index, targetTime);
@@ -279,7 +277,6 @@ export function createCandleKitControlsAdapter(
               0,
               Math.min(sortedCandleTimes.length - 1, currentIndex + direction * stepSize)
             );
-            if (direction === -1 && !gatedActions.canRewind()) return;
             void moveToIndex(nextIndex);
           };
         }

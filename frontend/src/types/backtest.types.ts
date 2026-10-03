@@ -145,6 +145,8 @@ export interface BacktestSnapshotMetadata {
 export interface BacktestReplayPosition {
   source_candle_index: number;
   time_ms: number;
+  furthest_source_candle_index?: number;
+  furthest_time_ms?: number;
   revision: number;
 }
 
@@ -444,6 +446,7 @@ export interface BacktestSimulationState {
   initial_balance_usd: number;
   risk_percent: number;
   current_balance_usd: number;
+  mark_price: number | null;
   current_quote_to_usd_rate: number | null;
   cost_profile: BacktestSimulationCostProfile;
   orders: BacktestSimulationOrder[];

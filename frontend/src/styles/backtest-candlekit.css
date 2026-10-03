@@ -41,10 +41,56 @@
 }
 
 .backtest-candlekit .backtest-replay-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   border: 1px solid var(--ck-border);
   border-radius: 8px;
   padding: 5px 8px 6px;
   background: var(--ck-bg);
+}
+
+.backtest-candlekit .backtest-replay-controls .backtest-candlekit-replay {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.backtest-candlekit .backtest-replay-return-latest {
+  flex: 0 0 auto;
+  min-height: 30px;
+  border: 1px solid var(--ck-border);
+  border-radius: 6px;
+  padding: 4px 9px;
+  color: var(--ck-fg);
+  background: var(--ck-bg);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.backtest-candlekit .backtest-replay-return-latest:hover:not(:disabled) {
+  border-color: var(--ck-accent);
+}
+
+.backtest-candlekit .backtest-replay-return-latest:disabled {
+  color: var(--ck-muted);
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+@media (max-width: 700px) {
+  .backtest-candlekit .backtest-replay-controls {
+    flex-wrap: wrap;
+  }
+
+  .backtest-candlekit .backtest-replay-controls .backtest-candlekit-replay {
+    flex-basis: 100%;
+  }
+
+  .backtest-candlekit .backtest-replay-return-latest {
+    margin-left: auto;
+  }
 }
 
 .backtest-replay-maximized .backtest-replay-controls {
@@ -1102,6 +1148,18 @@
 .backtest-entry-panel-order-option:focus-visible {
   outline: 2px solid var(--ck-accent, #2563eb);
   outline-offset: 1px;
+}
+
+.backtest-entry-panel-order-option:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.backtest-entry-panel-order-disabled-reason {
+  margin: 0;
+  color: var(--entry-panel-muted);
+  font-size: 10px;
+  line-height: 1.35;
 }
 
 .backtest-entry-panel-manual-size {

@@ -380,6 +380,8 @@ class BacktestRepository(BaseRepository):
                     "replay_cursor": {
                         "source_candle_index": replay_start_source_index,
                         "time_ms": first_time_ms,
+                        "furthest_source_candle_index": replay_start_source_index,
+                        "furthest_time_ms": first_time_ms,
                         "revision": 0,
                         "updated_at": now,
                     },
@@ -664,6 +666,8 @@ class BacktestRepository(BaseRepository):
         expected_revision: int,
         source_candle_index: int,
         time_ms: int,
+        furthest_source_candle_index: int,
+        furthest_time_ms: int,
         now,
     ) -> dict | None:
         """Advance the owner's replay cursor if its revision still matches."""
@@ -674,6 +678,8 @@ class BacktestRepository(BaseRepository):
         cursor = {
             "source_candle_index": source_candle_index,
             "time_ms": time_ms,
+            "furthest_source_candle_index": furthest_source_candle_index,
+            "furthest_time_ms": furthest_time_ms,
             "revision": revision,
             "updated_at": now,
         }
@@ -767,7 +773,11 @@ class BacktestRepository(BaseRepository):
         operation_oid = _object_id(operation_id)
         if run_oid is None or user_oid is None or operation_oid is None:
             return None
-        allowed_statuses = ["ready", "complete"] if kind == "reset" else ["ready"]
+        allowed_statuses = (
+            ["ready", "complete"]
+            if kind in {"reset", "rewind"}
+            else ["ready"]
+        )
         query = {
             "_id": run_oid,
             "user_id": user_oid,
@@ -780,8 +790,6 @@ class BacktestRepository(BaseRepository):
                 {"simulation_control.pending_operation_id": {"$exists": False}},
             ],
         }
-        if kind == "rewind":
-            query["simulation_control.has_accepted_order"] = {"$ne": True}
         now = now or utc_now()
         result = self.collection.update_one(
             query,

@@ -207,14 +207,20 @@ class BacktestSimulationEffects:
             ).sort([("exit_time", -1), ("_id", -1)]).limit(500)
         )
 
-        current_candle = self._candle_at(run, cursor.get("source_candle_index"))
+        mark_source_index = cursor.get(
+            "furthest_source_candle_index", cursor.get("source_candle_index")
+        )
+        mark_candle = self._candle_at(run, mark_source_index)
+        mark_price = (
+            float(mark_candle["close"]) if mark_candle is not None else None
+        )
         current_quote_to_usd_rate = None
-        if current_candle is not None:
+        if mark_candle is not None:
             metadata = run.get("instrument_metadata") or {}
             if metadata.get("supported_for_simulation"):
                 try:
                     current_quote_to_usd_rate = self._quote_rate(
-                        run, metadata, int(current_candle["time_ms"]) + 60_000
+                        run, metadata, int(mark_candle["time_ms"]) + 60_000
                     )
                 except (SimulationRuleError, FXConversionUnavailable):
                     current_quote_to_usd_rate = None
@@ -224,7 +230,7 @@ class BacktestSimulationEffects:
                         if rate is None:
                             raise FXConversionUnavailable(
                                 str(metadata.get("quote_currency", "")),
-                                int(current_candle["time_ms"]) + 60_000,
+                                int(mark_candle["time_ms"]) + 60_000,
                             )
                         native = realized_native_pnl(
                             side=position["side"],
@@ -233,7 +239,7 @@ class BacktestSimulationEffects:
                                 position["weighted_entry_price"],
                             ),
                             exit_price=normalize_market_reference_price(
-                                current_candle["close"], metadata, "close"
+                                mark_candle["close"], metadata, "close"
                             ),
                             lots=position["remaining_lots"],
                             metadata=metadata,
@@ -254,7 +260,8 @@ class BacktestSimulationEffects:
             "reset_generation": generation,
             "cursor": cursor,
             "pending_operation": control.get("pending_operation_id") is not None,
-            "backward_navigation_locked": bool(control.get("has_accepted_order")),
+            # Kept for older clients; rewind is no longer locked by order history.
+            "backward_navigation_locked": False,
             "initial_balance_usd": float(run.get("initial_balance_usd", 10_000.0)),
             "risk_percent": float(
                 run.get("simulation_risk_percent", run.get("risk_percent", 1.0))
@@ -262,6 +269,7 @@ class BacktestSimulationEffects:
             "current_balance_usd": float(
                 run.get("current_balance_usd", run.get("initial_balance_usd", 10_000.0))
             ),
+            "mark_price": mark_price,
             "current_quote_to_usd_rate": current_quote_to_usd_rate,
             "cost_profile": profile,
             "orders": orders,
@@ -677,6 +685,20 @@ class BacktestSimulationEffects:
     def _submit_order(self, operation: dict, run: dict, request: dict) -> dict:
         context = self._context(operation, run)
         first, last = self._source_bounds(run)
+        cursor = run.get("replay_cursor") or {}
+        furthest_index = cursor.get(
+            "furthest_source_candle_index", context["cursor_index"]
+        )
+        if (
+            isinstance(furthest_index, bool)
+            or not isinstance(furthest_index, int)
+            or furthest_index < context["cursor_index"]
+        ):
+            raise SimulationRuleError("The saved furthest replay cursor is invalid.")
+        if context["cursor_index"] < furthest_index:
+            raise SimulationRuleError(
+                "Return to the last viewed candle before placing a new order."
+            )
         if context["cursor_index"] >= last:
             raise SimulationRuleError("No future candle is available for an entry order.")
         metadata = context["metadata"]
@@ -1071,10 +1093,10 @@ class BacktestSimulationEffects:
         cursor = self._validate_cursor(run, index, time_ms)
         if index >= context["cursor_index"]:
             raise SimulationRuleError("Rewind must move to an earlier candle.")
-        control = run.get("simulation_control") or {}
-        if control.get("has_accepted_order"):
-            raise SimulationRuleError("Reset is required before moving backward.")
-        return {"result": {"cursor": cursor}, "run_updates": {"replay_cursor": cursor}}
+        updates: dict[str, Any] = {"replay_cursor": cursor}
+        if run.get("status") == "complete":
+            updates["status"] = "ready"
+        return {"result": {"cursor": cursor}, "run_updates": updates}
 
     def _reset(self, operation: dict, run: dict) -> dict:
         first, _ = self._source_bounds(run)

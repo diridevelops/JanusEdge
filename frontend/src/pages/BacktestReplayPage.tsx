@@ -20,6 +20,7 @@ import { useBacktestReplay } from '../hooks/useBacktestReplay';
 import { createBacktestSimulationOperationRequest, useBacktestSimulation } from '../hooks/useBacktestSimulation';
 import { useAuth } from '../hooks/useAuth';
 import { useChartColors } from '../hooks/useChartColors';
+import { useToast } from '../hooks/useToast';
 import type { BacktestChartTab, BacktestRunDetail } from '../types/backtest.types';
 import {
   extractBacktestWorkspaceTabs,
@@ -41,6 +42,23 @@ import type {
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim()) return error.message;
   return 'Could not load this Backtest run.';
+}
+
+function getSubmissionErrorMessage(error: unknown): string {
+  if (typeof error === 'object' && error !== null) {
+    const requestError = error as {
+      message?: unknown;
+      response?: { data?: { message?: unknown; error?: unknown } };
+    };
+    const responseMessage = requestError.response?.data?.message;
+    if (typeof responseMessage === 'string' && responseMessage.trim()) return responseMessage;
+    const responseError = requestError.response?.data?.error;
+    if (typeof responseError === 'string' && responseError.trim()) return responseError;
+    if (typeof requestError.message === 'string' && requestError.message.trim()) {
+      return requestError.message;
+    }
+  }
+  return 'Could not place the simulated order.';
 }
 
 function ignoreRejectedMutation(promise: Promise<unknown>): void {
@@ -217,6 +235,7 @@ function BacktestReplayWorkspaceRun({
   const { isReplayMaximized, setReplayMaximized } = useOutletContext<AppLayoutOutletContext>();
   const colors = useChartColors();
   const { user } = useAuth();
+  const { addToast } = useToast();
   const [simulationSidebarCollapsed, setSimulationSidebarCollapsed] = useState(false);
   const [tabs, setTabs] = useState<BacktestChartTab[]>(() => (
     extractBacktestWorkspaceTabs(initialLayout)
@@ -234,10 +253,6 @@ function BacktestReplayWorkspaceRun({
     replay.controller,
     selectedReplayTimes,
     {
-      canRewind: () => {
-        const state = simulationNavigationRef.current.simulation.state;
-        return Boolean(state && !state.backward_navigation_locked && state.status === 'ready');
-      },
       onAdvance: async (selectedIndex, timeMs) => {
         const current = simulationNavigationRef.current.simulation.state;
         if (!current) throw new Error('Simulation state is loading.');
@@ -291,6 +306,23 @@ function BacktestReplayWorkspaceRun({
   const currentDisplayClose = currentRawClose == null ? null : toDisplayPrice(currentRawClose);
   const simulationState = simulation.state;
   const simulationBusy = simulation.isMutating || Boolean(simulationState?.pending_operation);
+  const latestSourceIndex = simulationState?.cursor.furthest_source_candle_index
+    ?? simulationState?.cursor.source_candle_index;
+  const latestTimeMs = simulationState?.cursor.furthest_time_ms
+    ?? simulationState?.cursor.time_ms
+    ?? null;
+  const isAtLatestCandle = Boolean(
+    simulationState
+    && simulationState.cursor.source_candle_index === latestSourceIndex
+    && replay.cursorTimeMs === simulationState.cursor.time_ms
+  );
+  const positionMarkPrice = simulationState?.mark_price != null
+    ? toDisplayPrice(simulationState.mark_price)
+    : isAtLatestCandle ? currentDisplayClose : null;
+  const entryControlsDisabled = simulationBusy
+    || !simulationState
+    || simulationState.status !== 'ready'
+    || !isAtLatestCandle;
   const canSimulateInstrument = Boolean(metadata?.supported_for_simulation
     && metadata.pip_size != null && metadata.tick_size != null
     && metadata.contract_size != null && metadata.min_lots != null
@@ -513,7 +545,12 @@ function BacktestReplayWorkspaceRun({
   }, [simulation]);
   const onPlaceOrder = useCallback(async (draft: BacktestEntryOrderDraft) => {
     const current = simulation.state;
-    if (!current || simulationBusy || draft.stopLossPrice == null || draft.takeProfitPrice == null) return;
+    if (!current || simulationBusy) return;
+    if (!isAtLatestCandle) {
+      addToast('error', 'Return to the last viewed candle before placing a new order.');
+      return;
+    }
+    if (draft.stopLossPrice == null || draft.takeProfitPrice == null) return;
     const operation = createBacktestSimulationOperationRequest(current.control_revision);
     const side = draft.direction === 'long' ? 'buy' as const : 'sell' as const;
     const stop_loss = toCanonicalPrice(draft.stopLossPrice);
@@ -535,10 +572,10 @@ function BacktestReplayWorkspaceRun({
         }
       }
       resetPreview();
-    } catch {
-      // The hook retains and displays the server rejection in the sidebar.
+    } catch (error: unknown) {
+      addToast('error', getSubmissionErrorMessage(error));
     }
-  }, [resetPreview, simulation, simulationBusy, toCanonicalPrice]);
+  }, [addToast, isAtLatestCandle, resetPreview, simulation, simulationBusy, toCanonicalPrice]);
 
   const simulationChartUi: BacktestSimulationChartUi = {
     preview: {
@@ -559,7 +596,7 @@ function BacktestReplayWorkspaceRun({
       projectedRewardUsd: sizing?.projectedRewardUsd ?? null,
       riskRewardRatio: sizing?.riskRewardRatio ?? null,
       currentBalanceUsd,
-      canPlaceOrder: Boolean(previewDraft && !simulationBusy && simulationState?.status === 'ready'),
+      canPlaceOrder: Boolean(previewDraft && !entryControlsDisabled),
       orderPending: simulationBusy,
       invalidReason: sizing?.errors[0] ?? defaultBracket?.error,
       onEntryPriceChange: setPreviewEntry,
@@ -571,6 +608,7 @@ function BacktestReplayWorkspaceRun({
     positions: positionItems,
     workingOrders: workingOrderMarkers,
     currentClose: currentDisplayClose,
+    markPrice: positionMarkPrice,
     pricePrecision: displayedPricePrecision,
     tickSize: entryInstrument?.tickSize ?? displayedTickSize,
     pipSize: entryInstrument?.pipSize ?? 0,
@@ -707,6 +745,9 @@ function BacktestReplayWorkspaceRun({
               controller={simulationControls}
               displayTimezone={timezone}
               blindMode={Boolean(run.blind_mode)}
+              latestTimeMs={latestTimeMs}
+              isAtLatest={isAtLatestCandle}
+              navigationDisabled={simulationBusy || !simulationState}
             />
           </section>
 
@@ -792,6 +833,10 @@ function BacktestReplayWorkspaceRun({
                   entryType={entryType}
                   direction={direction}
                   onOrderSelectionChange={selectEntryOrder}
+                  orderEntryDisabled={entryControlsDisabled}
+                  orderEntryDisabledReason={simulationState && !isAtLatestCandle
+                    ? 'Return to the last viewed candle before placing a new order.'
+                    : undefined}
                   entryPrice={entryType === 'market' ? currentEntryPrice : previewEntryPrice ?? currentEntryPrice}
                   stopLossPrice={activeStopLoss}
                   takeProfitPrice={activeTakeProfit}

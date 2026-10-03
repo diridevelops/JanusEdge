@@ -339,6 +339,8 @@ def test_replay_cursor_accepts_valid_selection_and_intentional_step_back(
         "time_ms": last_time,
         "revision": 1,
     }
+    assert forward.json["replay_cursor"]["furthest_source_candle_index"] == 3
+    assert forward.json["replay_cursor"]["furthest_time_ms"] == last_time
 
     step_back = client.put(
         f"/api/backtest/runs/{run_id}/replay-position",
@@ -355,6 +357,8 @@ def test_replay_cursor_accepts_valid_selection_and_intentional_step_back(
         "time_ms": first_time,
         "revision": 2,
     }
+    assert step_back.json["replay_cursor"]["furthest_source_candle_index"] == 3
+    assert step_back.json["replay_cursor"]["furthest_time_ms"] == last_time
 
     assert _saved_cursor(client, owner, run_id) == {
         "source_candle_index": 1,
@@ -528,7 +532,7 @@ def test_simulation_routes_accept_exact_limit_touch_and_return_committed_positio
     )
     assert state.status_code == 200
     assert state.json["committed_sequence"] == 2
-    assert state.json["backward_navigation_locked"] is True
+    assert state.json["backward_navigation_locked"] is False
     assert state.json["current_balance_usd"] == 10_000
     assert len(state.json["fills"]) == 1
     assert state.json["fills"][0]["reference_price"] == 1.2
@@ -811,3 +815,284 @@ def test_market_order_accepts_half_tick_midpoint_close_and_next_open(
         headers=owner,
     )
     assert closed.status_code == 200, closed.json
+
+
+def test_rewind_preserves_simulation_state_rejects_stale_entries_and_returns_to_latest(
+    app, client, monkeypatch
+):
+    _patch_catalog(monkeypatch)
+    owner = _register(client, "simulation-rewind-owner")
+    run_id, run, _ = _create_ready_run(app, client, owner)
+    replay_start = run["snapshot"]["replay_start_source_index"]
+    first_cursor = run["replay_cursor"]
+
+    submitted = client.post(
+        f"/api/backtest/runs/{run_id}/simulation/orders",
+        json={
+            "client_operation_id": "rewind-limit-order",
+            "expected_revision": 0,
+            "side": "buy",
+            "order_type": "limit",
+            "auto_size": False,
+            "lots": 0.1,
+            "entry_price": 1.2,
+            "stop_loss": 1.1995,
+            "take_profit": 1.2005,
+        },
+        headers=owner,
+    )
+    assert submitted.status_code == 200, submitted.json
+
+    filled = client.post(
+        f"/api/backtest/runs/{run_id}/simulation/advance",
+        json={
+            "client_operation_id": "rewind-fill-order",
+            "expected_revision": submitted.json["control_revision"],
+            "target_source_index": replay_start + 1,
+        },
+        headers=owner,
+    )
+    assert filled.status_code == 200, filled.json
+    state_at_latest = client.get(
+        f"/api/backtest/runs/{run_id}/simulation", headers=owner
+    ).json
+
+    def open_position_state(state):
+        return [
+            (position["position_id"], position["status"], position["remaining_lots"])
+            for position in state["positions"]
+        ]
+
+    def order_state(state):
+        return sorted(
+            (order["order_id"], order["status"])
+            for order in state["orders"]
+        )
+
+    assert len(state_at_latest["fills"]) == 1
+    assert len(state_at_latest["positions"]) == 1
+    committed_balance = state_at_latest["current_balance_usd"]
+
+    rewound = client.post(
+        f"/api/backtest/runs/{run_id}/simulation/rewind",
+        json={
+            "client_operation_id": "rewind-before-new-entry",
+            "expected_revision": filled.json["control_revision"],
+            "source_candle_index": replay_start,
+            "time_ms": first_cursor["time_ms"],
+        },
+        headers=owner,
+    )
+    assert rewound.status_code == 200, rewound.json
+    state_behind = client.get(
+        f"/api/backtest/runs/{run_id}/simulation", headers=owner
+    ).json
+    assert state_behind["cursor"]["source_candle_index"] == replay_start
+    assert state_behind["cursor"]["furthest_source_candle_index"] == replay_start + 1
+    assert state_behind["cursor"]["furthest_time_ms"] == state_at_latest["cursor"]["time_ms"]
+    assert state_behind["current_balance_usd"] == committed_balance
+    assert state_behind["orders"] == state_at_latest["orders"]
+    assert state_behind["fills"] == state_at_latest["fills"]
+    assert open_position_state(state_behind) == open_position_state(state_at_latest)
+    assert state_behind["positions"][0]["unrealized_pnl_usd"] == (
+        state_at_latest["positions"][0]["unrealized_pnl_usd"]
+    )
+    assert state_behind["current_quote_to_usd_rate"] == (
+        state_at_latest["current_quote_to_usd_rate"]
+    )
+    assert state_behind["mark_price"] == state_at_latest["mark_price"]
+
+    stale_entry = client.post(
+        f"/api/backtest/runs/{run_id}/simulation/orders",
+        json={
+            "client_operation_id": "blocked-while-rewound",
+            "expected_revision": rewound.json["control_revision"],
+            "side": "buy",
+            "order_type": "market",
+            "auto_size": False,
+            "lots": 0.1,
+            "stop_loss": 1.09,
+            "take_profit": 1.11,
+        },
+        headers=owner,
+    )
+    assert stale_entry.status_code == 200, stale_entry.json
+    assert stale_entry.json["state"] == "rejected"
+    assert stale_entry.json["result"]["message"] == (
+        "Return to the last viewed candle before placing a new order."
+    )
+
+    returned = client.post(
+        f"/api/backtest/runs/{run_id}/simulation/advance",
+        json={
+            "client_operation_id": "return-to-saved-latest",
+            "expected_revision": stale_entry.json["control_revision"],
+            "target_source_index": replay_start + 1,
+        },
+        headers=owner,
+    )
+    assert returned.status_code == 200, returned.json
+    state_returned = client.get(
+        f"/api/backtest/runs/{run_id}/simulation", headers=owner
+    ).json
+    assert order_state(state_returned) == order_state(state_at_latest)
+    assert state_returned["fills"] == state_at_latest["fills"]
+    assert open_position_state(state_returned) == open_position_state(state_at_latest)
+    assert state_returned["current_balance_usd"] == committed_balance
+
+    run_detail = client.get(f"/api/backtest/runs/{run_id}", headers=owner).json["run"]
+    final_index = run_detail["snapshot"]["candle_count"] - 1
+    completed = client.post(
+        f"/api/backtest/runs/{run_id}/simulation/advance",
+        json={
+            "client_operation_id": "complete-before-rewind",
+            "expected_revision": returned.json["control_revision"],
+            "target_source_index": final_index,
+        },
+        headers=owner,
+    )
+    assert completed.status_code == 200, completed.json
+    completed_state = client.get(
+        f"/api/backtest/runs/{run_id}/simulation", headers=owner
+    ).json
+    assert completed_state["status"] == "complete"
+
+    rewound_complete = client.post(
+        f"/api/backtest/runs/{run_id}/simulation/rewind",
+        json={
+            "client_operation_id": "rewind-completed-run",
+            "expected_revision": completed.json["control_revision"],
+            "source_candle_index": replay_start,
+            "time_ms": first_cursor["time_ms"],
+        },
+        headers=owner,
+    )
+    assert rewound_complete.status_code == 200, rewound_complete.json
+    behind_complete = client.get(
+        f"/api/backtest/runs/{run_id}/simulation", headers=owner
+    ).json
+    assert behind_complete["status"] == "ready"
+    assert behind_complete["cursor"]["furthest_source_candle_index"] == final_index
+    assert behind_complete["current_balance_usd"] == completed_state["current_balance_usd"]
+    assert order_state(behind_complete) == order_state(completed_state)
+    assert behind_complete["fills"] == completed_state["fills"]
+    assert open_position_state(behind_complete) == open_position_state(completed_state)
+
+    completed_again = client.post(
+        f"/api/backtest/runs/{run_id}/simulation/advance",
+        json={
+            "client_operation_id": "return-to-final-candle",
+            "expected_revision": rewound_complete.json["control_revision"],
+            "target_source_index": final_index,
+        },
+        headers=owner,
+    )
+    assert completed_again.status_code == 200, completed_again.json
+    final_state = client.get(
+        f"/api/backtest/runs/{run_id}/simulation", headers=owner
+    ).json
+    assert final_state["status"] == "complete"
+    assert final_state["current_balance_usd"] == completed_state["current_balance_usd"]
+    assert order_state(final_state) == order_state(completed_state)
+    assert final_state["fills"] == completed_state["fills"]
+    assert open_position_state(final_state) == open_position_state(completed_state)
+
+
+def test_pending_order_remains_working_and_obeys_eligibility_after_rewind(
+    app, client, monkeypatch
+):
+    _patch_catalog(monkeypatch)
+    owner = _register(client, "simulation-rewind-eligibility-owner")
+    run_id, run, _ = _create_ready_run(app, client, owner)
+    replay_start = run["snapshot"]["replay_start_source_index"]
+    first_cursor = run["replay_cursor"]
+
+    moved = client.post(
+        f"/api/backtest/runs/{run_id}/simulation/advance",
+        json={
+            "client_operation_id": "eligibility-position-before-order",
+            "expected_revision": 0,
+            "target_source_index": replay_start + 1,
+        },
+        headers=owner,
+    )
+    assert moved.status_code == 200, moved.json
+
+    submitted = client.post(
+        f"/api/backtest/runs/{run_id}/simulation/orders",
+        json={
+            "client_operation_id": "eligible-short-limit",
+            "expected_revision": moved.json["control_revision"],
+            "side": "sell",
+            "order_type": "limit",
+            "auto_size": False,
+            "lots": 0.1,
+            "entry_price": 1.3,
+            "stop_loss": 1.31,
+            "take_profit": 1.29,
+        },
+        headers=owner,
+    )
+    assert submitted.status_code == 200, submitted.json
+    assert submitted.json["result"]["eligible_source_index"] == replay_start + 2
+
+    rewound = client.post(
+        f"/api/backtest/runs/{run_id}/simulation/rewind",
+        json={
+            "client_operation_id": "rewind-before-order-eligibility",
+            "expected_revision": submitted.json["control_revision"],
+            "source_candle_index": replay_start,
+            "time_ms": first_cursor["time_ms"],
+        },
+        headers=owner,
+    )
+    assert rewound.status_code == 200, rewound.json
+
+    replayed_before_eligibility = client.post(
+        f"/api/backtest/runs/{run_id}/simulation/advance",
+        json={
+            "client_operation_id": "advance-pre-eligibility-candle",
+            "expected_revision": rewound.json["control_revision"],
+            "target_source_index": replay_start + 1,
+        },
+        headers=owner,
+    )
+    assert replayed_before_eligibility.status_code == 200, replayed_before_eligibility.json
+    state_before_eligibility = client.get(
+        f"/api/backtest/runs/{run_id}/simulation", headers=owner
+    ).json
+    assert len(state_before_eligibility["orders"]) == 1
+    assert state_before_eligibility["orders"][0]["status"] == "pending"
+    assert state_before_eligibility["fills"] == []
+
+    replayed_at_eligibility = client.post(
+        f"/api/backtest/runs/{run_id}/simulation/advance",
+        json={
+            "client_operation_id": "advance-eligible-candle",
+            "expected_revision": replayed_before_eligibility.json["control_revision"],
+            "target_source_index": replay_start + 2,
+        },
+        headers=owner,
+    )
+    assert replayed_at_eligibility.status_code == 200, replayed_at_eligibility.json
+    state_at_eligibility = client.get(
+        f"/api/backtest/runs/{run_id}/simulation", headers=owner
+    ).json
+    assert state_at_eligibility["orders"][0]["status"] == "filled", state_at_eligibility
+    assert len(state_at_eligibility["fills"]) == 1
+    assert state_at_eligibility["fills"][0]["source_candle_index"] == replay_start + 2
+    position = state_at_eligibility["positions"][0]
+    protection_ids = {
+        str(position["stop_loss_order_id"]),
+        str(position["take_profit_order_id"]),
+    }
+    protection_orders = [
+        order
+        for order in state_at_eligibility["orders"]
+        if str(order["order_id"]) in protection_ids
+    ]
+    assert len(protection_orders) == 2
+    assert all(
+        order["eligible_source_index"] == replay_start + 3
+        for order in protection_orders
+    )

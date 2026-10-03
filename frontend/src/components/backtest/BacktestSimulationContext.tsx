@@ -40,6 +40,7 @@ export interface BacktestSimulationChartUi {
   positions: BacktestOverlayPosition[];
   workingOrders: BacktestWorkingOrderOverlayItem[];
   currentClose: number | null;
+  markPrice: number | null;
   pricePrecision: number;
   tickSize: number;
   pipSize: number;
