@@ -166,8 +166,8 @@ def _row(source: dict, groups: dict[int, str]) -> dict:
 
     if group in FX_GROUPS:
         # Standard FX lot is 100,000 base units. JForex documents a 1,000-unit
-        # minimum and 1-unit increment, represented in lots by these factors.
-        contract_size, min_lots, lot_increment = 100_000, 0.01, 0.00001
+        # minimum. The simulator's default size increment is 0.01 lots.
+        contract_size, min_lots, lot_increment = 100_000, 0.01, 0.01
         spec_source = "jforex_currency_order_amounts"
     elif group == "FX_METALS" and quote == "USD" and base in {"XAU", "XAG"}:
         contract_size = 1  # one ounce per simulator lot
@@ -226,6 +226,11 @@ def _row(source: dict, groups: dict[int, str]) -> dict:
             "No verified JForex contract and order-size specification is "
             "available for this instrument category."
         )
+
+    # Keep generated defaults consistent across instrument categories. Minimum
+    # lots remain instrument-specific; only the default step is raised here.
+    if lot_increment is not None and lot_increment < 0.01:
+        lot_increment = 0.01
 
     if (
         isinstance(price_precision, bool)
