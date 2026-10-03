@@ -111,7 +111,6 @@ _DEFAULT_INSTRUMENT_MAPPING_FIELDS = (
     "quote_currency_unit_scale",
     "pip_size",
     "tick_size",
-    "price_precision",
     "contract_size",
     "min_lots",
     "lot_increment",
@@ -120,6 +119,20 @@ _DEFAULT_INSTRUMENT_MAPPING_FIELDS = (
     "spec_source",
     "catalog_group",
 )
+
+
+def price_precision_from_tick_size(value: Any) -> int:
+    """Return the decimal places needed to represent a positive price tick."""
+    try:
+        tick_size = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise ValueError("tick_size must be a positive finite number.") from exc
+    if not tick_size.is_finite() or tick_size <= 0:
+        raise ValueError("tick_size must be a positive finite number.")
+    precision = max(0, -tick_size.normalize().as_tuple().exponent)
+    if precision > 15:
+        raise ValueError("tick_size implies price precision greater than 15 places.")
+    return precision
 
 
 @lru_cache(maxsize=1)
@@ -140,6 +153,16 @@ def _load_default_instrument_specs() -> dict[str, dict[str, Any]]:
             key: row.get(key)
             for key in _DEFAULT_INSTRUMENT_MAPPING_FIELDS
         }
+        try:
+            specs[code]["price_precision"] = (
+                price_precision_from_tick_size(specs[code]["tick_size"])
+                if specs[code]["tick_size"] is not None
+                else None
+            )
+        except ValueError as exc:
+            raise RuntimeError(
+                f"Invalid tick size for Dukascopy instrument {code}."
+            ) from exc
         specs[code]["spec_version"] = version
     return specs
 
@@ -367,7 +390,15 @@ def get_simulation_instrument(
                 legacy = forex_mappings.get(pair_alias)
                 if isinstance(legacy, Mapping) and pair_alias in raw_forex:
                     default = defaults.get(candidate)
-                    return {**(default or {}), **legacy}, "forex"
+                    merged = {**(default or {}), **legacy}
+                    if legacy.get("price_precision") is not None:
+                        # Older profiles saved decimal precision instead of a
+                        # tick size. Preserve that saved grid when defaults
+                        # provide a tick for the same pair.
+                        merged["tick_size"] = float(
+                            Decimal(1).scaleb(-int(legacy["price_precision"]))
+                        )
+                    return merged, "forex"
 
     for candidate in candidates:
         mapping = defaults.get(candidate)
@@ -758,10 +789,18 @@ def _validate_instrument_mappings(
             mapping.get("quote_currency"),
             field_name=f"{code} quote_currency",
         )
-        price_precision = _optional_mapping_integer(
-            mapping.get("price_precision"),
-            field_name=f"{code} price_precision",
-            minimum=0,
+        tick_size = _optional_positive_mapping_number(
+            mapping.get("tick_size"),
+            field_name=f"{code} tick_size",
+        )
+        price_precision = (
+            price_precision_from_tick_size(tick_size)
+            if tick_size is not None
+            else _optional_mapping_integer(
+                mapping.get("price_precision"),
+                field_name=f"{code} price_precision",
+                minimum=0,
+            )
         )
         if price_precision is not None and price_precision > 15:
             raise ValueError(f"{code} price_precision cannot exceed 15.")
@@ -777,10 +816,7 @@ def _validate_instrument_mappings(
                 mapping.get("pip_size"),
                 field_name=f"{code} pip_size",
             ),
-            "tick_size": _optional_positive_mapping_number(
-                mapping.get("tick_size"),
-                field_name=f"{code} tick_size",
-            ),
+            "tick_size": tick_size,
             "price_precision": price_precision,
             "contract_size": _optional_positive_mapping_number(
                 mapping.get("contract_size"),

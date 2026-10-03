@@ -92,7 +92,6 @@ interface ForexMappingRow {
   quoteCurrency: string;
   pipSize: string;
   tickSize: string;
-  pricePrecision: string;
   contractSize: string;
   minLots: string;
   lotIncrement: string;
@@ -201,9 +200,11 @@ function createForexMappingRow(
     baseCurrency: mapping?.base_currency ?? '',
     quoteCurrency: mapping?.quote_currency ?? '',
     pipSize: mapping?.pip_size != null ? String(mapping.pip_size) : '',
-    tickSize: mapping?.tick_size != null ? String(mapping.tick_size) : '',
-    pricePrecision:
-      mapping?.price_precision != null ? String(mapping.price_precision) : '',
+    tickSize: mapping?.tick_size != null
+      ? String(mapping.tick_size)
+      : mapping?.price_precision != null
+        ? String(10 ** -mapping.price_precision)
+        : '',
     contractSize:
       mapping?.contract_size != null ? String(mapping.contract_size) : '',
     minLots: mapping?.min_lots != null ? String(mapping.min_lots) : '',
@@ -253,14 +254,46 @@ function recordToForexMappingRows(
   instrumentEntries?: InstrumentSizingMappings,
   catalogDefaults?: InstrumentSizingMappings
 ): ForexMappingRow[] {
-  const source: InstrumentSizingMappings = { ...(catalogDefaults ?? {}) };
-  for (const [pair, mapping] of Object.entries(instrumentEntries ?? {})) {
-    source[pair] = { ...source[pair], ...mapping };
+  const normalizeInstrumentKey = (instrument: string) =>
+    instrument.trim().toUpperCase().replace(/\//g, '-');
+  const source: InstrumentSizingMappings = {};
+  for (const [instrument, mapping] of Object.entries(catalogDefaults ?? {})) {
+    const key = normalizeInstrumentKey(instrument);
+    source[key] = { ...source[key], ...mapping };
   }
-  // Legacy Forex preferences win over hydrated static rows until the unified
-  // table is explicitly saved; newer saves write both sections consistently.
-  for (const [pair, mapping] of Object.entries(entries ?? DEFAULT_FOREX_SYMBOL_MAPPINGS)) {
-    source[pair] = { ...source[pair], ...mapping };
+  const savedInstrumentMappings: InstrumentSizingMappings = {};
+  for (const [pair, mapping] of Object.entries(instrumentEntries ?? {})) {
+    const key = normalizeInstrumentKey(pair);
+    savedInstrumentMappings[key] = { ...savedInstrumentMappings[key], ...mapping };
+    source[key] = { ...source[key], ...mapping };
+  }
+  // Do not seed the table from built-in legacy Forex defaults; the unified
+  // catalog already supplies those instruments. Keep only actual legacy
+  // overrides so older customized profiles can still be migrated.
+  for (const [pair, mapping] of Object.entries(entries ?? {})) {
+    const key = normalizeInstrumentKey(pair);
+    const legacyDefault = Object.entries(DEFAULT_FOREX_SYMBOL_MAPPINGS)
+      .find(([defaultPair]) => normalizeInstrumentKey(defaultPair) === key)?.[1];
+    if (
+      legacyDefault
+      && mapping.base_currency === legacyDefault.base_currency
+      && mapping.quote_currency === legacyDefault.quote_currency
+      && mapping.pip_size === legacyDefault.pip_size
+      && mapping.price_precision === legacyDefault.price_precision
+      && mapping.contract_size === legacyDefault.contract_size
+    ) {
+      continue;
+    }
+    const savedInstrument = savedInstrumentMappings[key];
+    const legacyTickSize = mapping.price_precision != null
+      ? 10 ** -mapping.price_precision
+      : undefined;
+    const tickSize = savedInstrument?.tick_size ?? legacyTickSize;
+    source[key] = {
+      ...source[key],
+      ...mapping,
+      ...(tickSize != null ? { tick_size: tickSize } : {}),
+    };
   }
   return Object.entries(source).map(([pair, mapping]) =>
     createForexMappingRow(pair, mapping)
@@ -300,6 +333,15 @@ function updateForexMappingRow(
   value: string
 ): ForexMappingRow[] {
   return rows.map((row) => (row.id === rowId ? { ...row, [field]: value } : row));
+}
+
+function decimalPrecisionFromTick(tickSize: number): number | null {
+  if (!Number.isFinite(tickSize) || tickSize <= 0) return null;
+  const [coefficient = '', exponentText] = tickSize.toString().toLowerCase().split('e');
+  const exponent = exponentText ? Number(exponentText) : 0;
+  const fractionalDigits = coefficient.split('.')[1]?.length ?? 0;
+  const precision = Math.max(0, fractionalDigits - exponent);
+  return Number.isInteger(precision) && precision <= 15 ? precision : null;
 }
 
 function buildSymbolMappings(
@@ -350,14 +392,13 @@ function buildSymbolMappings(
     const quoteCurrency = row.quoteCurrency.trim().toUpperCase();
     const pipSize = row.pipSize.trim();
     const tickSize = row.tickSize.trim();
-    const pricePrecision = row.pricePrecision.trim();
     const contractSize = row.contractSize.trim();
     const minLots = row.minLots.trim();
     const lotIncrement = row.lotIncrement.trim();
     const quoteUnitScale = row.quoteUnitScale.trim();
 
     if (!instrument && !baseCurrency && !quoteCurrency && !pipSize && !tickSize
-      && !pricePrecision && !contractSize && !minLots && !lotIncrement) {
+      && !contractSize && !minLots && !lotIncrement) {
       continue;
     }
 
@@ -374,7 +415,7 @@ function buildSymbolMappings(
       throw new Error(`Duplicate instrument mapping: ${instrument}`);
     }
     seenInstrumentAliases.add(normalizedInstrument);
-    if (!/^[A-Z0-9][A-Z0-9._ -]{0,23}$/.test(baseCurrency)) {
+    if (!/^[A-Z0-9][A-Z0-9.+_ -]{0,23}$/.test(baseCurrency)) {
       throw new Error(`Base asset/unit for ${instrument} must be a short label.`);
     }
     if (!/^[A-Z]{3}$/.test(quoteCurrency)) {
@@ -383,7 +424,7 @@ function buildSymbolMappings(
 
     const numericPipSize = Number(pipSize);
     const numericTickSize = Number(tickSize);
-    const numericPricePrecision = Number(pricePrecision);
+    const numericPricePrecision = tickSize ? decimalPrecisionFromTick(numericTickSize) : null;
     const numericContractSize = Number(contractSize);
     const numericMinLots = Number(minLots);
     const numericLotIncrement = Number(lotIncrement);
@@ -394,8 +435,8 @@ function buildSymbolMappings(
     if (tickSize && (!Number.isFinite(numericTickSize) || numericTickSize <= 0)) {
       throw new Error(`Tick size must be a number greater than zero for ${instrument}.`);
     }
-    if (pricePrecision && (!Number.isInteger(numericPricePrecision) || numericPricePrecision < 0 || numericPricePrecision > 15)) {
-      throw new Error(`Price precision must be a whole number from 0 to 15 for ${instrument}.`);
+    if (tickSize && numericPricePrecision == null) {
+      throw new Error(`Tick size must imply a price precision from 0 to 15 for ${instrument}.`);
     }
     if (contractSize && (!Number.isFinite(numericContractSize) || numericContractSize <= 0)) {
       throw new Error(`Contract size must be a number greater than zero for ${instrument}.`);
@@ -410,14 +451,13 @@ function buildSymbolMappings(
       throw new Error(`Quote-currency USD scale must be a number greater than zero for ${instrument}.`);
     }
 
-    const complete = Boolean(pipSize && tickSize && pricePrecision && contractSize && minLots && lotIncrement);
+    const complete = Boolean(pipSize && tickSize && numericPricePrecision != null && contractSize && minLots && lotIncrement);
     const mapping: import('../types/auth.types').InstrumentSizingMappingEntry = {
       base_currency: baseCurrency,
       quote_currency: quoteCurrency,
       quote_currency_unit_scale: numericQuoteUnitScale,
       pip_size: pipSize ? numericPipSize : null,
       tick_size: tickSize ? numericTickSize : null,
-      price_precision: pricePrecision ? numericPricePrecision : null,
       contract_size: contractSize ? numericContractSize : null,
       min_lots: minLots ? numericMinLots : null,
       lot_increment: lotIncrement ? numericLotIncrement : null,
@@ -440,7 +480,7 @@ function buildSymbolMappings(
         base_currency: baseCurrency,
         quote_currency: quoteCurrency,
         pip_size: numericPipSize,
-        price_precision: numericPricePrecision,
+        price_precision: numericPricePrecision!,
         contract_size: numericContractSize,
       };
     }
@@ -1272,7 +1312,7 @@ export function SettingsPage() {
               <table className="min-w-[92rem] divide-y divide-gray-200 text-sm dark:divide-gray-700">
                 <thead className="bg-gray-50 dark:bg-gray-800">
                   <tr>
-                    {['Instrument', 'Base Asset / Unit', 'Quote Currency', 'Pip / Point Size', 'Tick Size', 'Price Precision', 'Contract Size (units / lot)', 'Minimum Lots', 'Lot Increment', 'USD per Quote Unit', 'Status', 'Action'].map((heading) => (
+                    {['Instrument', 'Base Asset / Unit', 'Quote Currency', 'Pip / Point Size', 'Tick Size', 'Contract Size (units / lot)', 'Minimum Lots', 'Lot Increment', 'USD per Quote Unit', 'Status', 'Action'].map((heading) => (
                       <th
                         key={heading}
                         className="sticky top-0 z-10 bg-gray-50 px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:bg-gray-800 dark:text-gray-400"
@@ -1339,17 +1379,6 @@ export function SettingsPage() {
                           <input
                             type="number"
                             min="0"
-                            step="1"
-                            className={COMPACT_INPUT_CLASS_NAME}
-                            value={row.pricePrecision}
-                            onChange={(event) => setForexMappingRows((current) => updateForexMappingRow(current, row.id, 'pricePrecision', event.target.value))}
-                            placeholder="5"
-                          />
-                        </td>
-                        <td className="px-3 py-2">
-                          <input
-                            type="number"
-                            min="0"
                             step="any"
                             className={COMPACT_INPUT_CLASS_NAME}
                             value={row.contractSize}
@@ -1391,10 +1420,10 @@ export function SettingsPage() {
                           />
                         </td>
                         <td className="max-w-64 px-3 py-2 text-xs">
-                          <span className={row.pipSize && row.tickSize && row.pricePrecision && row.contractSize && row.minLots && row.lotIncrement
+                          <span className={row.pipSize && row.tickSize && row.contractSize && row.minLots && row.lotIncrement
                             ? 'font-medium text-green-700 dark:text-green-400'
                             : 'font-medium text-amber-700 dark:text-amber-400'}>
-                            {row.pipSize && row.tickSize && row.pricePrecision && row.contractSize && row.minLots && row.lotIncrement
+                            {row.pipSize && row.tickSize && row.contractSize && row.minLots && row.lotIncrement
                               ? 'Ready'
                               : 'Needs values'}
                           </span>
@@ -1415,7 +1444,7 @@ export function SettingsPage() {
                     ))
                   ) : (
                     <tr className="bg-white dark:bg-gray-800">
-                      <td colSpan={12} className="px-3 py-4 text-xs text-gray-500 dark:text-gray-400">
+                      <td colSpan={11} className="px-3 py-4 text-xs text-gray-500 dark:text-gray-400">
                         No instruments match this search.
                       </td>
                     </tr>

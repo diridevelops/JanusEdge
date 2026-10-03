@@ -1351,7 +1351,13 @@ class BacktestSimulationEffects:
             take_profit_price=float(target),
             stop_loss_eligible_source_index=int(candle["source_candle_index"]) + 1,
             take_profit_eligible_source_index=int(candle["source_candle_index"]) + 1,
-            initial_risk_native=max(initial_native, 10 ** -int(metadata["price_precision"])),
+            initial_risk_native=max(
+                initial_native,
+                float(
+                    metadata.get("tick_size")
+                    or 10 ** -int(metadata["price_precision"])
+                ),
+            ),
             initial_risk_usd=float(risk_usd),
             entry_quote_to_usd_rate=float(quote_rate),
             realized_partial_native_pnl=0.0,

@@ -43,6 +43,7 @@ from app.market_data.symbol_mapper import (
     get_default_instrument_specs_version,
     get_effective_symbol_mappings,
     get_simulation_instrument,
+    price_precision_from_tick_size,
 )
 
 
@@ -247,9 +248,16 @@ def _freeze_instrument_metadata(instrument: str, user_id: ObjectId) -> dict:
     mapping, mapping_type = configured
     base_currency = str(mapping.get("base_currency", "")).upper()
     quote_currency = str(mapping.get("quote_currency", "")).upper()
-    price_precision = mapping.get("price_precision")
     pip_size = mapping.get("pip_size")
     tick_size = mapping.get("tick_size")
+    try:
+        price_precision = (
+            price_precision_from_tick_size(tick_size)
+            if tick_size is not None
+            else mapping.get("price_precision")
+        )
+    except ValueError as exc:
+        raise ValidationError("The configured instrument tick size is invalid.") from exc
     contract_size = mapping.get("contract_size")
     min_lots = mapping.get("min_lots")
     lot_increment = mapping.get("lot_increment")
@@ -280,7 +288,7 @@ def _freeze_instrument_metadata(instrument: str, user_id: ObjectId) -> dict:
         "spec_version": mapping.get("spec_version") or get_default_instrument_specs_version(),
         "spec_source": mapping.get("spec_source"),
         "reason": mapping.get("reason") or (
-            "Complete price precision, price step, contract size, minimum lot, "
+            "Complete price tick, contract size, minimum lot, "
             "and lot increment settings are required before trading this instrument."
         ),
     }

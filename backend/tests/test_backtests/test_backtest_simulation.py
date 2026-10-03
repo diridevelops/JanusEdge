@@ -59,7 +59,9 @@ def test_price_validation_snaps_float_noise_but_rejects_extra_precision():
 
 def test_frozen_instrument_tick_and_lot_rules_allow_instrument_specific_grids():
     cfd = {
-        "price_precision": 2,
+        # Tick size is authoritative; a stale precision value from an older
+        # saved settings row must not override the implied two decimals.
+        "price_precision": 6,
         "tick_size": 0.25,
         "pip_size": 0.25,
         "contract_size": 1,

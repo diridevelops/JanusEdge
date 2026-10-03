@@ -37,6 +37,15 @@ def _decimal(value: Any, field_name: str) -> Decimal:
 
 
 def _precision(metadata: Mapping[str, Any]) -> int:
+    tick_size = metadata.get("tick_size")
+    if tick_size is not None:
+        tick = _decimal(tick_size, "tick_size")
+        if tick <= 0:
+            raise SimulationRuleError("Run instrument tick_size must be positive.")
+        precision = max(0, -tick.normalize().as_tuple().exponent)
+        if precision > 15:
+            raise SimulationRuleError("Run instrument precision is invalid.")
+        return precision
     value = metadata.get("price_precision")
     if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 15:
         raise SimulationRuleError("Run instrument precision is invalid.")

@@ -7,6 +7,8 @@ import pytest
 
 from app.market_data.symbol_mapper import (
     get_default_symbol_mappings,
+    get_simulation_instrument,
+    price_precision_from_tick_size,
     validate_symbol_mappings,
 )
 
@@ -156,6 +158,49 @@ def test_validate_symbol_mappings_defaults_custom_forex_contract_size():
     )
 
     assert normalized["forex"]["GBP/EUR"]["contract_size"] == 100000
+
+
+def test_instrument_precision_is_derived_from_tick_size():
+    """The tick grid wins over any stale precision saved by an older UI."""
+    normalized = validate_symbol_mappings({
+        "instruments": {
+            "AAPL.US-USD": {
+                "base_currency": "AAPL.US",
+                "quote_currency": "USD",
+                "pip_size": 0.01,
+                "tick_size": 0.25,
+                "price_precision": 6,
+                "contract_size": 1,
+                "min_lots": 1,
+                "lot_increment": 1,
+            }
+        }
+    })
+
+    assert normalized["instruments"]["AAPL.US-USD"]["price_precision"] == 2
+    assert price_precision_from_tick_size(0.005) == 3
+    assert price_precision_from_tick_size(1) == 0
+
+
+def test_legacy_forex_precision_becomes_tick_size_when_loading_old_profiles():
+    mapping, mapping_type = get_simulation_instrument(
+        "EUR/USD",
+        symbol_mappings={
+            "forex": {
+                "EUR/USD": {
+                    "base_currency": "EUR",
+                    "quote_currency": "USD",
+                    "pip_size": 0.0001,
+                    "price_precision": 3,
+                    "contract_size": 100_000,
+                }
+            }
+        },
+    )
+
+    assert mapping_type == "forex"
+    assert mapping["tick_size"] == 0.001
+    assert price_precision_from_tick_size(mapping["tick_size"]) == 3
 
 
 @pytest.mark.parametrize(

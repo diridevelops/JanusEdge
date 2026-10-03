@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import date
+from decimal import Decimal
 import json
 import math
 from pathlib import Path
@@ -147,11 +148,16 @@ def _row(source: dict, groups: dict[int, str]) -> dict:
     base, quote = parts if len(parts) == 2 else ("", "")
     group = groups.get(source.get("groupId"))
     platform_group = source.get("platformGroupId")
-    price_precision = source.get("priceScale")
+    catalog_price_scale = source.get("priceScale")
     pip_size = source.get("pipValue")
     tick_size = (
-        10 ** (-price_precision)
-        if isinstance(price_precision, int) and not isinstance(price_precision, bool)
+        10 ** (-catalog_price_scale)
+        if isinstance(catalog_price_scale, int) and not isinstance(catalog_price_scale, bool)
+        else None
+    )
+    price_precision = (
+        max(0, -Decimal(str(tick_size)).normalize().as_tuple().exponent)
+        if tick_size is not None
         else None
     )
     contract_size = min_lots = lot_increment = None
@@ -227,7 +233,7 @@ def _row(source: dict, groups: dict[int, str]) -> dict:
         or not 0 <= price_precision <= 15
     ):
         reason = reason or (
-            "Dukascopy catalog does not publish a valid price precision for "
+            "Dukascopy catalog does not publish a valid price tick scale for "
             "this instrument."
         )
         price_precision = None
