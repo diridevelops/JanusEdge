@@ -7,6 +7,9 @@ import type {
   BacktestDrawingState,
   BacktestInstrumentCatalog,
   BacktestInstrumentSpecs,
+  BacktestManualDataset,
+  BacktestManualImportPreview,
+  BacktestManualInstrument,
   BacktestPreparationNotice,
   BacktestReplayPosition,
   BacktestReplayPositionRequest,
@@ -24,6 +27,7 @@ import type {
   BacktestSimulationSubmitOrderRequest,
   BacktestSimulationUpdateRiskRequest,
   CreateBacktestRunRequest,
+  CreateManualBacktestRunSettings,
 } from '../types/backtest.types';
 
 /** Load the current supported-instrument catalog from the downloader. */
@@ -84,6 +88,21 @@ export async function startBacktestCacheRecovery(
 ): Promise<BacktestCacheStatus> {
   const response = await apiClient.post<BacktestCacheStatus>(
     `/backtest/runs/${encodeURIComponent(runId)}/cache-recovery`
+  );
+  return response.data;
+}
+
+/** Restore missing manual replay candles from the original HistData CSV files. */
+export async function restoreManualBacktestCache(
+  runId: string,
+  files: File[]
+): Promise<BacktestCacheStatus> {
+  const data = new FormData();
+  files.forEach((file) => data.append('files', file));
+  const response = await apiClient.post<BacktestCacheStatus>(
+    `/backtest/runs/${encodeURIComponent(runId)}/manual-cache-recovery`,
+    data,
+    { headers: { 'Content-Type': 'multipart/form-data' } }
   );
   return response.data;
 }
@@ -278,6 +297,52 @@ export async function getBacktestInstrumentSpecs(): Promise<BacktestInstrumentSp
     '/backtest/instrument-specs'
   );
   return response.data;
+}
+
+export async function getManualBacktestInstruments(): Promise<BacktestManualInstrument[]> {
+  const response = await apiClient.get<{ instruments: BacktestManualInstrument[] }>(
+    '/backtest/manual-instruments'
+  );
+  return response.data.instruments;
+}
+
+export async function getManualBacktestDataset(
+  instrument: string
+): Promise<BacktestManualDataset> {
+  const response = await apiClient.get<BacktestManualDataset>(
+    `/backtest/manual-datasets/${encodeURIComponent(instrument)}`
+  );
+  return response.data;
+}
+
+export async function previewManualBacktestImport(
+  instrument: string,
+  files: File[]
+): Promise<BacktestManualImportPreview> {
+  const data = new FormData();
+  data.append('instrument', instrument);
+  files.forEach((file) => data.append('files', file));
+  const response = await apiClient.post<BacktestManualImportPreview>(
+    '/backtest/manual-import/preview',
+    data,
+    { headers: { 'Content-Type': 'multipart/form-data' } }
+  );
+  return response.data;
+}
+
+export async function createManualBacktestRun(
+  settings: CreateManualBacktestRunSettings,
+  files: File[]
+): Promise<BacktestRunSummary> {
+  const data = new FormData();
+  data.append('settings', JSON.stringify(settings));
+  files.forEach((file) => data.append('files', file));
+  const response = await apiClient.post<{ run: BacktestRunSummary }>(
+    '/backtest/runs/manual',
+    data,
+    { headers: { 'Content-Type': 'multipart/form-data' } }
+  );
+  return response.data.run;
 }
 
 /** Update the saved risk budget percentage used for future entry orders. */

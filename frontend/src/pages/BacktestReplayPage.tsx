@@ -1,7 +1,7 @@
 import { type CSSProperties, type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight, Maximize2, X } from 'lucide-react';
 import { Link, useOutletContext, useParams } from 'react-router-dom';
-import { getBacktestCacheStatus, getBacktestChartWorkspace, getBacktestRun, saveBacktestChartWorkspace, startBacktestCacheRecovery } from '../api/backtests.api';
+import { getBacktestCacheStatus, getBacktestChartWorkspace, getBacktestRun, restoreManualBacktestCache, saveBacktestChartWorkspace, startBacktestCacheRecovery } from '../api/backtests.api';
 import {
   calculateBacktestBracketSizing,
   createBacktestEntryOrderDraft,
@@ -75,6 +75,8 @@ export function BacktestReplayPage() {
   const [cacheStatus, setCacheStatus] = useState<BacktestCacheStatus | null>(null);
   const [recoveryRequestError, setRecoveryRequestError] = useState<string | null>(null);
   const [isRequestingRecovery, setIsRequestingRecovery] = useState(false);
+  const [manualRecoveryFiles, setManualRecoveryFiles] = useState<File[]>([]);
+  const [isUploadingManualRecovery, setIsUploadingManualRecovery] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
@@ -162,6 +164,21 @@ export function BacktestReplayPage() {
     }
   };
 
+  const handleManualCacheRecovery = async () => {
+    if (!runId || !manualRecoveryFiles.length) return;
+    setRecoveryRequestError(null);
+    setIsUploadingManualRecovery(true);
+    try {
+      const status = await restoreManualBacktestCache(runId, manualRecoveryFiles);
+      setCacheStatus(status);
+      setManualRecoveryFiles([]);
+    } catch (error) {
+      setRecoveryRequestError(getErrorMessage(error));
+    } finally {
+      setIsUploadingManualRecovery(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex min-h-64 items-center justify-center" aria-label="Loading Backtest run">
@@ -210,6 +227,10 @@ export function BacktestReplayPage() {
   if (!cacheStatus || cacheStatus.state !== 'available') {
     const restoring = cacheStatus?.state === 'queued' || cacheStatus?.state === 'running';
     const missing = cacheStatus?.missing_references ?? [];
+    const needsManualUpload = run.source === 'manual'
+      && missing.some((item) => item.kind === 'replay');
+    const needsDukascopyDownload = missing.some((item) => item.kind === 'conversion')
+      || (run.source !== 'manual' && missing.length > 0);
     return (
       <section className="mx-auto max-w-3xl rounded-xl border border-amber-300 bg-white p-6 dark:border-amber-800 dark:bg-gray-900">
         <h1 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
@@ -218,7 +239,9 @@ export function BacktestReplayPage() {
         <p className="mt-2 text-sm text-gray-600 dark:text-gray-300">
           {restoring
             ? `Restoring ${cacheStatus.completed} of ${cacheStatus.total} missing cache entries. Replay will be available when this finishes.`
-            : 'Some shared candle data used by this run is missing or unreadable. Choose whether to download the missing dates again.'}
+            : needsManualUpload
+              ? 'Manual replay candles are missing. Re-upload the original HistData CSV files used to create this run. Any missing conversion candles can then be restored from Dukascopy.'
+              : 'Some shared candle data used by this run is missing or unreadable. Choose whether to download the missing dates again.'}
         </p>
         {restoring && (
           <div className="mt-4 h-2 overflow-hidden rounded bg-gray-200 dark:bg-gray-700" role="progressbar" aria-valuemin={0} aria-valuemax={cacheStatus.total} aria-valuenow={cacheStatus.completed}>
@@ -243,7 +266,30 @@ export function BacktestReplayPage() {
           </p>
         )}
         <div className="mt-5 flex flex-wrap gap-3">
-          {!restoring && (
+          {!restoring && needsManualUpload && (
+            <div className="flex w-full flex-col gap-3 rounded-md border border-gray-200 p-3 dark:border-gray-700">
+              <label htmlFor="manual-cache-recovery-files" className="text-sm font-medium text-gray-800 dark:text-gray-200">
+                Original HistData CSV files
+              </label>
+              <input
+                id="manual-cache-recovery-files"
+                type="file"
+                accept=".csv,text/csv"
+                multiple
+                onChange={(event) => setManualRecoveryFiles(Array.from(event.target.files ?? []))}
+                className="block w-full text-sm text-gray-600 file:mr-3 file:rounded-md file:border-0 file:bg-gray-100 file:px-3 file:py-2 file:text-sm file:font-medium dark:text-gray-300 dark:file:bg-gray-800"
+              />
+              <button
+                type="button"
+                onClick={() => void handleManualCacheRecovery()}
+                disabled={isUploadingManualRecovery || !manualRecoveryFiles.length}
+                className="w-fit rounded-md bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+              >
+                {isUploadingManualRecovery ? 'Restoring…' : 'Restore manual candles'}
+              </button>
+            </div>
+          )}
+          {!restoring && needsDukascopyDownload && !needsManualUpload && (
             <button
               type="button"
               onClick={() => void handleCacheRecovery()}

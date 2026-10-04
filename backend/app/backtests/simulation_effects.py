@@ -419,7 +419,11 @@ class BacktestSimulationEffects:
                 None,
             )
             spec = reference or build_conversion_spec(quote)
+        fallback_rate = spec.get("fallback_rate") if isinstance(spec, dict) else None
         if not spec or not spec.get("supported"):
+            if isinstance(fallback_rate, (int, float)) and not isinstance(fallback_rate, bool):
+                if math.isfinite(float(fallback_rate)) and float(fallback_rate) > 0:
+                    return float(fallback_rate)
             raise FXConversionUnavailable(quote, event_time_ms)
         route = spec.get("route")
         if not isinstance(route, list):
@@ -442,15 +446,21 @@ class BacktestSimulationEffects:
             for leg in route
             if isinstance(leg, dict) and leg.get("instrument")
         }
-        return resolve_conversion_route_rate(
-            quote,
-            int(event_time_ms),
-            route,
-            observations_by_instrument,
-            quote_currency_unit_scale=float(
-                spec.get("quote_currency_unit_scale", 1.0)
-            ),
-        )
+        try:
+            return resolve_conversion_route_rate(
+                quote,
+                int(event_time_ms),
+                route,
+                observations_by_instrument,
+                quote_currency_unit_scale=float(
+                    spec.get("quote_currency_unit_scale", 1.0)
+                ),
+            )
+        except FXConversionUnavailable:
+            if isinstance(fallback_rate, (int, float)) and not isinstance(fallback_rate, bool):
+                if math.isfinite(float(fallback_rate)) and float(fallback_rate) > 0:
+                    return float(fallback_rate)
+            raise
 
     def _profile(self, run: dict, *, sequence: int | None = None) -> dict:
         sequence = (

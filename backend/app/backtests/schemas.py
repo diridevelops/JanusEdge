@@ -290,10 +290,11 @@ def serialize_run(run: dict, account: dict | None = None) -> dict:
     if result["blind_mode"]:
         # Older linked accounts may still have a date-bearing persisted label.
         run_id = result.get("id", run.get("_id"))
+        blind_label = "blind-manual" if run.get("source") == "manual" else "blind"
         result["account_label"] = (
-            f"Backtest {result['instrument']} blind ({run_id})"
+            f"Backtest {result['instrument']} {blind_label} ({run_id})"
             if run_id is not None
-            else f"Backtest {result['instrument']} blind"
+            else f"Backtest {result['instrument']} {blind_label}"
         )
     elif account is not None:
         result["account_label"] = account.get("display_name") or account.get(

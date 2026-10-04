@@ -602,10 +602,12 @@ class PortableBackupService:
             and any(key in value for key in ("sha256", "candle_count", "cache_key"))
         ):
             allowed = (
+                "source",
                 "cache_version",
                 "instrument",
                 "utc_date",
                 "sha256",
+                "data_sha256",
                 "outcome",
                 "candle_count",
             )
@@ -651,31 +653,59 @@ class PortableBackupService:
     def _bind_snapshot_cache(self, snapshot: dict, user_id: ObjectId) -> tuple[dict, bool]:
         """Bind portable cache-day manifests to exact destination cache refs."""
         cache = BacktestCandleCache()
-        resolved: dict[tuple[str, str], dict | None] = {}
+        resolved: dict[tuple[str, str, str, str], dict | None] = {}
         has_missing = False
 
         def resolve(ref: dict) -> dict:
             nonlocal has_missing
-            key = (str(ref.get("instrument", "")).upper(), str(ref.get("utc_date", "")))
+            key = (
+                str(ref.get("source", "dukascopy")),
+                str(ref.get("cache_version", "")),
+                str(ref.get("instrument", "")).upper(),
+                str(ref.get("utc_date", "")),
+            )
             if key not in resolved:
                 destination_ref = None
                 try:
                     from datetime import date
+                    if key[0] == "manual":
+                        from app.backtests.manual_import import ManualCandleDatasetStore
 
-                    destination_ref = cache.get_reference(
-                        user_id=user_id,
-                        instrument=key[0],
-                        utc_date=date.fromisoformat(key[1]),
-                    )
+                        destination_ref = ManualCandleDatasetStore().find_matching_ref(
+                            user_id=user_id,
+                            instrument=key[2],
+                            utc_date=key[3],
+                            data_sha256=str(
+                                ref.get("data_sha256") or ref.get("sha256", "")
+                            ),
+                        )
+                    else:
+                        destination_ref = cache.get_reference(
+                            user_id=user_id,
+                            instrument=key[2],
+                            utc_date=date.fromisoformat(key[3]),
+                        )
                 except (ValueError, KeyError, RuntimeError):
                     destination_ref = None
+                manual_content_matches = (
+                    destination_ref is not None
+                    and (
+                        destination_ref.get("data_sha256") == ref.get("data_sha256")
+                        if ref.get("data_sha256")
+                        else destination_ref.get("sha256") == ref.get("sha256")
+                    )
+                )
                 matches = (
                     destination_ref is not None
                     and destination_ref.get("cache_version") == ref.get("cache_version")
-                    and destination_ref.get("sha256") == ref.get("sha256")
+                    and (
+                        manual_content_matches
+                        if key[0] == "manual"
+                        else destination_ref.get("sha256") == ref.get("sha256")
+                    )
                     and destination_ref.get("outcome") == ref.get("outcome")
                     and destination_ref.get("candle_count") == ref.get("candle_count")
-                    and all(key)
+                    and all(key[1:])
                 )
                 resolved[key] = destination_ref if matches else None
                 if not matches:
@@ -686,10 +716,12 @@ class PortableBackupService:
             return {
                 key: deepcopy(ref[key])
                 for key in (
+                    "source",
                     "cache_version",
                     "instrument",
                     "utc_date",
                     "sha256",
+                    "data_sha256",
                     "outcome",
                     "candle_count",
                 )

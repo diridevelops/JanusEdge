@@ -13,6 +13,33 @@ export interface BacktestInstrumentSpecs {
   instruments: Record<string, import('./auth.types').InstrumentSizingMappingEntry>;
 }
 
+export interface BacktestManualInstrument {
+  instrument: string;
+  quote_currency: string;
+  quote_currency_unit_scale: number;
+  conversion_supported: boolean;
+}
+
+export interface BacktestManualDataset {
+  instrument: string;
+  revision: string | null;
+  available_dates: string[];
+  candle_count: number;
+  first_date?: string | null;
+  last_date?: string | null;
+}
+
+export interface BacktestManualImportPreview extends BacktestManualDataset {
+  expected_revision: string | null;
+  cached_dates: string[];
+  incoming_dates: string[];
+  overlap_count: number;
+  conflict_count: number;
+  conflicting_dates: string[];
+  overlap_dates: string[];
+  requires_confirmation: boolean;
+}
+
 export type BacktestRandomPeriodMonths = 1 | 3 | 6 | 12;
 export type BacktestPeriodSelection = 'manual' | 'random';
 
@@ -77,6 +104,7 @@ export interface BacktestPartialGapSummary {
 export interface BacktestRunSummary {
   id: string;
   instrument: string;
+  source?: 'dukascopy' | 'manual';
   requested_start_date: string | null;
   requested_end_date: string | null;
   display_timezone: string;
@@ -150,6 +178,23 @@ export interface BacktestReplayPosition {
   revision: number;
 }
 
+export interface CreateManualBacktestRunSettings {
+  instrument: string;
+  display_timezone: string;
+  start_date?: string;
+  end_date?: string;
+  period_selection: BacktestPeriodSelection;
+  period_months?: BacktestRandomPeriodMonths;
+  warmup_days: number;
+  blind_mode: boolean;
+  initial_balance_usd: number;
+  risk_percent: number;
+  execution_costs: BacktestExecutionCosts;
+  expected_dataset_revision: string | null;
+  confirm_overwrite: boolean;
+  quote_to_usd_fallback_rate?: number;
+}
+
 export interface BacktestChartTab {
   id: string;
   position: number;
@@ -204,6 +249,7 @@ export interface BacktestRunDetail extends BacktestRunSummary {
 
 export interface BacktestCacheStatus {
   state: 'available' | 'missing' | 'queued' | 'running' | 'failed';
+  source?: 'dukascopy' | 'manual';
   missing_references: Array<{
     instrument: string;
     utc_date: string;

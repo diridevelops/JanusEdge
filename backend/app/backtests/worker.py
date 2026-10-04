@@ -16,6 +16,10 @@ from bson import ObjectId
 from flask import current_app, has_app_context
 
 from app.backtests.candle_cache import BacktestCandleCache
+from app.backtests.manual_import import (
+    MANUAL_CANDLE_CACHE_VERSION,
+    ManualCandleDatasetStore,
+)
 from app.backtests.dukascopy_provider import DukascopyProvider
 from app.backtests.fx_conversion import (
     build_conversion_spec,
@@ -253,6 +257,7 @@ class BacktestWorker:
             clock=self.clock,
             lease_seconds=self.lease_seconds,
         )
+        self.manual_dataset_store = ManualCandleDatasetStore(self.snapshot_store)
         self.random_source = random_source or random.SystemRandom()
         self.worker_id = worker_id or f"{os.getpid()}-{uuid.uuid4().hex}"
 
@@ -450,11 +455,21 @@ class BacktestWorker:
         for item in snapshot.get("_day_candle_indexes", []):
             heartbeat.check()
             utc_date = date.fromisoformat(str(item["utc_date"]))
-            ref = self.candle_cache.get_reference(
-                user_id=user_id,
-                instrument=run["instrument"],
-                utc_date=utc_date,
-            )
+            if run.get("source") == "manual":
+                # Manual refs are tied to immutable HistData revisions, not the
+                # Dukascopy cache. A user re-upload has already rebound any
+                # missing manual refs before this conversion-only recovery runs.
+                ref = item.get("cache_ref")
+                if not isinstance(ref, dict) or not ref.get("object_key"):
+                    raise RuntimeError(
+                        f"Manual replay candles for {utc_date.isoformat()} must be re-uploaded."
+                    )
+            else:
+                ref = self.candle_cache.get_reference(
+                    user_id=user_id,
+                    instrument=run["instrument"],
+                    utc_date=utc_date,
+                )
             base_dates.append({
                 "utc_date": _date_instant(utc_date),
                 "outcome": ref["outcome"],
@@ -466,7 +481,11 @@ class BacktestWorker:
             run=run,
             completed_dates=base_dates,
             fx_conversion=fx_conversion,
-            cache_version=self.candle_cache.cache_version,
+            cache_version=(
+                run.get("manual_cache_version", MANUAL_CANDLE_CACHE_VERSION)
+                if run.get("source") == "manual"
+                else self.candle_cache.cache_version
+            ),
         )
         if not rebuilt.get("replay_period_candle_count"):
             raise RuntimeError(
@@ -1094,19 +1113,44 @@ class BacktestWorker:
                 raise LeaseLostError("Backtest preparation lease was lost.")
             if not base_done:
                 try:
-                    result = self._fetch_cached_day(
-                        user_id,
-                        run["instrument"],
-                        utc_date,
-                        self.provider.fetch_day,
-                        heartbeat,
-                    )
+                    if job.get("source") == "manual" or run.get("source") == "manual":
+                        revision = self.manual_dataset_store.get_revision(
+                            user_id,
+                            run["instrument"],
+                            job.get("manual_dataset_revision")
+                            or run.get("manual_dataset_revision"),
+                        )
+                        cache_ref = self.manual_dataset_store.get_day_ref(
+                            revision, utc_date
+                        )
+                        if cache_ref.get("object_key") is None:
+                            object_key, checksum, object_size = self.snapshot_store.write_cached_candle_date(
+                                user_id,
+                                run["instrument"],
+                                utc_date,
+                                [],
+                                cache_version=MANUAL_CANDLE_CACHE_VERSION,
+                            )
+                            cache_ref.update({
+                                "object_key": object_key,
+                                "sha256": checksum,
+                                "object_size": object_size,
+                            })
+                        result = self.snapshot_store.read_cached_candle_date(cache_ref)
+                    else:
+                        result = self._fetch_cached_day(
+                            user_id,
+                            run["instrument"],
+                            utc_date,
+                            self.provider.fetch_day,
+                            heartbeat,
+                        )
+                        cache_ref = self.candle_cache.get_reference(
+                            user_id=user_id,
+                            instrument=run["instrument"],
+                            utc_date=utc_date,
+                        )
                     candles = self._validated_candles(result, utc_date, run)
-                    cache_ref = self.candle_cache.get_reference(
-                        user_id=user_id,
-                        instrument=run["instrument"],
-                        utc_date=utc_date,
-                    )
                 except Exception as exc:
                     self._fail_provider_job(job, run, heartbeat, exc)
                     return
@@ -1196,7 +1240,11 @@ class BacktestWorker:
             run=run,
             completed_dates=checkpoints,
             fx_conversion=latest_job.get("fx_conversion"),
-            cache_version=self.candle_cache.cache_version,
+            cache_version=(
+                run.get("manual_cache_version", MANUAL_CANDLE_CACHE_VERSION)
+                if run.get("source") == "manual"
+                else self.candle_cache.cache_version
+            ),
         )
         if not snapshot.get("replay_period_candle_count"):
             self._renew_or_lose(job, run, heartbeat)

@@ -24,6 +24,12 @@ from app.backtests.repository import (
     _object_id,
 )
 from app.backtests.candle_cache import BacktestCandleCache
+from app.backtests.manual_import import (
+    HISTDATA_TIMEZONE,
+    MANUAL_CANDLE_CACHE_VERSION,
+    ManualCandleDatasetStore,
+    canonical_candle_checksum,
+)
 from app.backtests.fx_conversion import build_conversion_spec
 from app.backtests.preparation_jobs import PreparationJobService
 from app.backtests.snapshot_store import SnapshotStore
@@ -179,6 +185,13 @@ def _build_backtest_account_document(
 def _as_utc_ms(local_date: date, timezone_info: ZoneInfo) -> int:
     local_midnight = datetime.combine(local_date, time.min).replace(
         tzinfo=timezone_info
+    )
+    return int(local_midnight.astimezone(timezone.utc).timestamp() * 1000)
+
+
+def _as_histdata_utc_ms(local_date: date) -> int:
+    local_midnight = datetime.combine(local_date, time.min).replace(
+        tzinfo=HISTDATA_TIMEZONE
     )
     return int(local_midnight.astimezone(timezone.utc).timestamp() * 1000)
 
@@ -399,6 +412,352 @@ class BacktestService:
             raise MarketDataError(
                 "The supported instrument catalog is unavailable."
             ) from exc
+
+    def get_manual_instruments(self, user_id: str) -> list[dict]:
+        """List Settings instruments with complete manual replay sizing rules."""
+        user_oid = _object_id(user_id)
+        user = mongo.db.users.find_one(
+            {"_id": user_oid}, {"symbol_mappings": 1}
+        ) or {}
+        mappings = get_effective_symbol_mappings(user.get("symbol_mappings"))
+        instruments = mappings.get("instruments") or {}
+        supported = []
+        conversion_by_currency: dict[str, bool] = {}
+        for symbol, mapping in sorted(instruments.items()):
+            if not isinstance(mapping, dict):
+                continue
+            if any(
+                mapping.get(field) is None
+                for field in (
+                    "base_currency", "quote_currency", "pip_size", "tick_size",
+                    "contract_size", "min_lots", "lot_increment",
+                )
+            ):
+                continue
+            if not mapping.get("supported_for_simulation"):
+                continue
+            try:
+                _positive_finite_number(mapping["pip_size"], "pip_size")
+                _positive_finite_number(mapping["tick_size"], "tick_size")
+                _positive_finite_number(mapping["contract_size"], "contract_size")
+                _positive_finite_number(mapping["min_lots"], "min_lots")
+                _positive_finite_number(mapping["lot_increment"], "lot_increment")
+                price_precision_from_tick_size(mapping["tick_size"])
+                quote_unit_scale = _positive_finite_number(
+                    mapping.get("quote_currency_unit_scale", 1),
+                    "quote_currency_unit_scale",
+                )
+            except (TypeError, ValueError, ValidationError):
+                continue
+            quote_currency = str(mapping["quote_currency"]).upper()
+            if quote_currency not in conversion_by_currency:
+                conversion = build_conversion_spec(
+                    quote_currency,
+                    instruments=instruments,
+                    quote_currency_unit_scale=quote_unit_scale,
+                )
+                conversion_by_currency[quote_currency] = bool(
+                    conversion.get("supported")
+                )
+            supported.append({
+                "instrument": symbol,
+                "quote_currency": quote_currency,
+                "quote_currency_unit_scale": quote_unit_scale,
+                "conversion_supported": conversion_by_currency[quote_currency],
+            })
+        return supported
+
+    def get_manual_dataset(self, user_id: str, instrument: str) -> dict:
+        return ManualCandleDatasetStore(self.snapshot_store).describe(
+            user_id, instrument
+        )
+
+    def preview_manual_import(self, user_id: str, instrument: str, files) -> dict:
+        self._require_manual_instrument(user_id, instrument)
+        return ManualCandleDatasetStore(self.snapshot_store).preview(
+            user_id, instrument, files
+        )
+
+    def _require_manual_instrument(self, user_id: str, instrument: str) -> dict:
+        if not isinstance(instrument, str) or not instrument.strip():
+            raise ValidationError("Choose an instrument from Settings.")
+        selected = instrument.strip().upper()
+        settings_rows = {
+            item["instrument"]: item
+            for item in self.get_manual_instruments(user_id)
+        }
+        if selected not in settings_rows:
+            raise ValidationError(
+                "Choose an instrument with complete sizing rules from Settings."
+            )
+        metadata = _freeze_instrument_metadata(selected, _object_id(user_id))
+        if not metadata.get("sizing_supported"):
+            raise ValidationError(
+                "Complete the instrument sizing fields in Settings before importing candles."
+            )
+        return metadata
+
+    def create_manual_run(
+        self,
+        *,
+        user_id: str,
+        instrument: str,
+        display_timezone: str,
+        start_date: str | None,
+        end_date: str | None,
+        period_selection: str,
+        period_months: int | None,
+        warmup_days: int,
+        blind_mode: bool,
+        initial_balance_usd: float,
+        risk_percent: float,
+        execution_costs: dict | None,
+        files=(),
+        expected_dataset_revision: str | None = None,
+        confirm_overwrite: bool = False,
+        quote_to_usd_fallback_rate: float | None = None,
+    ) -> dict:
+        """Merge uploaded candles, then enqueue a run pinned to that revision."""
+        user_oid = _object_id(user_id)
+        if user_oid is None:
+            raise ValidationError("Authenticated user id is invalid.")
+        if not isinstance(confirm_overwrite, bool):
+            raise ValidationError("confirm_overwrite must be a boolean.")
+        normalized = instrument.strip().upper() if isinstance(instrument, str) else ""
+        instrument_metadata = self._require_manual_instrument(user_id, normalized)
+        dataset_store = ManualCandleDatasetStore(self.snapshot_store)
+        file_list = [item for item in files if item is not None and getattr(item, "filename", "")]
+        if file_list:
+            preview = dataset_store.preview(user_oid, normalized, file_list)
+            current_revision = preview.get("expected_revision")
+            if expected_dataset_revision is not None and expected_dataset_revision != current_revision:
+                raise ConflictError(
+                    "The cached manual data changed. Refresh its coverage and try again."
+                )
+            merge_expected_revision = current_revision
+            source_date_values = preview.get("available_dates", [])
+            revision = None
+        else:
+            revision = dataset_store.get_active(user_oid, normalized)
+            if revision is None:
+                raise ValidationError("Upload HistData CSV files for this instrument first.")
+            revision_id = str(revision["_id"])
+            if expected_dataset_revision and expected_dataset_revision != revision_id:
+                raise ConflictError(
+                    "The cached manual data changed. Refresh its coverage and try again."
+                )
+            source_date_values = revision.get("source_dates", [])
+
+        source_dates = [date.fromisoformat(value) for value in source_date_values]
+        if not source_dates:
+            raise ValidationError("The selected manual dataset contains no candles.")
+        available_dates = set(source_dates)
+        initial_balance_usd = _positive_finite_number(initial_balance_usd, "initial_balance_usd")
+        risk_percent = _positive_finite_number(risk_percent, "risk_percent")
+        if risk_percent > 100:
+            raise ValidationError("risk_percent cannot exceed 100.")
+        warmup_days = _require_nonnegative_int(warmup_days, "warmup_days")
+        execution_costs = _validated_execution_costs(execution_costs)
+        if not display_timezone:
+            raise ValidationError("Display timezone is required.")
+        try:
+            ZoneInfo(display_timezone)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValidationError("Display timezone must be a valid IANA timezone.") from exc
+        if not isinstance(blind_mode, bool):
+            raise ValidationError("blind_mode must be a boolean.")
+        fallback_rate = None
+        if quote_to_usd_fallback_rate is not None:
+            fallback_rate = _positive_finite_number(
+                quote_to_usd_fallback_rate, "quote_to_usd_fallback_rate"
+            )
+        conversion = instrument_metadata.get("conversion_spec") or {}
+        quote_currency = str(instrument_metadata.get("quote_currency", "")).upper()
+        if quote_currency != "USD" and not conversion.get("supported") and fallback_rate is None:
+            raise ValidationError(
+                "No historical conversion route is configured. Enter a fixed quote-to-USD fallback rate."
+            )
+        if fallback_rate is not None:
+            conversion = dict(conversion)
+            conversion["fallback_rate"] = fallback_rate
+            instrument_metadata["conversion_spec"] = conversion
+            instrument_metadata["conversion_supported"] = bool(
+                conversion.get("supported") or fallback_rate is not None
+            )
+            instrument_metadata["supported_for_simulation"] = bool(
+                instrument_metadata.get("sizing_supported")
+            )
+            instrument_metadata["reason"] = None
+        elif quote_currency == "USD":
+            instrument_metadata["supported_for_simulation"] = bool(
+                instrument_metadata.get("sizing_supported")
+            )
+
+        selection = "random" if blind_mode else period_selection
+        if selection not in {"manual", "random"}:
+            raise ValidationError("period_selection must be 'manual' or 'random'.")
+        if selection == "random":
+            if isinstance(period_months, bool) or period_months not in {1, 3, 6, 12}:
+                raise ValidationError("period_months must be one of 1, 3, 6, or 12.")
+            first_available, last_available = source_dates[0], source_dates[-1]
+            if _random_period_end(first_available, period_months) > last_available:
+                start, end = first_available, last_available
+            else:
+                candidates = [
+                    day for day in source_dates
+                    if _random_period_end(day, period_months) <= last_available
+                ]
+                start = self.random_period_choice(candidates)
+                target_end = _random_period_end(start, period_months)
+                eligible_ends = [day for day in source_dates if start <= day <= target_end]
+                end = max(eligible_ends, default=last_available)
+        else:
+            if start_date is None or end_date is None:
+                raise ValidationError("Choose a start and end date from the imported data.")
+            start = _parse_date(start_date, "start_date")
+            end = _parse_date(end_date, "end_date")
+            if start not in available_dates or end not in available_dates:
+                raise ValidationError("Choose dates that contain imported candles.")
+            if end < start:
+                raise ValidationError("End date must be on or after start date.")
+            if end > _one_year_anniversary(start) - timedelta(days=1):
+                raise ValidationError("The selected date range cannot exceed one calendar year.")
+            period_months = None
+
+        start_utc_ms = _as_histdata_utc_ms(start)
+        end_utc_ms = _as_histdata_utc_ms(end + timedelta(days=1))
+        context_start_date = _warmup_start_date(start, warmup_days)
+        context_start_utc_ms = _as_histdata_utc_ms(context_start_date)
+        context_start_utc_date = datetime.fromtimestamp(
+            context_start_utc_ms / 1000, tz=timezone.utc
+        ).date()
+        end_utc_date = datetime.fromtimestamp(
+            (end_utc_ms - 1) / 1000, tz=timezone.utc
+        ).date()
+
+        # Persist the merged dataset only after the run configuration has passed
+        # validation. The revision manifest is immutable and the new run pins it.
+        if file_list:
+            revision = dataset_store.merge(
+                user_oid,
+                normalized,
+                file_list,
+                expected_revision=merge_expected_revision,
+                confirm_overwrite=confirm_overwrite,
+            )
+        assert revision is not None
+
+        run_id, account_id, job_id = ObjectId(), ObjectId(), ObjectId()
+        account = _build_backtest_account_document(
+            user_id=user_oid,
+            run_id=run_id,
+            account_id=account_id,
+            instrument=normalized,
+            start_date=start,
+            end_date=end,
+            blind_mode=blind_mode,
+            initial_balance_usd=initial_balance_usd,
+            risk_percent=risk_percent,
+        )
+        account_label = account["display_name"].replace(
+            " blind (", " blind-manual ("
+        ) if blind_mode else account["display_name"].replace(
+            f" {end.isoformat()} (", f" {end.isoformat()}-manual ("
+        )
+        account["display_name"] = account_label
+        account["account_name"] = account_label
+        run = create_backtest_run_doc(
+            run_id=run_id,
+            user_id=user_oid,
+            account_id=account_id,
+            preparation_job_id=job_id,
+            instrument=normalized,
+            start_date=start,
+            end_date=end,
+            display_timezone=display_timezone,
+            start_utc_ms=start_utc_ms,
+            end_utc_ms=end_utc_ms,
+            context_start_utc_ms=context_start_utc_ms,
+            warmup_days=warmup_days,
+            blind_mode=blind_mode,
+            initial_balance_usd=initial_balance_usd,
+            risk_percent=risk_percent,
+            execution_costs=execution_costs,
+            instrument_metadata=instrument_metadata,
+        )
+        run.update({
+            "source": "manual",
+            "source_side": "BID",
+            "price_mode": "imported_bid",
+            "volume_semantics": "histdata_reported_volume",
+            "manual_dataset_revision": revision["_id"],
+            "manual_cache_version": MANUAL_CANDLE_CACHE_VERSION,
+            "period_selection": selection,
+            "period_months": period_months,
+            "quote_to_usd_fallback_rate": fallback_rate,
+        })
+        job = self.preparation_jobs.build_for_run(
+            job_id=job_id,
+            user_id=user_oid,
+            run_id=run_id,
+            instrument=normalized,
+            requested_start_date=start,
+            requested_end_date=end,
+            context_start_utc_date=context_start_utc_date,
+            end_utc_date=end_utc_date,
+            staging_prefix=f"backtests/{user_oid}/{run_id}/staging/",
+            quote_currency=quote_currency,
+            conversion_spec=conversion,
+        )
+        job.update({
+            "source": "manual",
+            "manual_dataset_revision": revision["_id"],
+        })
+        inserted_run = inserted_account = inserted_job = False
+        try:
+            self.repository.create_run(run)
+            inserted_run = True
+            mongo.db.trade_accounts.insert_one(account)
+            inserted_account = True
+            self.preparation_jobs.create(job)
+            inserted_job = True
+        except Exception:
+            if inserted_job:
+                self.job_repository.delete_for_run(run_id)
+            if inserted_account:
+                mongo.db.trade_accounts.delete_one({"_id": account_id})
+            if inserted_run:
+                mongo.db.backtest_runs.delete_one({"_id": run_id})
+            raise
+        return {
+            "id": run_id,
+            "instrument": normalized,
+            "requested_start_date": start.isoformat(),
+            "requested_end_date": end.isoformat(),
+            "display_timezone": display_timezone,
+            "period_selection": selection,
+            "period_months": period_months,
+            "warmup_days": warmup_days,
+            "blind_mode": blind_mode,
+            "status": "preparing",
+            "account_id": account_id,
+            "account_label": account_label,
+            "progress": run["progress"],
+            "created_at": run["created_at"],
+            "initial_balance_usd": initial_balance_usd,
+            "current_balance_usd": initial_balance_usd,
+            "risk_percent": risk_percent,
+            "execution_costs": execution_costs,
+            "instrument_metadata": instrument_metadata,
+            "source": "manual",
+        }
+
+    @staticmethod
+    def random_period_choice(candidates):
+        import secrets
+        if not candidates:
+            raise ValidationError("The imported data is too short for that random period.")
+        return secrets.choice(candidates)
 
     def create_run(
         self,
@@ -813,6 +1172,7 @@ class BacktestService:
 
         return {
             "state": state,
+            "source": run.get("source", "dukascopy"),
             "missing_references": [
                 {
                     "instrument": item.get("instrument"),
@@ -826,6 +1186,80 @@ class BacktestService:
             "error": recovery.get("error"),
             "refreshed_at": run.get("cache_refreshed_at"),
         }
+
+    def restore_manual_run_cache(self, user_id: str, run_id, files) -> dict:
+        """Rebind missing manual candle objects only when reuploaded data matches."""
+        run = self.repository.find_owned_run(user_id, run_id)
+        if run is None:
+            raise NotFoundError("Backtest run not found.")
+        if run.get("source") != "manual" or not run.get("snapshot"):
+            raise ConflictError("This run does not use manual-import candles.")
+        from copy import deepcopy
+        from app.backtests.manual_import import parse_histdata_files
+
+        grouped, _dates = parse_histdata_files(files)
+        snapshot = deepcopy(run["snapshot"])
+        missing = self.candle_cache.missing_references(snapshot)
+        missing_base_dates = {
+            str(item.get("utc_date"))
+            for item in missing
+            if item.get("kind") == "replay"
+        }
+        if not missing_base_dates:
+            return self.get_cache_status(user_id, run_id)
+        indexes = snapshot.get("_day_candle_indexes", [])
+        restored = set()
+        for item in indexes:
+            if str(item.get("utc_date")) not in missing_base_dates:
+                continue
+            expected = item.get("cache_ref") or {}
+            utc_day = date.fromisoformat(str(item["utc_date"]))
+            candles = grouped.get(utc_day, [])
+            if not candles and int(expected.get("candle_count", 0)) != 0:
+                continue
+            data_checksum = canonical_candle_checksum(candles)
+            expected_data_checksum = expected.get("data_sha256")
+            if expected_data_checksum:
+                if data_checksum != expected_data_checksum:
+                    raise ValidationError(
+                        f"Re-uploaded data for {utc_day.isoformat()} differs from this run's original candles."
+                    )
+            object_key, checksum, object_size = self.snapshot_store.write_cached_candle_date(
+                run["user_id"],
+                run["instrument"],
+                utc_day,
+                candles,
+                cache_version=run.get(
+                    "manual_cache_version", MANUAL_CANDLE_CACHE_VERSION
+                ),
+            )
+            if len(candles) != int(expected.get("candle_count", -1)) or (
+                not expected_data_checksum and checksum != expected.get("sha256")
+            ):
+                raise ValidationError(
+                    f"Re-uploaded data for {utc_day.isoformat()} differs from this run's original candles."
+                )
+            item["cache_ref"] = {
+                **expected,
+                "source": "manual",
+                "object_key": object_key,
+                "sha256": checksum,
+                "data_sha256": data_checksum,
+                "object_size": object_size,
+                "outcome": "data" if candles else "empty",
+            }
+            restored.add(str(item["utc_date"]))
+        unresolved = sorted(missing_base_dates - restored)
+        if unresolved:
+            raise ValidationError(
+                "The re-upload is missing candles for: " + ", ".join(unresolved)
+            )
+        self.repository.update_owned_run(
+            user_id,
+            run["_id"],
+            {"snapshot": snapshot, "cache_availability": "available"},
+        )
+        return self.get_cache_status(user_id, run_id)
 
     def start_cache_recovery(self, user_id: str, run_id) -> dict:
         """Queue downloads only after the owner explicitly requests recovery."""
@@ -843,6 +1277,12 @@ class BacktestService:
         missing = self.candle_cache.missing_references(run["snapshot"])
         if not missing:
             return self.get_cache_status(user_id, run_id)
+        if run.get("source") == "manual" and any(
+            item.get("kind") == "replay" for item in missing
+        ):
+            raise ConflictError(
+                "Re-upload the original HistData CSV files to restore this manual run."
+            )
         now = self.clock()
         if now.tzinfo is None:
             now = now.replace(tzinfo=timezone.utc)

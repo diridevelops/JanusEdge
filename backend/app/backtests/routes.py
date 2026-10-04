@@ -1,5 +1,7 @@
 """Authenticated Backtest run, catalog, and notice routes."""
 
+import json
+
 from flask import jsonify, request
 from flask_jwt_extended import get_jwt_identity, jwt_required
 from marshmallow import ValidationError as MarshmallowError
@@ -25,6 +27,7 @@ from app.market_data.symbol_mapper import (
     get_default_instrument_specs_version,
 )
 from app.utils.errors import ConflictError, NotFoundError, ValidationError
+from app.utils import upload_limits
 
 
 backtest_service = BacktestService()
@@ -105,6 +108,87 @@ def list_instrument_specs():
     ), 200
 
 
+@backtest_bp.route("/manual-instruments", methods=["GET"])
+@jwt_required()
+def list_manual_instruments():
+    return jsonify({"instruments": backtest_service.get_manual_instruments(
+        get_jwt_identity()
+    )}), 200
+
+
+@backtest_bp.route("/manual-datasets/<instrument>", methods=["GET"])
+@jwt_required()
+def get_manual_dataset(instrument: str):
+    return jsonify(backtest_service.get_manual_dataset(
+        get_jwt_identity(), instrument
+    )), 200
+
+
+@backtest_bp.route("/manual-import/preview", methods=["POST"])
+@jwt_required()
+def preview_manual_import():
+    instrument = request.form.get("instrument", "")
+    files = request.files.getlist("files")
+    for file_storage in files:
+        upload_limits.enforce_upload_file_size(
+            file_storage,
+            max_size_bytes=upload_limits.CSV_IMPORT_MAX_FILE_SIZE,
+            error_message="Each HistData file must be no larger than 500 MB.",
+        )
+    return jsonify(backtest_service.preview_manual_import(
+        get_jwt_identity(), instrument, files
+    )), 200
+
+
+@backtest_bp.route("/runs/manual", methods=["POST"])
+@jwt_required()
+def create_manual_run():
+    if not request.mimetype or not request.mimetype.startswith("multipart/form-data"):
+        raise ValidationError("A multipart form request is required.")
+    try:
+        payload = json.loads(request.form.get("settings", "{}"))
+    except (TypeError, ValueError) as exc:
+        raise ValidationError("Manual run settings must be valid JSON.") from exc
+    if not isinstance(payload, dict):
+        raise ValidationError("Manual run settings must be an object.")
+    files = request.files.getlist("files")
+    for file_storage in files:
+        upload_limits.enforce_upload_file_size(
+            file_storage,
+            max_size_bytes=upload_limits.CSV_IMPORT_MAX_FILE_SIZE,
+            error_message="Each HistData file must be no larger than 500 MB.",
+        )
+    try:
+        fallback = payload.get("quote_to_usd_fallback_rate")
+        if fallback not in (None, ""):
+            fallback = float(fallback)
+        else:
+            fallback = None
+        run = backtest_service.create_manual_run(
+            user_id=get_jwt_identity(),
+            instrument=payload.get("instrument"),
+            display_timezone=payload.get("display_timezone"),
+            start_date=payload.get("start_date"),
+            end_date=payload.get("end_date"),
+            period_selection=payload.get("period_selection", "manual"),
+            period_months=payload.get("period_months"),
+            warmup_days=payload.get("warmup_days", 0),
+            blind_mode=payload.get("blind_mode", False),
+            initial_balance_usd=payload.get("initial_balance_usd", 10_000),
+            risk_percent=payload.get("risk_percent", 1),
+            execution_costs=payload.get("execution_costs"),
+            files=files,
+            expected_dataset_revision=payload.get("expected_dataset_revision"),
+            confirm_overwrite=payload.get("confirm_overwrite", False),
+            quote_to_usd_fallback_rate=fallback,
+        )
+    except (TypeError, ValueError) as exc:
+        if isinstance(exc, (ValidationError, ConflictError, NotFoundError)):
+            raise
+        raise ValidationError("Manual run settings contain invalid values.") from exc
+    return jsonify({"run": serialize_backtest_value(run)}), 202
+
+
 @backtest_bp.route("/runs", methods=["POST"])
 @jwt_required()
 def create_run():
@@ -161,6 +245,27 @@ def start_cache_recovery(run_id: str):
             backtest_service.start_cache_recovery(get_jwt_identity(), run_id)
         )
     ), 202
+
+
+@backtest_bp.route("/runs/<run_id>/manual-cache-recovery", methods=["POST"])
+@jwt_required()
+def restore_manual_cache(run_id: str):
+    files = [item for item in request.files.getlist("files") if item.filename]
+    if not files:
+        raise ValidationError("Choose the original HistData CSV files for this run.")
+    for item in files:
+        upload_limits.enforce_upload_file_size(
+            item,
+            max_size_bytes=upload_limits.CSV_IMPORT_MAX_FILE_SIZE,
+            error_message="Each HistData CSV file must be 500 MB or smaller.",
+        )
+    return jsonify(
+        serialize_backtest_value(
+            backtest_service.restore_manual_run_cache(
+                get_jwt_identity(), run_id, files
+            )
+        )
+    ), 200
 
 
 @backtest_bp.route("/runs/<run_id>", methods=["DELETE"])
