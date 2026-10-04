@@ -28,8 +28,6 @@ import {
 } from '../utils/backtestReplay';
 import {
   getBacktestDisplayPricePrecision,
-  getBacktestDisplayTickSize,
-  getBacktestPriceFormat,
   normalizeBacktestCandle,
 } from '../utils/backtestPriceFormat';
 
@@ -168,7 +166,6 @@ export function useBacktestReplay(
     const currentRun = runRef.current;
     const rawPricePrecision = currentRun.instrument_metadata?.price_precision;
     const rawTickSize = currentRun.instrument_metadata?.tick_size;
-    const priceFormat = getBacktestPriceFormat(currentRun.instrument, rawPricePrecision, rawTickSize);
     const displayPrecision = getBacktestDisplayPricePrecision(
       currentRun.instrument,
       Boolean(currentRun.blind_mode),
@@ -176,18 +173,17 @@ export function useBacktestReplay(
       rawPricePrecision,
       rawTickSize,
     );
-    const displayTickSize = getBacktestDisplayTickSize(
-      currentRun.instrument,
-      Boolean(currentRun.blind_mode),
-      currentRun.normalized_reference_price,
-      rawPricePrecision,
-      rawTickSize,
-    );
+    // Keep chart formatting on a decimal minMove. A Blind transform scales
+    // the executable tick by 100 / referencePrice, which can produce a
+    // reciprocal with prime factors other than 2 and 5 and crash Lightweight
+    // Charts' price-scale tick calculator. Simulation controls still use the
+    // exact transformed tick separately.
     chart.getSeries().applyOptions({
-      priceFormat: displayPrecision === priceFormat.precision
-        && displayTickSize === priceFormat.minMove
-        ? priceFormat
-        : { type: 'price', precision: displayPrecision, minMove: displayTickSize },
+      priceFormat: {
+        type: 'price',
+        precision: displayPrecision,
+        minMove: 10 ** -displayPrecision,
+      },
     });
     chartControllersRef.current.set(tabId, chart);
     const snapshot = snapshotsRef.current.get(tabId);
