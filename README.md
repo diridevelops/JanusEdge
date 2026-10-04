@@ -12,6 +12,7 @@ Janus Edge is an open-source, self-hosted trading journal built to help you turn
 - **Track performance over time** with dashboard metrics, equity curve, drawdown, and tag-based analysis
 - **Study trading patterns** through calendar review, time-of-day analysis, and deeper analytics
 - **Test what-if scenarios** with Monte Carlo simulations and stop-management tools
+- **Replay historical markets** with Dukascopy candles or imported HistData CSVs, simulated orders, positions, and saved chart layouts
 - **Back up and restore your data** with portable export and merge-based restore support
 
 ## Installation
@@ -48,6 +49,7 @@ This starts:
 
 - the React frontend
 - the Flask backend
+- the Backtest preparation and cache-recovery worker
 - MongoDB
 - MinIO
 
@@ -95,6 +97,14 @@ uv sync
 uv run flask run --port 5000
 ```
 
+In a separate terminal, start the Backtest preparation and cache-recovery
+worker from the backend directory:
+
+```bash
+cd backend
+uv run python -m app.backtests.worker
+```
+
 Run the frontend locally:
 
 ```bash
@@ -132,7 +142,7 @@ cd ../frontend
 npm install
 ```
 
-After that, restart the Flask backend and Vite frontend if they were already running.
+After that, restart the Flask backend, Backtest worker, and Vite frontend if they were already running.
 
 ## Documentation
 
@@ -142,11 +152,12 @@ Recommended starting points:
 
 - [Getting Started](./docs/getting-started.md)
 - [Usage Guide](./docs/usage.md)
-- [Troubleshooting](./troubleshooting.md)
+- [API Reference](./docs/api.md)
+- [Troubleshooting](./docs/troubleshooting.md)
 
 ## Project Structure
 
-- `backend/`: Flask API, MongoDB repositories, CSV import logic, analytics, and media handling
+- `backend/`: Flask API, MongoDB repositories, trade and market-data imports, interactive Backtest preparation and replay, analytics, and media handling
 - `frontend/`: React, TypeScript, and Vite single-page application
 - `trade_examples/`: sample CSV files for import testing
 - `docs/`: long-form contributor and operator documentation

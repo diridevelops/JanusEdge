@@ -1,5 +1,3 @@
-**/backtest_spec.md
-
 .vscode/*
 !.vscode/settings.json
 !.vscode/tasks.json

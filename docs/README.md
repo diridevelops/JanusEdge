@@ -7,7 +7,7 @@ This folder contains the long-form project documentation for the repository.
 - [Getting Started](./getting-started.md)
   Local setup options, Docker Compose usage, mixed local plus Docker workflow, update steps for existing clones, and service URLs.
 - [Usage Guide](./usage.md)
-  A non-technical walkthrough of every main section of the app and the most common daily workflows.
+  A non-technical walkthrough of the Real and Backtest workspaces, including Dukascopy and manual HistData runs, replay, backup, and daily workflows.
 - [Architecture Overview](./architecture/architecture.md)
   High-level system structure, runtime topology, core data flows, and the full system-level diagram set.
 - [Backend Architecture](./architecture/backend.md)
@@ -17,7 +17,7 @@ This folder contains the long-form project documentation for the repository.
 - [Database Architecture](./architecture/database.md)
   MongoDB collections, major document shapes, relationships, indexes, backup and restore implications, and the full database diagram set.
 - [API Reference](./api.md)
-  HTTP endpoints exposed by the Flask backend, including auth requirements, request shapes, and inferred responses.
+  HTTP endpoints exposed by the Flask backend, including trade conversion lookup and the Backtest run, replay, cache recovery, simulation, and backup contracts.
 - [Configuration](./configuration.md)
   Environment files, backend and frontend configuration variables, and development versus production notes.
 - [Deployment](./deployment.md)

@@ -9,7 +9,8 @@ The default development database names visible in code are:
 - `janusedge` for development
 - `janusedge_test` for tests
 
-Media binaries are not stored in MongoDB. They are stored in MinIO, while MongoDB keeps the related metadata in the `media` collection.
+Media binaries, imported market-data partitions, and Backtest candle objects
+are stored in MinIO. MongoDB stores their metadata and user/run references.
 
 ## Collection Relationship Diagram
 
@@ -25,6 +26,11 @@ graph TB
   Media[(media)]
   MarketDatasets[(market_data_datasets)]
   MarketBatches[(market_data_import_batches)]
+  BacktestRuns[(backtest_runs)]
+  BacktestCache[(backtest_candle_cache)]
+  ManualDatasets[(manual dataset heads and revisions)]
+  Simulation[(simulation records)]
+  ChartState[(chart workspaces and drawings)]
   Audit[(audit_logs)]
 
   Users --> Accounts
@@ -36,6 +42,9 @@ graph TB
   Users --> Media
   Users --> Audit
   Users --> MarketBatches
+  Users --> BacktestRuns
+  Users --> BacktestCache
+  Users --> ManualDatasets
   Accounts --> Executions
   Accounts --> Trades
   Batches --> Executions
@@ -43,6 +52,8 @@ graph TB
   Trades --> Executions
   Trades --> Media
   MarketBatches --> MarketDatasets
+  BacktestRuns --> Simulation
+  BacktestRuns --> ChartState
 ```
 
 ## Collections Present In The Codebase
@@ -60,8 +71,32 @@ The backend explicitly uses these MongoDB collections:
 | `tags` | User-defined trade tags |
 | `market_data_datasets` | Metadata for stored tick and candle Parquet datasets |
 | `market_data_import_batches` | Progress and result metadata for tick-data imports |
+| `backtest_runs` | Run settings, source manifest, progress, cursor, and recovery state |
+| `backtest_preparation_jobs` | Durable, leased preparation and random-period selection jobs |
+| `backtest_candle_cache` | User-scoped Dukascopy cache metadata and date-level coordination leases |
+| `backtest_manual_dataset_heads` | Active manual-import revision per user and instrument |
+| `backtest_manual_dataset_revisions` | Immutable HistData revision manifests and coverage |
+| `backtest_simulation_operations` | Idempotent journal of committed simulation operations |
+| `backtest_simulation_orders` | Versioned working and completed simulation orders |
+| `backtest_simulation_positions` | Versioned open and closed simulated positions |
+| `backtest_simulation_cost_profiles` | Versioned execution-cost settings per run |
+| `backtest_chart_tabs` | Legacy tab records retained for workspace migration |
+| `backtest_chart_workspaces` | Revisioned chart layout and panel metadata |
+| `backtest_drawing_states` | Saved drawing payloads per run and interval |
+| `backtest_notices` | Dismissible preparation result notices |
 | `audit_logs` | Audit trail records, currently including import events |
 | `media` | Metadata for trade-related media stored in MinIO |
+
+Backtest fills are stored as extended records in `executions`, linked to the
+run, operation sequence, order, and simulated position/trade. Readers expose
+run-owned simulation records only through the committed sequence and active
+reset generation.
+
+Backtest candle bytes live in MinIO rather than MongoDB. Dukascopy run manifests
+refer to normalized one-minute user-scoped cache objects; `backtest_candle_cache`
+tracks their cache keys, state, and leases. HistData imports use separate
+user-scoped immutable revision manifests and candle objects. A run pins its
+source references and does not contain a second candle copy.
 
 ## Major Document Shapes
 
@@ -308,6 +343,7 @@ Notes:
 
 - One `users` document owns many `trade_accounts`, `import_batches`, `executions`, `trades`, `tags`, `media`, and `audit_logs`.
 - One `users` document owns many `auth_refresh_sessions` and market-data import batches.
+- One `users` document owns many Backtest runs, Dukascopy cache references, and manual dataset heads/revisions.
 - One `trade_accounts` document can be referenced by many `executions` and `trades`.
 - One `import_batches` document can produce many `executions` and `trades`.
 - One `trades` document can reference many `executions` through `execution.trade_id`.
@@ -322,9 +358,12 @@ trades, tags, tag categories, audit logs, market-data import batches, and media
 metadata. It also removes all MinIO media objects under the user's object-key
 prefix.
 
-`market_data_datasets` and their Parquet objects are shared across accounts and
-do not contain `user_id`, so they are intentionally preserved during account
-deletion.
+`market_data_datasets` and their Parquet objects are shared across accounts
+and do not contain `user_id`, so they are intentionally preserved during
+account deletion. The current account-deletion service does not include the
+new Backtest run/cache/revision collections or their MinIO candle objects;
+those can remain after deleting an account. Per-run deletion does clean its
+run-owned records while preserving the shared user-scoped candle cache.
 
 ## Backup And Restore Data Coverage Diagram
 
@@ -337,8 +376,13 @@ flowchart LR
   Trades[trades] --> Archive
   Executions[executions] --> Archive
   MediaMeta[media metadata] --> Archive
-  MarketCache[market_data_cache] --> Archive
+  MarketDatasets[imported market_data_datasets] --> Archive
   MediaFiles[media binaries from MinIO] --> Archive
+  BacktestRuns[ready and complete Backtest runs] --> Archive
+  Simulation[committed simulation and linked records] --> Archive
+  ChartState[workspaces, tabs, and drawings] --> Archive
+  DukascopyBytes[shared Dukascopy candle objects] -. excluded .-> Archive
+  ManualBytes[manual HistData candle objects] -. excluded .-> Archive
 ```
 
 ## Indexes And Constraints
@@ -351,7 +395,12 @@ Indexes are created in `backend/app/db.py`.
 - `trade_accounts (user_id, account_name)`
 - `import_batches (user_id, file_hash)`
 - `tags (user_id, name)`
-- `market_data_cache (symbol, interval, date)`
+- `market_data_datasets (symbol, dataset_type, timeframe, date)`
+- `backtest_candle_cache (user_id, cache_key)`
+- `backtest_manual_dataset_heads (user_id, instrument)`
+- `backtest_manual_dataset_revisions (user_id, instrument, created_at)`
+- `backtest_runs (user_id, created_at)` and portable source identity
+- run-scoped indexes for preparation jobs, simulation operations/entities, chart state, and notices
 
 ### Query-support indexes
 
@@ -379,6 +428,9 @@ Portable backups currently contain:
 - `manifest.json`
 - `data.json`
 - media binaries stored under `media/...`
+- format 1.1 Backtest metadata and committed state for ready/complete runs
+- imported market-data datasets and their Parquet objects, as before
+- no shared replay/conversion candle bytes, manual candle bytes, or source-cache object keys
 
 The exported JSON payload contains:
 
@@ -389,7 +441,8 @@ The exported JSON payload contains:
 - `trades`
 - `executions`
 - `media`
-- `market_data_cache`
+- `market_data_datasets`
+- `backtests` (format 1.1)
 
 Restore is merge-only into the authenticated destination user.
 
@@ -400,9 +453,15 @@ Current restore behavior visible in `backend/app/auth/backup_service.py`:
 - reuses tags by natural key
 - reuses import batches by `file_hash`
 - skips duplicate trades by stable fingerprint
-- upserts market-data cache by `symbol + interval + date`
+- upserts imported market-data datasets by their natural dataset key
+- binds restored run manifests to matching destination-owned candle cache entries when available
+- uses stable source identities to reuse restored Backtest runs and linked records
+- reports Backtest run `created` and `reused` counts
 
 It does not restore another user's identity, password hash, or JWT/session state.
+Format 1.0 archives remain supported without Backtest records. Missing
+Dukascopy data uses explicit cache recovery; missing manual candles require
+matching HistData re-upload. Opening a restored run does not start recovery.
 
 ## Complete Database Diagram Set
 

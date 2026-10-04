@@ -13,6 +13,7 @@ This guide explains how to use Janus Edge as a trader or journal user.
 - [Trades](#trades)
 - [Import Trades](#import-trades)
 - [Import Market Data](#import-market-data)
+- [Backtest Runs](#backtest-runs)
 - [Add A Manual Trade](#add-a-manual-trade)
 - [Trade Detail Page](#trade-detail-page)
 - [Calendar](#calendar)
@@ -33,6 +34,7 @@ Janus Edge is built to help you:
 - track performance over time
 - study daily and monthly patterns
 - test what-if ideas around stop placement and trade outcomes
+- replay historical candles and manage simulated orders and positions
 - back up your data and restore it later
 
 ## Before You Start
@@ -64,6 +66,10 @@ Two important actions are not in the sidebar:
 
 - Import Trades: open it from the Trades page
 - New Manual Trade: open it from the Trades page
+
+The header's **Real / Backtest** switch changes the workspace. Backtest mode
+shows Backtest Runs and simulated trades; Real mode keeps your journal and
+manually entered or imported trades separate.
 
 ## Recommended First Workflow
 
@@ -285,6 +291,86 @@ If your file is named differently, fill the override fields before starting the 
 
 If imported market data does not appear later on trade charts or on the What-if page, the most common cause is that the filename-derived raw symbol did not match the symbol family you expected.
 
+## Backtest Runs
+
+Backtest Runs provides an interactive one-minute historical replay. Switch the
+header to **Backtest**, open **Backtest Runs**, and select **New run**. Choose
+**Dukascopy** to prepare data from the supported instrument catalog or **Manual
+import** to use HistData CSVs. The instrument picker searches without regard to
+case or separators, so `EURUSD` matches `EUR-USD`; it preserves the canonical
+selected symbol.
+
+### Dukascopy runs
+
+Choose an instrument and either a date range or a random period. The date range
+uses the configured display timezone and must be shorter than one calendar
+year. Random periods are 1, 3, 6, or 12 months. Preparation runs in the
+background; the run list shows progress and opens the replay when the run is
+ready. The shared per-user candle cache reuses downloaded UTC dates across
+runs, including known empty dates, and fetches only cache misses.
+
+### Manual import runs
+
+Choose **Manual import**, then select an instrument configured in Settings.
+The form keeps the same balance, risk, blind-mode, execution-cost, warm-up, and
+period fields as Dukascopy mode. It accepts one or more headerless HistData
+one-minute CSV files with semicolon-separated columns in this order:
+
+```text
+DateTime Stamp;Bar OPEN Bid Quote;Bar HIGH Bid Quote;Bar LOW Bid Quote;Bar CLOSE Bid Quote;Volume
+```
+
+The timestamp is interpreted as fixed UTC−5 with no daylight-saving change.
+Bid OHLC values are used directly as replay prices, and the supplied volume is
+retained. After file selection, the form shows the file date range and the
+combined cached/uploaded coverage. You can also create a run from an existing
+manual import without uploading the files again. Date choices include only
+dates containing candles. Random selection uses imported dates; if the chosen
+duration exceeds the available history, it uses the full imported range.
+Warm-up uses earlier candles from the same imported dataset.
+
+Manual imports are merged by timestamp. If an upload conflicts with cached
+candles, Janus Edge shows the affected dates and asks before replacing those
+timestamps. Confirming creates a new dataset revision; runs already created
+from an earlier revision keep their original data. The generated Backtest
+account label has a `-manual` suffix. For non-USD quote currencies, a fallback
+USD-per-quote-unit rate is available for use when eligible historical
+conversion data cannot be found.
+
+### Replay controls and simulated positions
+
+The replay advances through one-minute candles. Playback speeds are 1×, 2×, 5×,
+15×, and 30×. Use the transport buttons or the keyboard: Left Arrow steps back,
+Right Arrow steps forward, and Space toggles play/pause. Arrow-key steps use
+the selected speed's step size (one candle at 1×); the step controls remain
+available at the latest candle and clamp to the available replay bounds.
+Shortcuts are ignored while editing text or using a control that accepts
+keyboard input. Replay timestamps use the configured display timezone and a
+format such as `Mon Sep 21 2026, 13:45`. Blind mode hides identifying dates and
+renders prices relative to the starting reference.
+
+The chart workspace can contain multiple charts with saved intervals, tabs,
+layouts, and drawings; every chart shares the run's replay cursor. Supported
+chart intervals are 1m, 5m, 15m, and 1h. A chart only uses candles revealed by
+the replay. A linked Backtest trade's detail chart reads the run's source data
+and ends at the furthest candle reached, even if you rewind the replay.
+
+When an entry fills in the same direction on the same instrument as an open
+position, it scales into the oldest matching position. The displayed entry is
+the lot-weighted average and its existing stop and target remain in place.
+Opposite-side fills continue to scale positions out FIFO. Closed trade details
+show the average entry and every execution.
+
+### Missing replay data
+
+Opening a run does not automatically download missing data. If a Dukascopy
+cache entry is missing or unreadable, the replay lists the affected
+instrument/date pairs. Choose **Download missing data** to restore only those
+entries. The refreshed candle history may differ; the replay shows a
+dismissible warning while preserving saved orders, fills, positions, and
+balance. A missing manual-import revision must be restored by uploading the
+original HistData CSV files for that run.
+
 ## Add A Manual Trade
 
 Open the Trades page and click New Trade.
@@ -307,11 +393,17 @@ You can enter:
 
 After saving, the app opens the new trade detail page automatically.
 
-For configured forex pairs, the entry and exit fields use that pair's pipette
-precision. The trade stores signed pips and native quote-currency P&L while
-`gross_pnl` and `net_pnl` remain USD values for dashboards and analytics. When
-the quote currency is not USD, enter the applicable `USD per 1 [quote currency]`
-conversion rate; USD-quoted pairs use a rate of 1 automatically.
+For an instrument in the Settings sizing table, the form accepts its canonical
+symbol or a slash/dash alias and saves the canonical symbol while retaining
+the entered text as `raw_symbol`. The row supplies contract size, lot limits,
+tick size, and price precision. The trade stores signed native quote-currency
+P&L while `gross_pnl` and `net_pnl` remain USD values for dashboards and
+analytics. If the quote currency is not USD, the form looks up a completed
+one-minute conversion candle at or before the exit time and pre-fills the
+USD-per-quote-unit rate when available. You can edit the rate; if no historical
+rate is available, enter one manually to submit. USD quotes use a rate of 1.
+Legacy Forex and futures entry remain supported when no Settings sizing row
+matches.
 
 ## Trade Detail Page
 
@@ -631,17 +723,26 @@ only gross-flat trades classified as breakeven.
 
 ### Symbol Mappings
 
-The Symbol Mappings page has separate Futures and Forex sections. Futures retain
-top-level base-symbol point values. Forex pairs use canonical `AAA/BBB` keys and
-define base currency, quote currency, pip size, price precision, and contract
-size. New forex contract sizes default to 100,000 base-currency units.
+The Symbol Mappings page includes Futures point values, legacy Forex mappings,
+and the CFD Instrument Sizing table. Futures retain top-level base-symbol point
+values. Legacy Forex pairs use canonical `AAA/BBB` keys and define base
+currency, quote currency, pip size, price precision, and contract size. New
+legacy Forex contract sizes default to 100,000 base-currency units.
 
-Each row defines:
+Each Futures row defines:
 
 - normalized base symbol
 - dollar value per point
 
-These mappings do not change which market-data dataset the backend reads.
+The CFD Instrument Sizing table defines canonical instrument, base unit, quote
+currency, tick/price precision, contract size, minimum lots, and lot increment.
+Use **Find an instrument** to search the pair, base, or quote field; case and
+separators such as dots, dashes, slashes, and spaces are ignored. Search does
+not correct misspellings or reorder characters.
+
+Futures point-value and legacy Forex mappings do not change which imported
+market-data dataset the backend reads. Use Market-Data Mappings for an explicit
+cross-symbol data lookup.
 
 ### Market-Data Mappings
 
@@ -676,6 +777,15 @@ This is useful for:
 
 The backup also includes stored market-data datasets currently present in the app, not only datasets referenced by exported trades.
 
+Backups use format 1.1 and also include ready and completed Backtest runs with
+their committed orders, positions, fills, linked trades/accounts, and saved
+chart state. Replay and conversion candle bytes are excluded. When a run is
+restored into another Janus Edge instance, destination cache entries are reused
+when available; missing Dukascopy dates use the explicit download-recovery
+action, and missing manual data requires re-uploading the original CSV files.
+Restoring the same archive again reuses imported Backtest runs. Existing 1.0
+archives remain supported.
+
 #### Restore Backup
 
 Use Restore Backup to merge a previous ZIP backup into your current account.
@@ -709,7 +819,9 @@ password. The new username must be unique and existing sessions remain active.
 To delete the account, enter the current password and type the current
 username exactly. Deletion is permanent and removes the login, trades,
 executions, settings, tags, import records, audit records, and media. Shared
-market-data datasets are retained because they can be used by other accounts.
+imported market-data datasets are retained because they can be used by other
+accounts. The current endpoint does not remove Backtest run/cache/revision
+records or their candle objects, so those may remain after account deletion.
 Export a backup before deleting if the data may be needed later.
 
 ## Common Tasks

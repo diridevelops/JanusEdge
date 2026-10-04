@@ -10,6 +10,7 @@ The backend is a Flask application in `backend/` that provides the repository's 
 - trade CRUD and search
 - analytics aggregation and Monte Carlo simulation
 - tick-data import, candle generation, and market-data retrieval
+- Backtest run preparation, shared candle-cache management, interactive simulation, and chart state
 - media upload and download helpers
 - portable backup export and restore
 
@@ -33,6 +34,7 @@ graph TB
 		Analytics["/api/analytics"]
 		Media["/api/trades/:id/media"]
 		WhatIf["/api/whatif"]
+		Backtests["/api/backtest"]
 	end
 
 	subgraph Services
@@ -45,6 +47,7 @@ graph TB
 		AnalyticsSvc[Analytics service]
 		MediaSvc[Media service]
 		WhatIfSvc[What-if service]
+		BacktestSvc[Backtest service + durable worker]
 	end
 
 	subgraph Persistence
@@ -62,6 +65,8 @@ graph TB
 	MarketSvc --> TickDataSvc
 	TickDataSvc --> MinIO
 	TickDataSvc --> Mongo
+	BacktestSvc --> Mongo
+	BacktestSvc --> MinIO
 	MediaSvc --> MinIO
 	AuthSvc --> MinIO
 	AuthSvc --> AccountDeletionSvc
@@ -90,7 +95,10 @@ On startup, the backend does the following:
 7. Attempts to initialize MinIO storage and create the configured media and market-data buckets.
 8. Attempts to create MongoDB indexes through `app/db.py`.
 
-If MinIO is unavailable, the app logs a warning and continues booting, but media uploads and tick-data backed market-data reads will not work.
+If MinIO is unavailable, the app logs a warning and continues booting, but
+media uploads, imported-market-data reads, and Backtest candle reads will not
+work. Backtest preparation and recovery are handled by the separate
+`app.backtests.worker` process, not by the Flask request worker.
 
 ## Blueprint Modules
 
@@ -106,6 +114,7 @@ The current backend registers these blueprints:
 | `app/accounts/` | `/api/accounts` | Trade-account listing and update |
 | `app/tags/` | `/api/tags` | Tag CRUD |
 | `app/market_data/` | `/api/market-data` | OHLC retrieval and caching |
+| `app/backtests/` | `/api/backtest` | Dukascopy and manual run creation, cache/recovery, replay candles, simulation, chart workspace, and drawings |
 | `app/analytics/` | `/api/analytics` | Summary metrics, chart data, Monte Carlo |
 | `app/media/` | `/api` | Media routes live at `/api/trades/:id/media` and `/api/media/:id` |
 | `app/whatif/` | `/api/whatif` | Stop analysis and what-if simulation |
@@ -248,6 +257,33 @@ places the suggestion one inferred tick beyond that excursion's extreme. Tick
 size is inferred from the smallest positive same-day increment found across
 OHLC prices, with a fallback of `0.01` when no increment can be inferred.
 
+## Backtest Preparation And Replay
+
+`app/backtests/` owns a durable MongoDB preparation worker and the interactive
+replay API. Dukascopy data is fetched through the pinned downloader dependency's
+in-memory aligned BID/ASK candle API. Its shared HTTP fetcher coordinates
+request pacing and retries rate limits with `Retry-After`; JanusEdge calculates
+component-wise midpoint OHLC and its quoted-liquidity volume interpretation.
+
+Normalized one-minute candles are stored in a private per-user shared cache by
+source/cache version, instrument, and UTC date. The cache records empty dates
+too, and database leases coordinate concurrent misses. A run keeps a
+metadata-only source manifest, replay coverage, and source references; it does
+not store a second candle snapshot. Conversion instruments use the same cache.
+Manual HistData imports use separate user-scoped, immutable dataset revisions;
+CSV timestamps are interpreted in fixed UTC−5 without DST, bid OHLC and
+supplied volume pass through, and new data replaces overlapping timestamps
+only after conflict confirmation.
+
+Replay orders, positions, fills, costs, operation commits, cursor/high-water
+state, chart workspace, tabs, and drawings are persisted in run-scoped MongoDB
+records. A dedicated worker resumes preparation and cache recovery after
+restart. Rewinding does not reduce the cursor high-water mark; linked Backtest
+trade charts are bounded at that high-water candle. Settings backup 1.1 exports
+ready/complete run state and chart state, but not either candle source's bytes
+or cache objects. A restored Dukascopy run offers explicit cache recovery; a
+manual run requires matching CSV re-upload.
+
 ## Media Handling
 
 The backend supports image and video uploads for trades.
@@ -271,7 +307,11 @@ Current behavior:
 - account and tag reuse is based on natural keys
 - import batches reuse `file_hash`
 - trade duplicates are skipped using a stable fingerprint
-- all ready market-data datasets and referenced Parquet objects are included in the archive and restored idempotently by natural dataset key
+- all ready imported market-data datasets and referenced Parquet objects are included in the archive and restored idempotently by natural dataset key
+- format 1.1 also includes ready/complete Backtest runs and committed simulation, account, trade, execution, chart workspace, tab, and drawing state
+- Backtest candle bytes, shared cache objects, worker jobs/leases, unfinished runs, and source-instance object keys are excluded
+- portable run identities make repeated restore reuse the run and linked records; restore reports Backtest run created/reused counts
+- 1.0 archives remain importable without Backtest records
 
 ## Development Commands
 

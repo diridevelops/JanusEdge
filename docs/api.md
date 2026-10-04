@@ -62,7 +62,7 @@ Where the backend returns a serialized user object, the frontend currently expec
 - `POST /api/auth/logout` clears the current browser refresh session.
 - Changing the password revokes all persistent refresh sessions for that user.
 - Changing the username requires the current password, accepts 3–50 characters, enforces the unique username index, and keeps existing sessions active.
-- Account deletion requires the current password and an exact username confirmation. It permanently removes the user, refresh sessions, user-owned trading and journaling records, market-data import batches, and media objects under the user's MinIO prefix.
+- Account deletion requires the current password and an exact username confirmation. It permanently removes the user, refresh sessions, user-owned trading and journaling records, market-data import batches, and media objects under the user's MinIO prefix. Current cleanup does not include Backtest run/cache/revision records or their candle objects.
 - Account deletion preserves shared `market_data_datasets` records and their Parquet objects because those datasets are not user-owned.
 
 ## Client Config
@@ -153,7 +153,8 @@ If you need an exact stable schema here, treat it as TODO because the preview re
 | GET | `/api/trades` | Yes | List trades with filters and pagination | Query params: `account`, `symbol`, `side`, `tag`, `date_from`, `date_to`, `page`, `per_page`, `sort_by`, `sort_dir` | `{ trades, total, page, per_page, pages }` |
 | GET | `/api/trades/:trade_id` | Yes | Get one trade with executions | Path parameter `trade_id` | `{ trade, executions }` |
 | GET | `/api/trades/:trade_id/running-pnl` | Yes | Get a position-aware running gross P&L series from stored raw ticks | Path parameter `trade_id` | `{ source, point_value, empty_reason, points }` |
-| POST | `/api/trades` | Yes | Create a manual trade | Futures JSON uses `total_quantity`; configured forex JSON uses `lot_size`, `entry_price`, `exit_price`, and optional `quote_to_usd_rate` (required when the quote currency is not USD), plus optional `fee`, `initial_risk`, `account`, `tags`, and `notes` | `{ trade }` |
+| GET | `/api/trades/conversion-rate` | Yes | Resolve a manual trade's historical quote-currency conversion | Query params: `symbol`, timezone-aware ISO `event_time` | `{ available, canonical_symbol, quote_currency, quote_to_usd_rate, rate_time, route, reason }` |
+| POST | `/api/trades` | Yes | Create a manual trade | Futures JSON uses `total_quantity`; configured Settings instruments use `lot_size`, `entry_price`, `exit_price`, and an optional `quote_to_usd_rate` override, plus optional `fee`, `initial_risk`, `account`, `tags`, and `notes` | `{ trade }` |
 | PUT | `/api/trades/:trade_id` | Yes | Update journaling and risk fields on a trade | JSON may include `fee`, `fee_source`, `initial_risk`, `strategy`, `pre_trade_notes`, `post_trade_notes`, `tag_ids`, `wish_stop_price`, `target_price` | `{ trade }` |
 | POST | `/api/trades/:trade_id/detect-wish-stop` | Yes | Detect a suggested wishful stop from stored 1-minute OHLC data for the trade day | Path parameter `trade_id` | `{ wish_stop_price }` |
 | DELETE | `/api/trades/:trade_id` | Yes | Delete a trade and related data | Path parameter `trade_id` | `{ "message": "Trade deleted." }` |
@@ -196,12 +197,27 @@ If you need an exact stable schema here, treat it as TODO because the preview re
 
 ### Symbol mappings
 
-Futures mappings remain top-level for backwards compatibility. Forex mappings
-are nested under `symbol_mappings.forex` and use canonical `AAA/BBB` keys:
+Futures point-value mappings remain top-level for backwards compatibility.
+Legacy Forex mappings are nested under `symbol_mappings.forex` and use
+canonical `AAA/BBB` keys. Settings instrument sizing rows are nested under
+`symbol_mappings.instruments` and keyed by canonical catalog symbols:
 
 ```json
 {
   "MES": { "dollar_value_per_point": 5 },
+  "instruments": {
+    "EUR-USD": {
+      "base_currency": "EUR",
+      "quote_currency": "USD",
+      "quote_currency_unit_scale": 1,
+      "pip_size": 0.0001,
+      "tick_size": 0.00001,
+      "contract_size": 100000,
+      "min_lots": 0.001,
+      "lot_increment": 0.001,
+      "supported_for_simulation": true
+    }
+  },
   "forex": {
     "EUR/USD": {
       "base_currency": "EUR",
@@ -214,10 +230,35 @@ are nested under `symbol_mappings.forex` and use canonical `AAA/BBB` keys:
 }
 ```
 
+The Settings UI derives the accepted price precision from `tick_size`; rows
+without complete sizing data remain unavailable for manual trade or Manual
+import simulation.
+
 `price_precision` is the number of decimal places accepted for manual entry.
 Forex P&L is calculated in the quote currency and converted with a rate that
 means USD per one unit of quote currency. USD-quoted pairs always use a rate of
 1. `contract_size` defaults to 100,000 for newly configured forex instruments.
+
+### Settings-mapped manual trades
+
+For a Settings-mapped instrument, `GET /api/trades/conversion-rate` resolves
+the case-insensitive canonical symbol, including slash/dash aliases, and
+returns a conversion quote for the supplied exit `event_time`. It uses the
+latest completed one-minute candle at or before that time, searching the event
+UTC date and up to seven earlier dates. The route may be direct, inverse, or a
+configured shortest multi-leg route. USD quote currency returns an identity
+rate of 1. The response includes `quote_currency_unit_scale`, `rate_time`, the
+per-leg `route`, and an `available` flag; an unavailable route returns a
+reason with a null rate.
+
+When a Settings sizing row matches, `POST /api/trades` stores the canonical
+symbol and preserves the entered symbol as `raw_symbol`. The row supplies
+contract size, minimum lots, lot increment, tick size, and price precision.
+Native P&L is calculated in quote currency, then converted to USD. A supplied
+positive `quote_to_usd_rate` is an editable override and is accepted when
+historical lookup is unavailable. With no supplied rate, a valid historical
+rate is required. Incomplete or unsupported mapping rows fail validation.
+Legacy Forex and futures paths remain available when no Settings row matches.
 
 - `empty_reason` can currently be:
   - `missing_tick_data` when one or more required raw tick partitions are unavailable
@@ -238,6 +279,112 @@ means USD per one unit of quote currency. USD-quoted pairs always use a rate of
 ### Delete and restore note
 
 The restore route exists, but the current delete implementation permanently removes the trade document, related executions, and related media. In normal current usage, `POST /restore` is effectively a legacy or TODO endpoint.
+
+## Backtest
+
+All Backtest routes require authentication. Every run, candle read, simulation
+mutation, chart workspace, and drawing lookup is scoped to the owner derived
+from the access token.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/api/backtest/instruments` | List the current Dukascopy catalog |
+| GET | `/api/backtest/instrument-specs` | Read versioned instrument sizing defaults |
+| GET | `/api/backtest/manual-instruments` | List complete Settings mappings usable for Manual import |
+| GET | `/api/backtest/manual-datasets/:instrument` | Read manual dataset revision and date coverage |
+| POST | `/api/backtest/manual-import/preview` | Preview HistData files and overlapping/conflicting dates without changing cache |
+| POST | `/api/backtest/runs` | Create a Dukascopy run; returns 202 while the worker prepares it |
+| POST | `/api/backtest/runs/manual` | Create a Manual import run from cached data and optional CSV files; returns 202 |
+| GET | `/api/backtest/runs` | List runs and preparation/deletion status |
+| GET | `/api/backtest/runs/:run_id` | Read owned run configuration, source manifest, cursor, and coverage |
+| POST | `/api/backtest/runs/:run_id/retry` | Retry an interrupted preparation job |
+| DELETE | `/api/backtest/runs/:run_id` | Begin confirmed run cleanup; returns 202 while cleanup is pending |
+| GET | `/api/backtest/runs/:run_id/cache-status` | Check source data and recovery progress |
+| POST | `/api/backtest/runs/:run_id/cache-recovery` | Explicitly download only missing Dukascopy cache entries |
+| POST | `/api/backtest/runs/:run_id/manual-cache-recovery` | Restore a missing manual revision using matching original CSV files |
+| GET | `/api/backtest/runs/:run_id/candle-dates` | List UTC dates with candles in the run source |
+| GET | `/api/backtest/runs/:run_id/candles` | Read one UTC date of one-minute source candles |
+| GET | `/api/backtest/runs/:run_id/chart-candles` | Read the capped chart history for a linked Backtest trade |
+| PUT | `/api/backtest/runs/:run_id/replay-position` | Save the replay cursor before orders lock backward movement |
+| GET | `/api/backtest/runs/:run_id/simulation` | Read committed orders, fills, positions, costs, and balance |
+| POST | `/api/backtest/runs/:run_id/simulation/orders` | Submit a protected market or limit entry |
+| POST | `/api/backtest/runs/:run_id/simulation/orders/:order_id/cancel` | Cancel a working entry |
+| POST | `/api/backtest/runs/:run_id/simulation/positions/:position_id/close` | Close all or part of an open position |
+| PUT | `/api/backtest/runs/:run_id/simulation/positions/:position_id/protection` | Change an open position's stop or target |
+| PUT | `/api/backtest/runs/:run_id/simulation/risk` | Change the run's risk percent |
+| POST | `/api/backtest/runs/:run_id/simulation/advance` | Process every source candle through a later cursor |
+| POST | `/api/backtest/runs/:run_id/simulation/rewind` | Rewind under backward-navigation rules |
+| POST | `/api/backtest/runs/:run_id/simulation/reset` | Confirm and reset one run's simulation |
+| GET / PUT | `/api/backtest/runs/:run_id/chart-workspace` | Read or save the revisioned layout and chart tabs |
+| GET / PUT | `/api/backtest/runs/:run_id/drawings` | Read or save drawings for an interval |
+| GET | `/api/backtest/notices` | List undismissed preparation notices |
+| DELETE | `/api/backtest/notices/:notice_id` | Dismiss a preparation notice |
+
+### Run creation and data sources
+
+The Dukascopy `POST /api/backtest/runs` JSON body accepts `instrument`,
+`display_timezone`, `start_date` and `end_date`, or `period_selection: "random"`
+with `period_months` set to 1, 3, 6, or 12. Both forms accept `warmup_days`,
+`blind_mode`, `initial_balance_usd`, `risk_percent`, and `execution_costs`.
+Date ranges use local-day boundaries in the supplied display timezone and are
+converted to UTC for storage. A durable worker prepares the run asynchronously.
+
+The Manual import form uses `POST /api/backtest/manual-import/preview` with
+multipart `instrument` and one or more `files`. HistData files contain
+headerless, semicolon-separated M1 timestamps, bid OHLC, and volume. The
+timestamp is interpreted at fixed UTC−5 without daylight-saving adjustments.
+Preview returns the uploaded/combined date coverage and overlap/conflict
+details without modifying cached data.
+
+`POST /api/backtest/runs/manual` accepts multipart `settings` (JSON) and
+optional `files`. The settings object includes the common run fields plus
+`instrument`, optional `expected_dataset_revision`, `confirm_overwrite`, and
+`quote_to_usd_fallback_rate`. The chosen instrument must have complete Settings
+sizing data. Files can be omitted when a prior manual import exists. When
+conflicts are confirmed, incoming rows replace old values at those timestamps
+and the timestamp union is saved as a new immutable revision; previous runs
+stay pinned to their original revision. Only dates with imported candles can
+be selected. Random selection chooses imported dates and uses the full imported
+span if it exceeds the requested duration. Warm-up reads earlier bars from the
+same pinned dataset. The fallback rate means USD per one quote-currency unit;
+it is used only when eligible historical conversion data is unavailable.
+
+### Cache, chart, and simulation behavior
+
+Dukascopy candles are stored in a private per-user shared cache keyed by cache
+version, instrument, and UTC date. A run stores references and replay coverage,
+not a separate candle copy. Overlapping runs reuse cached dates, including
+known empty dates. Opening a run checks cache availability but does not start
+downloads. The owner must call `cache-recovery`; recovery fetches only missing
+replay or conversion entries. If refreshed candles differ, committed orders,
+fills, positions, and balance are retained and the run reports a changed
+history warning.
+
+`GET /api/backtest/runs/:run_id/chart-candles` accepts UTC `start`, exclusive
+`end`, and `interval=1m|5m|15m|1h`, returning `{ candles: [...] }` with
+`time_ms`, `open`, `high`, `low`, `close`, and `volume`. It caps results at the
+run's furthest reached candle plus one minute, even after rewinding. Larger
+bars aggregate only included one-minute data in UTC buckets, so the last bar
+can be partial. Linked Backtest trade charts use this endpoint; other trade
+charts retain their existing source.
+
+Simulation mutations include `client_operation_id` and `expected_revision`.
+Repeating an operation id with the same request is idempotent; stale revisions
+conflict. A same-direction entry that fills on the same instrument scales into
+the oldest open position, moves the weighted average entry, and retains its
+stop and target. Opposite-side entries reduce exposure FIFO.
+
+## Settings backups
+
+Export format 1.1 includes ready and completed Backtest runs with committed
+simulation state, linked accounts/trades/executions, chart workspace/tabs, and
+drawings. It excludes Dukascopy and manual replay candle bytes, shared cache
+objects, unfinished runs, and worker state. Existing imported-market-data
+dataset export is unchanged. Restore accepts 1.0 archives without Backtest
+records, reuses runs and links when the same archive is restored again, and
+reports Backtest run created/reused counts. On another instance, existing
+destination cache entries are reused; missing Dukascopy dates require explicit
+download recovery and missing manual data requires matching CSV re-upload.
 
 ## Accounts
 
