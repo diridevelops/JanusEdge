@@ -14,15 +14,19 @@ The current workspace selection for a user.
 
 Real remains the default for existing users and existing records. Every trade-facing query uses the active mode and excludes records from the other mode. Existing trade-account documents without a mode remain Real during migration.
 
+## Configured Manual Trade Instrument and Conversion Snapshot
+
+An ordinary Real manual `Trade` created from a Settings mapping retains the canonical configured `symbol` and the user's entered `raw_symbol`. The saved calculation snapshot includes `base_currency`, `quote_currency`, `pip_size`, `price_precision`, `contract_size`, `pip_value_per_standard_lot`, `tick_size`, `min_lots`, and `lot_increment`, together with `native_pnl`, `native_pnl_currency`, `quote_to_usd_rate`, and `quote_currency_unit_scale`. Conversion provenance is stored in `instrument_mapping_source`, `conversion_rate_source` (`identity`, `historical`, or `manual`), `conversion_rate_time`, and `conversion_route`. Historical conversion uses completed one-minute route candles no later than exit time, searched on the event UTC date and preceding seven UTC dates. The saved values preserve the Settings sizing rules and rate used at creation if mappings later change.
+
 ## BacktestRun
 
-One user-owned replay request and the saved one-minute candle selection for that request. Store run metadata in MongoDB. The run references its immutable candle artifact in MinIO.
+One user-owned replay request and its metadata-only manifest of immutable shared candle references. Store run metadata in MongoDB; candle bytes remain in the user-scoped source cache or imported manual dataset.
 
 | Field | Type | Description |
 |---|---|---|
 | id | ObjectId/string | Run identity. |
 | user_id | ObjectId | Authenticated owner. |
-| instrument | string | Exact supported Dukascopy instrument code. |
+| instrument | string | Canonical Dukascopy catalog instrument or configured Settings instrument. |
 | instrument_metadata | object | Immutable calculation contract captured from current JanusEdge instrument mapping at run creation: instrument type, base/quote currencies, pip size, price precision, and contract size (100,000 base units per standard lot when no pair-specific override exists). |
 | requested_start_date | local date/null | Inclusive manual or worker-selected calendar date; null while random selection is pending. |
 | requested_end_date | local date/null | Inclusive manual or worker-selected calendar date; null while random selection is pending. |
@@ -33,22 +37,28 @@ One user-owned replay request and the saved one-minute candle selection for that
 | risk_percent | decimal | Per-entry risk budget as a percentage of current balance; defaults to 1.0. USD budget is `current_balance_usd * risk_percent / 100`. Used for the default one-standard-lot stop distance and optional auto-sizing. |
 | normalized_reference_price | number/null | For a ready blind run, the open of the first available candle at or after the replay start; null for non-blind or unresolved runs. |
 | selection_as_of_date | local date/null | Fixed “yesterday” cutoff captured in the configured display timezone when a random request is accepted. |
-| display_timezone | IANA timezone | Timezone used for random candidate dates, warm-up calculation, and conversion of selected date boundaries to UTC. |
-| warmup_start_date | local date | Calendar date one month before `requested_start_date`, clamped to the final valid day of that preceding month. |
-| context_start_utc_ms | integer | Inclusive UTC instant at the start of `warmup_start_date`; earliest requested snapshot boundary. |
+| display_timezone | IANA timezone | Timezone used for Dukascopy candidate dates, Dukascopy warm-up calculation, and presentation; Manual import date calculations use HistData's fixed UTC−5 calendar. |
+| warmup_days | integer | Nonnegative shared-form setting for the number of local calendar days of source context requested before replay start; defaults to 0. |
+| context_start_date | local/source date | `requested_start_date - warmup_days`, using the configured display timezone for Dukascopy and HistData's fixed UTC−5 calendar for Manual import. |
+| context_start_utc_ms | integer | Inclusive UTC instant at the start of `context_start_date`; earliest requested source-data boundary. |
 | start_utc_ms | integer | Inclusive UTC start instant of the user-selected replay period. |
 | end_utc_ms | integer | Exclusive UTC end instant of the user-selected replay period. |
-| source | enum | dukascopy. |
-| source_side | enum | COMB, represented as component-wise midpoint OHLC. |
+| source | enum | `dukascopy` or `manual`. |
+| source_side | enum | Dukascopy: COMB represented as component-wise midpoint OHLC. Manual: BID. |
+| price_mode / volume_semantics | enum | Dukascopy: `combined_midpoint` and two-sided quoted liquidity. Manual: `imported_bid` and source-provided volume. |
+| manual_dataset_revision | ObjectId/string/null | Immutable manual dataset revision pinned by a manual-source run. |
+| manual_quote_to_usd_fallback | decimal/null | Optional editable USD per quote-currency unit used only if eligible historical conversion data is unavailable; absent for Dukascopy and USD quote currencies. |
+| portable_origin | object/null | Stable source user/run identity used to reuse a run and its links on repeated backup restore. |
 | source_interval_minutes | integer | Fixed at 1. |
+| price_precision / lot_precision | integer | Frozen price/quantity display and validation precision when supplied by the Settings instrument mapping. |
 | status | enum | selecting_period, preparing, ready, complete, or deleting. Failed/no-data runs are reported and deleted per the feature requirements. |
 | progress | object | Current preparation stage and a percentage when measurable; otherwise indicates indeterminate progress. |
-| account_id | ObjectId/null | The single associated Backtest account; null until a random start date has been found. |
+| account_id | ObjectId/null | The single associated Backtest account; null until the selected source period is resolved. |
 | preparation_job_id | ObjectId/string | The durable worker job associated with this run. |
-| snapshot | object | Immutable snapshot metadata described below. Present when ready or complete. |
+| snapshot | object | Backward-compatible API field containing the metadata-only candle manifest described below; present when ready or complete. Contains references, never replay candle bytes. |
 | coverage | object | Available candles, fully empty dates, and partial-gap summaries for the selected replay period only. Present when ready or complete. |
-| warmup_coverage | object | Available context candles and any empty dates or partial gaps in the preceding month; may be empty and does not affect readiness. Present when ready or complete. |
-| replay_cursor | object | Saved available-candle index and UTC timestamp into the immutable snapshot. Initialized to `snapshot.replay_start_source_index` and the first eligible replay candle in the same MongoDB update that marks the run ready. |
+| warmup_coverage | object | Available context candles and any empty dates or partial gaps in the requested warm-up window; may be empty and does not affect readiness. Present when ready or complete. |
+| replay_cursor | object | Saved current and furthest available-candle indexes/timestamps into the manifest's ordered candle references. Initialized to `snapshot.replay_start_source_index` and the first eligible candle when the run becomes ready. |
 | simulation_control | object | Bounded CAS fields: committed operation sequence, control revision, reset generation, whether an order has ever been accepted in the current generation, and nullable pending operation id. It shares the run document with the canonical replay cursor/status so a commit can advance the cursor, sequence, and completion state atomically. Full operation results and simulation entities remain separate documents. |
 | deletion_requested_at | UTC timestamp/null | Set when the owner confirms permanent deletion; the deleting state is the durable cleanup marker until associated resources are purged. |
 | deletion_requested_by | ObjectId/null | Authenticated owner who confirmed deletion. |
@@ -58,7 +68,7 @@ Invariants:
 
 - Unique ownership and run identity. Every lookup and mutation filters by both user_id and run id.
 - One Backtest account per resolved run, enforced by a unique user_id/run_id association. Random selection does not create an account until a candidate start date with candles is found.
-- One durable BacktestPreparationJob per selecting-period, preparing, ready, or complete run, enforced by a unique run_id association. Completed jobs remain with the immutable snapshot for the lifetime of the run. Deletion removes the job during cleanup; after that, the run's `deleting` status remains the durable marker until the rest of the purge completes and the run record is removed last.
+- One durable BacktestPreparationJob per selecting-period or preparing run, enforced by a unique run_id association. A completed job may remain with a ready or complete run, but it is transient and is not exported in a Settings backup. Cache recovery status, lease, and progress are durable on the run and reclaimed after worker restart. Deletion removes only run-owned job/state; source cache entries and manual revisions remain.
 - A random run remains in `selecting_period` with null dates and account until the worker finds a candle-bearing candidate and commits its final dates.
 - A blind run is immutable, requires `period_selection=random`, and retains raw candle/run values in storage and API responses; only rendered Backtest views apply the masking and normalization rules.
 - Pip size, price precision, contract size, base currency, and quote currency used by simulation are copied into the run and never re-read from mutable symbol mappings during replay.
@@ -66,15 +76,15 @@ Invariants:
 - Blind account labels contain the instrument and “blind”, omit dates, and use a short unique suffix when needed. Other runs retain their instrument/date-range labels.
 - The random selection cutoff is immutable across worker retries. Candidate starts are local dates from 2005-01-01 through the latest date whose clamped duration end is no later than the captured cutoff.
 - The selected inclusive end is the day before adding the configured calendar months with destination-month clamping. A probe verifies candles on the start date only; later selected-period gaps and empty dates continue through normal coverage and readiness rules.
-- A ready run always references one complete immutable snapshot spanning the requested context and replay boundaries and containing at least one candle in the selected replay period. Warm-up candles alone do not satisfy readiness.
-- `context_start_utc_ms` is calculated from the local calendar date one month before `requested_start_date`, with end-of-month clamping, before conversion to UTC. The selected replay date range and one-year validation do not include this extra month.
-- The snapshot never changes after the run is ready; refreshes create a new run and snapshot.
+- A ready run's manifest references every available source day spanning the requested context and replay bounds and contains at least one candle in the selected replay period. Warm-up candles alone do not satisfy readiness.
+- `context_start_utc_ms` is calculated from `requested_start_date - warmup_days` in the source's date convention, before conversion to UTC. The selected replay date range and one-year validation do not include this additional context.
+- The manifest and its cache-version/manual-revision references never change after readiness. New Dukascopy cache versions or manual imports do not retarget an existing run. Explicit recovery may bind refreshed contents for a missing reference; it preserves committed simulation state and discloses that source history may differ.
 - A selecting-period or preparing run may be retried or recovered after interruption without creating a second job, run, or account. Random year order, tried dates, and a pending probe are durable; completed empty probes are not counted again. Completed preparation UTC-date checkpoints are durable; only an incomplete date may need to be fetched again.
 - A deleting run is non-playable and cannot transition to ready. Its status is a temporary durable cleanup marker, not a soft-delete outcome; the run record is removed only after all run-owned resources have been physically purged.
 - Once deletion is requested, its account and trades may be excluded from Backtest views while cleanup is pending. This interim hiding is not completion. Cleanup is limited to the account identified by this run and the trades linked to that account.
-- Completed deletion leaves no run, account, preparation/replay/workspace/drawing records, linked trades or trade-owned dependent data, or objects under the run's MinIO prefix. The worker verifies the run prefix is empty before removing the run record and its deletion marker.
+- Completed deletion leaves no run, account, run-owned preparation/replay/workspace/drawing/simulation records, linked trades or trade-owned dependent data. Shared Dukascopy cache objects and manual dataset revision data remain available.
 - The run's status-ready transition, `snapshot.replay_start_source_index`, and initial cursor (index of the first available source candle at or after `start_utc_ms`, its timestamp, revision zero) are persisted together in the run document.
-- Cursor position is an index into the immutable ordered list of available one-minute candles, including warm-up candles. It may not point before `snapshot.replay_start_source_index`, at an unavailable candle, or later than the current replay position.
+- Cursor position is an index into the manifest's ordered list of available one-minute candles, including warm-up candles. It may not point before `snapshot.replay_start_source_index` or after the persisted furthest reached index. Recovery rebuilds indexes and maps saved times to the latest available candle at or before each saved timestamp.
 - The current position is persisted as the newest requested cursor, with server-side versioning or ordered writes preventing an older in-flight update from replacing a newer one.
 - All replay-cursor movement, order mutations, cancellations, cost-profile changes, and reset use the same run-level CAS operation gate. Each accepted action has a unique operation id and monotonically increasing sequence; the operation record and deterministic effects are persisted before the run's committed sequence advances. Orders, positions, and cost profiles are versioned records; readers select the latest version at or below the run's committed sequence and current reset generation. Do not overwrite the prior committed version while a mutation is pending. Recovery resumes an operation marked pending and retries return its original result.
 - `complete` is reached only after processing the final available replay-period candle, canceling pending entry orders, and closing all open exposure at that candle's close with costs. A completed run is inspectable but cannot accept orders or cursor movement. Reset atomically starts a new generation and returns to the first eligible replay candle; old-generation records become invisible immediately and are physically purged idempotently before the pending reset gate is cleared. The latest cost settings remain as run configuration.
@@ -93,39 +103,48 @@ Durable MongoDB job claimed by the separate preparation worker. MongoDB is both 
 | lease_owner | string/null | Worker identity currently holding the claim. |
 | lease_expires_at | UTC timestamp/null | Expiry after which another worker may atomically reclaim the job. |
 | attempt_count | integer | Number of worker claims. |
-| completed_utc_dates | array | Ordered checkpoints; each item records a UTC date, empty/data outcome, and staged MinIO object key when data exists. |
+| completed_utc_dates | array | Ordered checkpoints; each records a UTC date, empty/data outcome, and committed shared-cache reference when candles exist. |
 | selection | object/null | Random-selection mode, fixed cutoff, eligible date bounds, remaining years, current year, tried dates, pending probe, selected dates, and stable account id. Present until random selection is committed. |
-| staging_prefix | string | Run-scoped MinIO prefix containing completed per-date results until final snapshot assembly. |
+| manual_dataset_revision | ObjectId/string/null | Source revision pinned for a manual-source run. |
 | created_at / updated_at | UTC timestamps | Job lifecycle and checkpoint update times. |
 
-The worker atomically claims queued jobs or jobs with expired leases and renews its lease while working. A random job first chooses eligible years and dates without replacement, persists each pending candidate before probing it, and records empty attempts before moving on. It probes one COMB minute date result for every UTC date intersecting the candidate's local timezone day and counts a hit only for a candle inside that local day. It tries no more than ten distinct empty dates per year. Provider errors are terminal errors, not empty results. A hit commits the resolved dates, account id, and normal UTC replay/warm-up bounds before continuing through the regular preparation workflow. Normal preparation writes non-empty date candles to MinIO, then persists the date outcome (including empty) in `completed_utc_dates`. Checkpoints cover UTC dates intersecting `[context_start_utc_ms, end_utc_ms)`; empty or partial warm-up dates are completed normally. Non-USD quote currencies also require a pinned direct/inverse USD conversion series in the immutable artifact. On recovery it resumes persisted selection state, skips committed dates, and may repeat only a pending candidate or current incomplete preparation date. A completed job remains associated with its ready or complete run. No-data and terminal provider failure create a notice, delete the run/account/job, and remove staged data. No-data is determined only by the selected replay period, so warm-up candles alone do not make a run ready. If the run enters `deleting`, the worker must stop selection/preparation and resume idempotent deletion cleanup instead of creating an account or publishing a snapshot or ready state.
+The worker atomically claims queued jobs or jobs with expired leases and renews its lease while working. A random Dukascopy job probes candidate days as described in the feature contract. Normal preparation calls the per-day cache service, which reuses hit and empty entries and coordinates misses across workers, then checkpoints the reference/outcome; it does not write per-run staging data. Checkpoints cover the UTC dates intersecting `[context_start_utc_ms, end_utc_ms)`, including partial or empty warm-up dates. Non-USD Dukascopy quote currencies reference the required direct/inverse conversion series from the same shared cache. Manual jobs read only the run-pinned manual revision. On recovery, preparation resumes from durable selection/date checkpoints. A completed job remains associated with a ready or complete run. No-data and terminal provider failure create a notice and remove run/account/job state. If the run enters `deleting`, the worker stops publishing readiness and resumes idempotent cleanup.
 
-## BacktestCandleSnapshot
+## BacktestCandleManifest
 
-Immutable one-minute OHLCV selection for one run, stored as Parquet in MinIO.
+Metadata-only, immutable per-run description of the selected one-minute candle sequence. The existing `snapshot` response field continues to serialize this metadata shape; it contains references to shared cache data, not candle bytes.
 
 | Field | Type | Description |
 |---|---|---|
-| run_id | ObjectId/string | Owning run. |
-| object_key | string | Unique MinIO key under the user/run namespace. |
-| sha256 | string | Content checksum used to verify the selected data is unchanged. |
-| instrument | string | Exact source instrument. |
-| source_side | enum | COMB. |
-| price_mode | enum | combined_midpoint. |
-| volume_semantics | enum | two_sided_quote_liquidity, not executed trade volume. |
+| source | enum | `dukascopy` or `manual`. |
+| cache_version | string | Dukascopy COMB cache namespace or manual dataset format version. |
+| instrument | string | Canonical instrument for the source. |
+| source_side / price_mode / volume_semantics | enums | Dukascopy COMB midpoint and two-sided quoted liquidity, or imported bid OHLC and file volume. |
 | interval_minutes | integer | Fixed at 1. |
 | first_time_ms / last_time_ms | integers | UTC epoch-millisecond timestamps of available candles. |
-| context_start_utc_ms | integer | Inclusive lower UTC boundary requested for warm-up history. |
-| replay_start_source_index | integer | Index of the first available candle whose timestamp is at or after the selected replay start; required for a ready snapshot. |
+| context_start_utc_ms / start_utc_ms / end_utc_ms | integers | Inclusive warm-up boundary, inclusive replay start, and exclusive replay end. |
+| replay_start_source_index | integer | Index of the first available candle at or after replay start. Rebuilt if cache recovery changes timestamps. |
 | candle_count | integer | Number of available source candles. |
-| available_utc_dates | date array/index | UTC dates containing one or more source candles across the warm-up and replay periods for CandleKit’s day-oriented data source. |
+| available_utc_dates | date array/index | UTC dates containing one or more candles for the replay data source. |
 | gap_dates | date array | Selected replay-period dates with no candles; no rows are synthesized. |
 | warmup_gap_dates | date array | Warm-up dates with no candles; these are valid partial or absent context, not a preparation failure. |
 | partial_gap_summary | object | Summaries of missing one-minute source intervals, partitioned between replay-period coverage and warm-up coverage. |
-| fetched_at | UTC timestamp | Source acquisition completion time. |
-| fx_conversion_series | array of series refs | Optional immutable one-minute conversion instruments required to derive USD per quote-currency unit for the selected instrument. Each ref records instrument, direct/inverse direction, source bounds, and its immutable object key. |
+| days | array of cache references | Per source instrument/date/version, with cache key, content checksum, and empty-day outcome. Manual entries identify the pinned dataset revision and its day refs. |
+| fx_conversion_series | array of series refs | Direct/inverse conversion instruments and their one-minute date references in the shared source cache. |
 
-Each candle has a UTC timestamp in epoch milliseconds, open, high, low, close, and optional volume. For COMB, each midpoint OHLC field is the arithmetic mean of the corresponding BID and ASK field. The source does not synchronize the intraminute extrema, so midpoint high/low are estimates. Volume is the sum of bid and ask quoted liquidity and is not executed trade volume. Time rows are sorted, unique, and constrained to `[context_start_utc_ms, end_utc_ms)`. Warm-up rows before `start_utc_ms` are chart history only; they are visible as context at the initial cursor but cannot be selected as replay positions or counted as replayed candles. MinIO objects are addressed by user and run; shared market-data refresh operations never overwrite them.
+Rows are sorted and unique and constrained to `[context_start_utc_ms, end_utc_ms)`. Warm-up rows are context only and do not contribute to replay readiness/progress. Dukascopy cache references key by user, cache version, instrument, interval, side, and UTC date; empty days are cached too. The cache has no expiry, is isolated by user, and is never removed when a run is deleted. Manual dataset revisions are user-scoped and immutable; each revision refers to content-addressed manual candle-day objects. Existing runs stay pinned to their revision when later imports create a new active revision.
+
+## BacktestCandleCacheEntry
+
+Per-user shared cache record for one Dukascopy COMB instrument/date. The Mongo record tracks source/cache version, instrument, interval, side, UTC date, status (`loading`, `ready`, or `empty`), content-addressed MinIO object reference/checksum when non-empty, lease owner/expiry, and timestamps. A renewable lease prevents duplicate concurrent downloads. An unreadable or missing object is reported as unavailable rather than treated as an empty day; the user may explicitly request durable recovery. Shared objects are retained indefinitely and remain after run deletion.
+
+## ManualCandleDatasetRevision
+
+Immutable per-user HistData dataset revision for one configured Settings instrument. A dataset head identifies the active revision; each revision stores the sorted union of available source dates, candle count, per-date immutable cache references/checksums, source format/version, and import timestamp. Preview is read-only and reports available date coverage plus overlap/conflict dates. A confirmed merge creates new referenced date content and a new revision, with incoming rows winning timestamp conflicts; an existing run's revision is not mutated. HistData timestamps are interpreted at fixed UTC−5 without DST; bid OHLC and supplied volume are preserved directly.
+
+## PortableBacktestBackup
+
+Settings backup format 1.1 includes ready and complete runs and their committed linked records. Exported runs carry stable `portable_origin` source-user/source-run identity for idempotent reimport, minimal source/cache manifest metadata, and no candle bytes or source-instance object keys. Exported state includes linked Backtest accounts/trades/executions, committed simulation orders/fills/positions/cost profile, cursor and furthest timestamp, chart workspace/tabs, and drawings. Preparation/recovery jobs, leases, and unfinished runs are omitted. Restore accepts format 1.0 as a backup with no Backtest records and reports created/reused run counts. It binds references to destination-user cache entries when present; missing Dukascopy days use explicit recovery, and missing manual revisions require original CSV re-upload.
 
 ## BacktestAccount
 
@@ -137,8 +156,8 @@ The account selector record associated with exactly one BacktestRun. Store this 
 | user_id | ObjectId | Authenticated owner. |
 | workspace_mode | enum | backtest. Existing records default to real. |
 | backtest_run_id | ObjectId/string | Unique associated run. |
-| account_name | string | System-generated account value. For blind runs, include instrument and “blind” and omit dates. |
-| display_name | string | Non-blind: instrument and selected date range. Blind: instrument and “blind” with no date. Both use a short unique suffix when needed. |
+| account_name | string | System-generated account value. Manual-source runs include a `-manual` discriminator; blind runs include instrument and “blind” and omit dates. |
+| display_name | string | Non-blind Dukascopy: instrument and date range; manual: same generated label with `-manual`; blind: instrument and “blind” without dates. Labels use a short unique suffix when needed. |
 | starting_balance_usd | decimal | Run's initial USD balance, copied from BacktestRun for account-facing balance displays. |
 | risk_percent | decimal | Immutable per-entry risk percentage copied from BacktestRun. |
 | status | enum | active for a preparing, ready, or complete run; deleting while confirmed run cleanup is pending; removed when deletion completes. |
@@ -185,7 +204,7 @@ One market/limit entry, protective stop/target, or completed manual-close market
 | linked_position_id / oco_group_id | ObjectId/string/null | Filled-order position link and paired protective-order group. Manual-close orders link to the position being closed. |
 | submitted_at / updated_at | UTC timestamps | Lifecycle times. |
 
-FIFO opposing fills reduce existing open positions first; excess quantity opens a separately protected position. Same-side entries remain separate positions. Every entry stores both required protection prices. Protective orders activate only after the entry-fill candle is fully processed. If stop and target both trigger within one candle for the same OCO pair, the stop is selected deterministically. A manual close is a market exit executed at the close of the currently revealed cursor candle; in the same committed operation it cancels both linked protective orders and fully closes the remaining position quantity.
+At fill time, a same-direction entry attaches to the oldest open position on the instrument. It adds a distinct fill/execution, updates weighted entry/reference price, remaining and maximum lots, costs and risk, and retains the existing stop/target while resizing protection quantities. If no matching position remains open when it fills, the entry opens a new position with its own bracket. Opposing fills reduce existing positions FIFO; excess opens a separately protected reverse position. Each actual entry's submitted bracket is retained in its order/fill history. Protective orders activate only after the entry-fill candle is fully processed. If stop and target both trigger within one candle for the same OCO pair, the stop is selected deterministically. A manual close is executed at the current revealed candle close and atomically cancels both linked protective orders.
 
 ## BacktestFill
 
@@ -214,7 +233,7 @@ Entry and exit allocation executions are append-only. Replaying the same operati
 
 Current open exposure projection, owned by one run. Do not persist this as an open conventional `Trade`.
 
-Fields include stable id, reserved `simulated_trade_id`, user/run/account ids, reset generation, instrument, side, open lots, weighted entry price, linked entry-fill ids, immutable original stop/target prices, current stop-loss and take-profit order ids/prices, immutable initial risk in native quote currency and USD, entry conversion rate, realized partial-close P&L/costs accumulated so far, applied cost totals, pending Journal `tag_ids`, operation sequence/entity version, and open/update timestamps. Pip size, price precision, and contract size come from the run's immutable instrument metadata. Reductions create a new position version with updated remaining quantity/protection and accumulated partial-close results. A protection modification versions only the selected child order(s); initial risk and original bracket remain unchanged. An actual stop-price change adds the user's `stop-moved` tag id to the position once; the tag is copied to its conventional Trade when the position fully closes. A manual close exits the full remaining lots at the current revealed candle's close and cancels both child orders atomically. A full close creates exactly one existing `Trade` at the reserved id with status `closed`; associated Execution records already reference that id. Its run/generation/sequence metadata gates visibility to the committed simulation state. Stable ids and a unique run/generation/position constraint prevent duplication after operation retry/recovery.
+Fields include stable id, reserved `simulated_trade_id`, user/run/account ids, reset generation, instrument, side, open lots, maximum lots, weighted entry/reference prices, linked entry-fill ids, retained stop/target prices, current stop-loss and take-profit order ids/prices, initial risk in native quote currency and USD, entry conversion rate, realized partial-close P&L/costs accumulated so far, applied cost totals, pending Journal `tag_ids`, operation sequence/entity version, and open/update timestamps. Pip size, price precision, and contract size come from the run's immutable instrument metadata. Scale-in and reductions create a new position version with updated weighted entry, size, protection quantity, and accumulated partial-close results. A protection modification versions only the selected child order(s); initial risk and the existing bracket remain unchanged during scale-in. An actual stop-price change adds the user's `stop-moved` tag id to the position once; the tag is copied to its conventional Trade when the position fully closes. A manual close exits the full remaining lots at the current revealed candle's close and cancels both child orders atomically. A full close creates exactly one existing `Trade` at the reserved id with status `closed`; associated Execution records already reference that id. Its run/generation/sequence metadata gates visibility to the committed simulation state. Stable ids and a unique run/generation/position constraint prevent duplication after operation retry/recovery.
 
 While open, the latest committed position projects one chart indicator set per chart pane in its run, keyed by stable position id. The projection uses the weighted entry price, current active protection prices, remaining quantity, and `unrealized_pnl_usd` marked at the latest revealed candle close before hypothetical exit costs, using frozen instrument metadata and the latest completed quote-to-USD rate no later than that close. This P&L is derived display data, not persisted position state, and does not change current balance or closed-trade analytics. The filled entry price is read-only, while stop and target use the existing protection mutation. Indicator lines and controls are presentation state derived from BacktestPosition and its child orders, not persisted ChartDrawingState. Reload and navigation rebuild them from committed simulation state; a fully closed position has no active indicator set.
 
@@ -240,8 +259,9 @@ The shared playback position used by all chart tabs for one BacktestRun. Store d
 
 | Field | Type | Description |
 |---|---|---|
-| source_candle_index | integer | Index into the immutable snapshot's one-minute candle sequence, bounded below by `snapshot.replay_start_source_index`; warm-up indexes are not eligible replay positions. |
+| source_candle_index | integer | Index into the manifest's current ordered one-minute candle sequence, bounded below by `snapshot.replay_start_source_index`; warm-up indexes are not eligible replay positions. |
 | time_ms | integer | Timestamp of the selected source candle in UTC epoch milliseconds. |
+| furthest_source_candle_index / furthest_time_ms | integer | Persisted high-water mark for the furthest replay candle reached; remains unchanged by rewind and bounds linked Backtest trade charts. |
 | revision | integer | Monotonic version to reject stale writes. |
 | updated_at | UTC timestamp | Last persisted cursor update. |
 
@@ -358,8 +378,8 @@ Notices are visible on the run-list page until dismissed and do not cause failed
 ## Relationships
 
 - One user owns many BacktestRuns.
-- Each resolved BacktestRun has exactly one BacktestAccount and each ready run has one immutable BacktestCandleSnapshot. A random run has no account until its selection resolves.
-- Each selecting-period, preparing, ready, or complete BacktestRun has exactly one durable BacktestPreparationJob; completed jobs remain for the lifetime of their run. During deletion the job is physically removed as part of cleanup, while the run's `deleting` status remains the durable marker until all remaining resources are purged and the run record is removed last.
+- Each resolved BacktestRun has exactly one BacktestAccount and each ready run has one BacktestCandleManifest over shared source-cache references. A random run has no account until its selection resolves.
+- Each selecting-period or preparing BacktestRun has exactly one durable BacktestPreparationJob. A completed job may remain with a ready/complete run but is transient. Cache-recovery lease and progress are embedded in the run. Portable restores do not require preparation/recovery jobs until the user explicitly queues cache recovery.
 - Each BacktestAccount belongs to exactly one BacktestRun and may be referenced by zero or more trades through `trade_account_id`; those trades are removed with the account when that run is deleted.
 - Each BacktestRun has one durable ReplayCursor shared by all active chart tabs and one bounded simulation CAS gate; every cursor/order/cost/reset mutation shares its operation sequence.
 - Each BacktestRun stores its immutable starting USD balance and risk percentage. Auto-sizing is enabled by default in the order-panel UI; the user's sizing checkbox selects either risk-derived lots or a manual lot amount for each submitted entry.
@@ -367,7 +387,7 @@ Notices are visible on the run-list page until dismissed and do not cause failed
 - A fully closed simulated position produces exactly one conventional closed Trade under the run's BacktestAccount; open positions never appear as closed trades or in existing closed-only analytics.
 - Each BacktestRun has zero or one ChartWorkspaceLayout before first open and exactly one after initialization, and may have zero or more BacktestPreparationNotices for completed failures/no-data outcomes.
 - Each BacktestRun may have zero or more ChartDrawingState documents, one per interval.
-- A confirmed deletion moves the run and account to `deleting`; hiding them from normal Backtest views is only an interim state. The run's durable deleting state resumes cleanup after interruption. Cleanup physically removes all account-linked trades and their dependent data, every execution tagged to the run (including executions without a Trade link), the account, preparation job, replay cursor, simulation control and operation/order/fill/position/cost records, chart tabs/workspace, drawings, and every object under the run's MinIO prefix (including staged, snapshot, and unreferenced objects). After verifying no associated documents or MinIO objects remain, remove the run record and its deletion marker last. Repeated deletion and cleanup passes are safe.
+- A confirmed deletion moves the run and account to `deleting`; hiding them from normal Backtest views is only an interim state. The run's durable deleting state resumes cleanup after interruption. Cleanup physically removes all account-linked trades and dependent data, every execution tagged to the run, the account, preparation job, replay cursor, simulation control and operation/order/fill/position/cost records, chart tabs/workspace, and drawings. It MUST NOT delete shared Dukascopy cache entries, shared manual revision data, or their MinIO objects. Repeated deletion and cleanup passes are safe.
 - Real accounts and trades are excluded from Backtest queries; Backtest accounts are excluded from Real queries.
 
 

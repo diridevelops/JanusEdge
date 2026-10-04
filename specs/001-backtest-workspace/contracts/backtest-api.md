@@ -1,6 +1,6 @@
 # Backtest API Contract
 
-This contract describes the authenticated Flask API used by the React Backtest pages and CandleKit adapters. Route names are feature-local planning decisions; implementation should follow JanusEdge’s existing API prefix and error conventions.
+This contract describes the authenticated Flask API used by the React Backtest pages, Settings backup flow, and CandleKit adapters. Endpoints use JanusEdge's existing API prefix and error conventions.
 
 ## Authentication and ownership
 
@@ -22,6 +22,18 @@ Returns the current supported-instrument codes exposed by the pinned Dukascopy d
 
 If the catalog source is unavailable, return a service error and create no run or account. Run creation validates the submitted code against the same current catalog; a code not present in it uses the existing validation-error format.
 
+### GET /api/backtest/manual-instruments
+
+Returns the current user's supported Settings instrument mappings with complete sizing rules. The manual selector does not use the Dukascopy catalog. Rows include canonical instrument, base/quote currency, tick/price precision, contract size, minimum lot, lot increment, quote-unit scale, and whether a historical conversion route is supported.
+
+### GET /api/backtest/manual-datasets/{instrument}
+
+Returns the authenticated user's active manual dataset revision and coverage for a configured instrument: revision id, sorted available source dates, candle count, and first/last dates. A missing dataset returns an empty coverage result.
+
+### POST /api/backtest/manual-import/preview
+
+Accepts multipart form data containing `instrument` and one or more `files` (HistData CSVs). Parses without writing cache data and returns revision/expected_revision, cached_dates, incoming_dates, available_dates, candle_count, overlap_count, conflict_count, conflicting_dates, overlap_dates, and `requires_confirmation`. The uploaded data is headerless semicolon-separated one-minute timestamp, bid OHLC, and volume. Timestamps are interpreted at fixed UTC−5 without DST.
+
 ## Create a run
 
 ### POST /api/backtest/runs
@@ -39,9 +51,9 @@ Request:
 }
 ~~~
 
-The backend validates the submitted instrument against the current catalog from the pinned downloader, along with the selected replay date range, timezone, and inclusive one-calendar-year limit. `initial_balance_usd` and `risk_percent` are optional and default to 10,000 and 1.0; both must be finite and positive, and risk percent cannot exceed 100. For a February 29 start, February 28 of the following year is the latest permitted end date. The selected local-day boundaries define the replay window. The backend also calculates a warm-up start one calendar month before the selected local start date, clamping to the final valid day of the preceding month, then converts the warm-up and selected replay boundaries to UTC. The user's dates and one-year limit are unchanged by this extra source interval. The API then creates the run, exactly one associated Backtest account, and one durable MongoDB preparation job. Preparation is handled by a separate worker process; the HTTP request does not run the download.
+This Dukascopy endpoint validates the instrument against the current downloader catalog, the selected replay date range, timezone, and inclusive one-calendar-year limit. `initial_balance_usd` and `risk_percent` default to 10,000 and 1.0; both must be finite and positive, and risk percent cannot exceed 100. `warmup_days` is a nonnegative integer shared with Manual import and defaults to 0. For a February 29 start, February 28 of the following year is the latest permitted end date. The selected local-day boundaries define the replay window. The backend calculates the context start by subtracting `warmup_days` in the configured display timezone, then converts context and replay boundaries to UTC. The run is created with a metadata-only manifest over shared cache references; a worker uses the per-user Dukascopy cache rather than writing a per-run candle object. Preparation does not run in the HTTP request.
 
-The manual request above remains unchanged. Random selection instead sends:
+For Dukascopy, random selection instead sends:
 
 ~~~json
 {
@@ -112,7 +124,13 @@ Accepted response:
 }
 ~~~
 
-Return 202 while preparation continues. Invalid input uses the app’s validation-error format. If the catalog cannot be fetched, return a service error and create no run/account. If preparation later returns no data or fails terminally, report the outcome with the instrument/range and remove the run, account, job, and staging data as specified by the feature requirements. A worker restart or expired lease is recoverable interruption, not a terminal failure.
+Return 202 while preparation continues. Invalid input uses the app’s validation-error format. If the catalog cannot be fetched, return a service error and create no run/account. If preparation later returns no data or fails terminally, report the outcome with the instrument/range and remove the run, account, and job while retaining shared cache data. A worker restart or expired lease is recoverable interruption, not a terminal failure.
+
+### POST /api/backtest/runs/manual
+
+Accepts `multipart/form-data` with a JSON `settings` field and zero or more `files` fields. `settings` uses the same shared date/random/blind/`warmup_days`/balance/risk/cost fields, and adds `instrument`, optional `expected_dataset_revision`, `confirm_overwrite`, and `quote_to_usd_fallback_rate`. The instrument must have complete sizing data in the authenticated user's Settings table. If files are omitted, an active manual dataset must already exist. If files overlap the active dataset, the merge is rejected unless `confirm_overwrite` is true; conflict details identify affected dates. A successful upload merges the timestamp union into a new immutable dataset revision, with incoming values winning conflicting timestamps, then queues a run pinned to that revision. Manual dates and `warmup_days` boundaries use HistData's fixed UTC−5 calendar without DST. If the requested random period exceeds the imported date span, the run uses all available dates. The response is 202 with the new run. Manual account labels carry a `-manual` suffix; the form does not accept a run-name field.
+
+The manual selection source offers only imported dates containing candles. Random periods are selected from those available dates; an oversized period uses the full imported range. Warm-up reads earlier candles from the pinned revision, limited by `warmup_days`. Bid OHLC and provided volume are passed through directly. A fallback quote-to-USD rate is accepted only for non-USD quote currencies and is used when eligible historical conversion data is unavailable; USD quote currencies use 1.
 
 ## List and inspect runs
 
@@ -122,7 +140,19 @@ Returns the authenticated user’s selecting-period, preparing, ready, complete,
 
 ### GET /api/backtest/runs/{run_id}
 
-Returns the owned run detail, nullable account label/dates while selection is pending, immutable `instrument_metadata`, immutable `initial_balance_usd` and `risk_percent`, current balance (initial balance plus committed net cash effect of fills, with each execution cost counted once and partial exits reflected; unrealized P&L excluded), selected replay-period coverage, warm-up coverage, saved cursor, `blind_mode`, `normalized_reference_price` (for ready blind runs), simulation summary, and status. A selecting-period, preparing, or deleting run remains on the list page and has no playable chart detail. A ready or complete run is inspectable. When the run becomes ready, its persisted cursor is initialized to the snapshot index and timestamp of the first available candle at or after the selected replay start; this index can be greater than zero because the snapshot includes warm-up candles. Readiness requires at least one candle in the selected replay period. The frontend uses the fixed reference for blind chart display, hides complete dates/raw prices, and formats all displayed replay times, including the current cursor timestamp, as local weekday/time; source candle responses remain canonical. Chart workspace state is loaded through the dedicated chart-workspace routes below.
+Returns the owned run detail, source, nullable account label/dates while selection is pending, frozen `instrument_metadata`, `initial_balance_usd`, `risk_percent`, current balance, source-specific manifest and coverage, pinned manual revision when applicable, saved current/furthest cursor, cache availability/recovery status, `blind_mode`, normalized reference, simulation summary, and status. A selecting-period, preparing, or deleting run remains on the list page and has no playable chart detail. A ready or complete run is inspectable only while its pinned data is available. When ready, its cursor starts at the first available replay candle; this index can exceed zero because the manifest references warm-up context. Readiness requires replay-period candles. The UI formats replay timestamps in the configured timezone and applies Blind rendering rules; source-candle API values remain canonical. Chart workspace state loads from its dedicated routes.
+
+### GET /api/backtest/runs/{run_id}/cache-status
+
+Checks the run manifest against the authenticated user's source cache and reports availability or recovery progress. Missing/unreadable references identify instrument, UTC date, and source kind. Opening a run does not start downloads. A ready or complete run with unavailable references is gated from replay until recovery finishes.
+
+### POST /api/backtest/runs/{run_id}/cache-recovery
+
+Requires the user's explicit recovery action. Enqueues durable recovery for only missing Dukascopy references, including conversion instruments; cache hits and known-empty dates are reused. Returns an accepted job/status and the frontend polls `cache-status` for progress. Refreshed data may differ; successful recovery preserves committed orders, fills, positions, balance, and operation state, rebuilds candle indexes, remaps the cursor to the latest candle at or before its saved timestamp, and shows a dismissible changed-history warning. This endpoint does not recover missing manual data; manual runs use the upload route below.
+
+### POST /api/backtest/runs/{run_id}/manual-cache-recovery
+
+Accepts multipart HistData files for a manual run. Files must reproduce the run-pinned manual revision content; a mismatching upload is rejected. A valid re-upload restores missing references and resumes replay without changing simulation state. The missing-data view offers this action for portable/manual runs instead of fetching Dukascopy data.
 
 ### DELETE /api/backtest/runs/{run_id}
 
@@ -141,7 +171,7 @@ Accepted response:
 
 Return 202 after the durable run state changes to `deleting`; this means cleanup was accepted, not that deletion completed. The run immediately becomes non-playable, and the associated account and trades may be excluded from Backtest views while cleanup is pending, but hiding them is only an interim state. A repeated request while cleanup is pending returns the same pending state. A missing or non-owned run returns the standard 404 behavior.
 
-The worker treats `deleting` as a cancellation fence: preparation, replay, simulation, chart-workspace, and drawing writes return the existing conflict error for a run that is being deleted and cannot publish or mutate that run. It resumes cleanup after restart and physically removes every object under the run's MinIO prefix, including staged and immutable candle objects and any unreferenced objects, then verifies the prefix is empty. It also removes the preparation job, replay cursor, all simulation control/operation/order/fill/position/cost data, every Execution tagged to this run whether or not it has a Trade link, chart tabs/workspace, drawings, every trade linked to the dedicated account (including trade-owned dependent records and files), and the account. Remove the run record carrying the `deleting` marker only after all associated MongoDB records and MinIO objects are physically gone. The run disappearing from `GET /api/backtest/runs` is the completion signal; do not report success while cleanup is pending or resources are merely hidden. Cleanup is idempotent. It must not delete another run's or any Real account's records, even when labels or instruments match. User-initiated deletion does not create a preparation-failure notice.
+The worker treats `deleting` as a cancellation fence for run-owned preparation/replay/simulation/chart writes and resumes cleanup after restart. Cleanup removes preparation and recovery jobs, replay cursor, simulation control/operation/order/fill/position/cost data, run-tagged executions, chart workspace/tabs, drawings, trades and trade-owned dependent files, and the dedicated account. It does not delete shared Dukascopy cache entries or manual dataset revisions/objects. The run disappearing from `GET /api/backtest/runs` is the completion signal. Cleanup is idempotent and does not affect other runs or Real records.
 
 ## Preparation result notices
 
@@ -237,6 +267,16 @@ The server derives user_id, validates that the workspace id matches the run, and
 
 The frontend implements CandleKit's `LayoutPersistence` interface over this authenticated API. It debounces and coalesces layout events and serializes writes. If a bootstrap or migration write conflicts, it reloads the winner. If a user edit conflicts, the client preserves the local draft and offers either loading the remote layout or explicitly reapplying the draft against the latest revision; it never automatically retries a stale layout. Local browser storage is not authoritative. Legacy flat records are migrated through the same revision-zero write and may be deleted only after successful workspace persistence; the old records remain read-only migration input until that succeeds.
 
+## Settings backup and restore
+
+### GET /api/auth/export
+
+Downloads a Settings ZIP backup. Format 1.1 includes ready and complete Backtest run metadata and committed state: associated accounts and linked trades/executions, orders, positions, fills, costs, workspaces/tabs, and drawings. It omits preparation/recovery jobs and worker state, candle bytes, shared-cache objects, and source-instance object keys. Existing imported market-data dataset export is unchanged.
+
+### POST /api/auth/restore
+
+Accepts multipart field `file` containing a 1.0 or 1.1 archive. A 1.0 archive restores without Backtest records. A 1.1 restore maps runs and linked records into the authenticated destination account, assigns stable source identities for idempotent re-import, and binds candle manifest references to matching destination-owned cache days when available. Missing references remain unavailable until explicit source-appropriate recovery. The result and Settings summary include Backtest run `created` and `reused` counts.
+
 ## Retry an interrupted run
 
 ### POST /api/backtest/runs/{run_id}/retry
@@ -249,7 +289,7 @@ The frontend adapter exposes the following CandleKit source operations through t
 
 ### GET /api/backtest/runs/{run_id}/candle-dates?before={utc_date}&after={utc_date}
 
-Returns the sorted UTC dates that contain one or more candles in the immutable snapshot, including the preceding warm-up period. This supports CandleKit’s day-oriented listDatesBefore/listDatesAfter behavior. Dates with no data are omitted and are not replaced by synthetic candles. The snapshot's selected replay start remains separately identified by the run detail and replay-start index. Dates remain canonical in this API for blind runs; the UI must not render them as calendar-date labels.
+Returns the sorted UTC dates containing candles in the pinned run source, including warm-up dates. This supports CandleKit’s day-oriented listDatesBefore/listDatesAfter behavior. Empty dates are omitted from this list and not replaced by synthetic candles. The selected replay start remains separately identified by run detail and replay-start index. Dates remain canonical in this API for blind runs; the UI must apply its masking rules.
 
 Example response:
 
@@ -261,7 +301,7 @@ Example response:
 
 ### GET /api/backtest/runs/{run_id}/candles?date={utc_date}
 
-Returns one UTC day of the run’s one-minute snapshot with canonical timestamps and prices. An empty array is valid for a requested date with no candles. A date outside `[context_start_utc_ms, end_utc_ms)` returns validation/not-found according to the existing API error convention. This source data includes warm-up candles; the frontend may display candles before the replay cursor as historical context, but MUST filter replay-period candles after the current cursor. For blind runs, normalize values before display and never render the raw timestamps/prices; API-level redaction is not part of this contract.
+Returns one UTC day of one-minute candles resolved from the run's pinned Dukascopy shared cache or manual dataset revision. An empty array is valid for a requested empty date. A date outside `[context_start_utc_ms, end_utc_ms)` returns validation/not-found per the existing API error convention. Warm-up candles are historical context; the frontend filters replay-period candles after the current cursor. If data references are missing, replay is gated and the UI offers explicit recovery. For blind runs, normalize before display and never render raw timestamps/prices; API-level redaction is not part of this contract.
 
 Example response:
 
@@ -282,7 +322,11 @@ Example response:
 
 The adapter maps time_ms to CandleKit’s UTC epoch-millisecond Bar time. API availability of future historical rows does not authorize the chart to render them: each chart update remains bounded by the shared replay cursor.
 
-`open`, `high`, `low`, and `close` are component-wise arithmetic midpoints of the corresponding COMB BID/ASK OHLC values. Since BID and ASK minute extrema are aggregated independently, the midpoint high and low are estimates rather than exact tick-level midpoint extrema. `volume` is summed bid and ask quoted liquidity, not executed trade volume; the replay UI labels it accordingly.
+For Dukascopy, `open`, `high`, `low`, and `close` are component-wise arithmetic midpoints of corresponding COMB BID/ASK OHLC; independent side extrema make midpoint high/low estimates. `volume` is summed bid and ask quoted liquidity, not executed trade volume. For Manual import, bid OHLC and source volume are returned directly.
+
+### GET /api/backtest/runs/{run_id}/chart-candles?start={iso}&end={iso}&interval={1m|5m|15m|1h}
+
+Returns run-derived candles for a linked Backtest trade chart within the request's UTC time bounds, clipped to the run's context/replay range and the furthest reached replay candle. `end` is exclusive; the furthest timestamp is the opening time of a one-minute candle, so the effective end cannot exceed `furthest_time_ms + 60,000`. Older cursors without a furthest timestamp use their saved `time_ms`. Rewinding the current cursor does not shorten this high-water cap. For intervals above 1m, aggregate only the included one-minute rows using UTC buckets, first open, maximum high, minimum low, last close, and summed volume; a final bucket may be partial. Response shape remains `{"candles":[{"time_ms":0,"open":0,"high":0,"low":0,"close":0,"volume":0}]}`. Manual/non-Backtest trade charts retain their current source.
 
 ## Save the shared replay position
 
@@ -299,9 +343,9 @@ Request:
 }
 ~~~
 
-The server validates that the run is ready and the index/time pair matches the immutable snapshot. A valid replay cursor MUST be at or after `snapshot.replay_start_source_index` and no later than the last candle in the selected replay period; warm-up indexes are not valid cursor positions. Forward movement MUST use `POST /simulation/advance` so each intervening source candle is processed in order. This endpoint permits only a backward step/seek before an order has ever been accepted in the current reset generation. Once an order is accepted, backward movement returns 409 until an explicit confirmed reset. A stale revision returns 409. The client clamps a seek before the selected replay start to the first eligible replay candle and sends unique operation ids so an older/retried request cannot overwrite a later selection.
+The server validates that the run is ready and the index/time pair matches its resolved pinned source. A valid replay cursor MUST be at or after `manifest.replay_start_source_index` and no later than the last candle in the selected replay period; warm-up indexes are not valid cursor positions. Forward movement MUST use `POST /simulation/advance` so each intervening source candle is processed in order. This endpoint permits only a backward step/seek before an order has ever been accepted in the current reset generation. Once an order is accepted, backward movement returns 409 until an explicit confirmed reset. A stale revision returns 409. The client clamps a seek before the selected replay start to the first eligible replay candle and sends unique operation ids so an older/retried request cannot overwrite a later selection.
 
-When a run first becomes ready, the server persists `source_candle_index: replay_start_source_index`, the first eligible replay candle’s `time_ms`, and revision zero in the same run-document update that changes status to ready. The frontend uses this stored cursor and starts playback paused. All snapshot candles before this index are loaded as historical chart context but do not contribute to replay progress, forward/backward stepping, seeking, or completion. Accepted order and candle-advance operations share a run-level compare-and-swap sequence; the run cursor, committed sequence, and final `complete` status change atomically.
+When a run first becomes ready, the server persists `source_candle_index: replay_start_source_index`, the first eligible replay candle’s `time_ms`, and revision zero in the same run-document update that changes status to ready. The frontend uses this stored cursor and starts playback paused. All resolved source candles before this index are loaded as historical chart context but do not contribute to replay progress, forward/backward stepping, seeking, or completion. Accepted order and candle-advance operations share a run-level compare-and-swap sequence; the run cursor, committed sequence, and final `complete` status change atomically.
 
 ## Persist drawing state
 
@@ -340,6 +384,8 @@ The server validates interval limits, ownership, payload size, and JSON shape, t
 
 Cursor movement, order, cancel, manual-close, protection-modification, cost, and advance mutations require authentication, owner/run filtering, a ready run, the run-level simulation CAS revision, and a unique client-generated `client_operation_id`. Reset is available on ready or complete runs. Repeating the same key with the same request returns the stored result; reusing it with a different request returns 409. Simulation effects are durable and become visible only when the operation sequence is committed on the run. A pending operation is resumed idempotently after restart. Every command is fenced when deletion begins.
 
+At fill time, a same-direction entry on the same instrument attaches to the oldest open position and its linked simulated trade. It appends the entry execution and updates weighted entry/reference price, remaining and maximum lots, costs, and risk while retaining the existing stop and target and resizing their protective order quantities. It creates no duplicate position or protective pair. If the position closes before a pending entry fills, that entry opens a new position using its own bracket. Opposite-side entries continue reducing open exposure FIFO; any reversal remainder opens a separately protected position. Closed trade detail shows the weighted entry and every execution.
+
 ### GET /api/backtest/runs/{run_id}/simulation
 
 Returns current simulation state: committed cursor and operation sequence, reset generation, whether a mutation/reset cleanup is pending, whether backward navigation is locked, immutable initial balance and risk percentage, current balance, current versioned costs, working orders, fills, open positions, realized closed-trade summaries, and whether the run is ready or complete. Each open-position result includes its stable position id, side, remaining lots, weighted entry price, current stop-loss/take-profit prices and order ids, and derived `unrealized_pnl_usd` marked at the latest revealed candle close before hypothetical exit costs. Use the run's frozen instrument metadata and latest completed immutable quote-to-USD rate no later than the mark candle close. Unrealized P&L is display-only; it does not alter current balance or closed-trade analytics. The position id is the scope for that indicator's protection and close actions. Indicator sets are presentation state, not persisted user drawings. Results are bounded/paginated where collections can grow. Order/position/cost results select the latest version at or below the committed sequence and current generation; fills and closed Trades are filtered by committed sequence/generation. A complete run remains inspectable.
@@ -360,7 +406,7 @@ Submits one protected entry order. Both protective prices are required. Example 
 }
 ~~~
 
-`auto_size` is required in every entry request. The USD risk budget is current balance multiplied by run Risk% and divided by 100. The order-panel default stop distance is that budget divided by the instrument's USD pip value for one standard lot (`pip_size * contract_size * quote_to_usd_rate`), using frozen pip/contract metadata and the latest completed quote-to-USD conversion rate no later than the current cursor candle close; multiply the pips by pip size for a price offset. With `auto_size: true`, omit `lots`; the service calculates lots from the selected entry-to-stop distance, frozen pair metadata, as-of quote-to-USD rate, and active execution costs, then rounds down to a 0.001-lot increment. Preview lots update when entry or stop moves. If even the minimum lot would exceed the budget, reject without accepting the order. With `auto_size: false`, `lots` is required, positive in 0.001 increments, and at least 0.001; the response still reports projected USD risk and risk percent. The order-panel checkbox defaults to enabled. The request snapshots the current risk budget, sizing reference price, conversion rate, and sizing mode; a later balance change does not resize an already accepted working order. Report preview risk using the sizing reference, then recalculate actual initial risk from the executed fill price and event-time conversion after fill; an opening gap can make actual risk differ from preview. All entries require both finite stop-loss and take-profit prices at instrument precision, on the correct sides of the entry (long: stop below and target above; short: target below and stop above), after blind display values are converted to canonical prices. Do not require prices to be positive: the blind normalization reference and source price may be negative. Market orders use the close of the current revealed candle as their preview/reference price but remain pending until the next available unrevealed source-candle index and fill at that candle's open with active costs. They cannot fill against candle N or inspect fill-candle high/low/close. Limit requests require a finite `entry_price` at instrument precision and become eligible only on a later unrevealed candle; the future candle's high-low range must reach the limit price to trigger a fill. A gap opening through the limit without the candle range reaching it does not fill. When touched, the order fills at exactly the submitted `entry_price`, without price improvement. Spread/slippage amounts on a limit fill are accounted for separately under FR-045 and do not change the recorded fill price. If there is no later available candle because the run is at its final candle, reject with a conflict/validation error and do not accept an unfillable order. Only ready runs accept orders; complete runs require reset first. On the first order for a non-USD quote currency, reject if its immutable conversion series has no completed observation at or before the current cursor close.
+`auto_size` is required in every entry request. The USD risk budget is current balance multiplied by run Risk% and divided by 100. The order-panel default stop distance is that budget divided by the instrument's USD pip value for one standard lot (`pip_size * contract_size * quote_to_usd_rate`), using frozen pip/contract metadata and the latest completed quote-to-USD conversion rate no later than the current cursor candle close; multiply the pips by pip size for a price offset. With `auto_size: true`, omit `lots`; the service calculates lots from the selected entry-to-stop distance, frozen pair metadata, as-of quote-to-USD rate, and active execution costs, then rounds down to a 0.001-lot increment. Preview lots update when entry or stop moves. If even the minimum lot would exceed the budget, reject without accepting the order. With `auto_size: false`, `lots` is required, positive in 0.001 increments, and at least 0.001; the response still reports projected USD risk and risk percent. The order-panel checkbox defaults to enabled. The request snapshots the current risk budget, sizing reference price, conversion rate, and sizing mode; a later balance change does not resize an already accepted working order. Report preview risk using the sizing reference, then recalculate actual initial risk from the executed fill price and event-time conversion after fill; an opening gap can make actual risk differ from preview. All entries require both finite stop-loss and take-profit prices at instrument precision, on the correct sides of the entry (long: stop below and target above; short: target below and stop above), after blind display values are converted to canonical prices. Do not require prices to be positive: the blind normalization reference and source price may be negative. Market orders use the close of the current revealed candle as their preview/reference price but remain pending until the next available unrevealed source-candle index and fill at that candle's open with active costs. They cannot fill against candle N or inspect fill-candle high/low/close. Limit requests require a finite `entry_price` at instrument precision and become eligible only on a later unrevealed candle; the future candle's high-low range must reach the limit price to trigger a fill. A gap opening through a limit without the candle range reaching it does not fill. When touched, the order fills at exactly the submitted `entry_price`, without price improvement. Spread/slippage amounts on a limit fill are accounted for separately under FR-045 and do not change the recorded fill price. If there is no later available candle because the run is at its final candle, reject with a conflict/validation error and do not accept an unfillable order. Only ready runs accept orders; complete runs require reset first. On the first order for a non-USD quote currency, reject if neither eligible historical conversion data nor a valid configured Manual fallback exists at the sizing event time.
 
 Example manual-size limit request:
 
@@ -402,7 +448,7 @@ Replaces the per-run cost profile using nonnegative `total_spread_pips`, `slippa
 
 ### POST /api/backtest/runs/{run_id}/simulation/advance
 
-Advances to a later source candle index, for play, forward step, or forward seek. Request includes `target_source_index`, `client_operation_id`, and `expected_revision`. The target must be strictly later than the committed cursor, match an available snapshot candle, and not exceed the last replay-period candle; backward movement uses the guarded replay-position route. The service processes every available one-minute candle after the current cursor through the target in immutable snapshot order, including all pending fills, protective exits, costs, and position changes. No source candle is skipped because the UI made a jump; missing timestamps do not synthesize bars. Existing protective orders are checked on each eligible candle. Entry-fill candle range is not used for that entry's bracket. If both the stop and target of one OCO bracket are touched in one candle, the stop fills first. Simultaneous fills/order eligibility use persisted submission sequence, then stable order id as tie-break.
+Advances to a later source candle index, for play, forward step, or forward seek. Request includes `target_source_index`, `client_operation_id`, and `expected_revision`. The target must be strictly later than the committed cursor, match an available resolved-manifest candle, and not exceed the last replay-period candle; backward movement uses the guarded replay-position route. The service processes every available one-minute candle after the current cursor through the target in pinned source order, including all pending fills, protective exits, costs, and position changes. No source candle is skipped because the UI made a jump; missing timestamps do not synthesize bars. Existing protective orders are checked on each eligible candle. Entry-fill candle range is not used for that entry's bracket. If both the stop and target of one OCO bracket are touched in one candle, the stop fills first. Simultaneous fills/order eligibility use persisted submission sequence, then stable order id as tie-break.
 
 When the target is the final eligible replay-period candle, the operation first processes that candle, cancels remaining pending entry orders, closes remaining open positions at the final candle close with configured costs, persists resulting closed trades, and atomically marks the run `complete`. Completion is inspectable; further order submissions, cursor movement, and cost changes return conflict until reset or deletion.
 
@@ -412,7 +458,41 @@ Requires explicit `confirmed: true`, a unique operation key, and expected revisi
 
 ### Forex conversion and closed Trade visibility
 
-Every closing fill preserves native quote-currency P&L. A `quote_to_usd_rate` is USD per one unit of the instrument's quote currency at that exit; USD-quoted instruments use 1. Initial risk uses the corresponding entry-event rate. Use the latest completed immutable one-minute conversion candle with close time no later than the fill event; direct or inverse conversion series must be pinned with the run snapshot. Because OHLC does not reveal the exact intra-minute trigger time, timestamp wick/gap fills at the triggering candle's opening instant, manual close at the current cursor candle's close, and timestamp final forced closes at the final candle's close. Each extended `Execution` fill stores its own event rate and native/USD realized amounts; the conventional Trade stores exact aggregate gross/net totals. Do not use the Trade model's single scalar rate to recompute a Backtest trade's multiple exit conversions. If no valid as-of rate exists, reject the affected order/close operation with a clear error; do not commit its candle advance or state change and never substitute a scalar latest rate or 1 for non-USD quote currency. Once a position fully closes, create one ordinary `Trade` with `status=closed` under the run's dedicated Backtest account and stable simulation id. Partially open exposure remains in simulation state and does not appear in Journal/closed-only analytics. Backtest Journal and analytics can then use existing closed-trade account scoping; Blind presentation is derived from the linked run.
+Every closing fill preserves native quote-currency P&L. A `quote_to_usd_rate` is USD per one unit of the instrument's quote currency at that exit; USD-quoted instruments use 1. Initial risk uses the corresponding entry-event rate. Use the latest completed one-minute conversion candle with close time no later than the fill event; conversion source/date references are pinned by the run manifest. Manual-source runs may use their configured fallback rate when no eligible historical rate exists. Because OHLC does not reveal the exact intra-minute trigger time, timestamp wick/gap fills at the triggering candle's opening instant, manual close at the current cursor candle's close, and timestamp final forced closes at the final candle's close. Each extended `Execution` fill stores its own event rate and native/USD realized amounts; the conventional Trade stores exact aggregate gross/net totals. Do not use the Trade model's single scalar rate to recompute a Backtest trade's multiple exit conversions. If no valid as-of rate or permitted manual fallback exists, reject the affected order/close operation with a clear error; do not commit its candle advance or state change and never substitute a scalar latest rate or 1 for non-USD quote currency. Once a position fully closes, create one ordinary `Trade` with `status=closed` under the run's dedicated Backtest account and stable simulation id. Partially open exposure remains in simulation state and does not appear in Journal/closed-only analytics. Backtest Journal and analytics can then use existing closed-trade account scoping; Blind presentation is derived from the linked run.
+
+## Configured manual trades
+
+### GET /api/trades/conversion-rate
+
+Requires authentication and the Real workspace. Query parameters are `symbol` and timezone-aware ISO 8601 `event_time`. The endpoint resolves a Settings instrument or supported legacy Forex symbol and returns HTTP 200 with `canonical_symbol`, `quote_currency`, `available`, `quote_to_usd_rate`, `quote_currency_unit_scale`, `rate_time`, `route`, and `reason`. An unavailable quote is represented by `available: false`, a null rate/time, and a user-facing reason; it is not an HTTP error. USD quote currency returns the identity rate of 1. Historical rates use the latest completed one-minute candle close at or before the event time. The lookup examines the event UTC date and up to the preceding seven UTC dates; every leg in a direct, inverse, or configured shortest route must have an eligible candle. A multi-leg result reports the oldest leg close as the conservative common `rate_time`, along with per-leg rates and times. Currency-unit scaling is applied to the returned USD-per-quote-unit rate.
+
+Example response:
+
+~~~json
+{
+  "canonical_symbol": "USD-JPY",
+  "available": true,
+  "quote_currency": "JPY",
+  "quote_to_usd_rate": 0.00667,
+  "quote_currency_unit_scale": 1,
+  "rate_time": "2026-09-21T14:31:00+00:00",
+  "route": [{
+    "instrument": "USD-JPY",
+    "from_currency": "JPY",
+    "to_currency": "USD",
+    "direction": "inverse",
+    "rate": 0.00667,
+    "rate_time": "2026-09-21T14:31:00+00:00"
+  }],
+  "reason": null
+}
+~~~
+
+### POST /api/trades
+
+Requires authentication and the Real workspace. The free-text `symbol` accepts a case-insensitive Settings symbol and slash/dash alias. If a configured mapping resolves, the server stores the canonical symbol and preserves the entered value in `raw_symbol`; it validates complete Settings sizing rules and uses configured contract size, minimum lots, lot increment, tick size, and precision. Submit `lot_size`, side, entry/exit prices and entry/exit timestamps, plus an optional positive `quote_to_usd_rate` for non-USD quote currencies. USD quotes use 1. A supplied rate remains a valid user override when historical data is unavailable; the server records it as historical only when it exactly matches the eligible historical result, otherwise as manual. If no rate is supplied, a historical rate must be available or the request is rejected. Native P&L is stored in quote currency and USD P&L uses the event-time quote conversion. The saved trade includes configured instrument metadata, raw/canonical symbols, conversion source/time/route, and quote-unit scale.
+
+When no Settings mapping applies, preserve the existing legacy Forex and futures flows. Futures use `total_quantity` and the existing point-value calculation; `lot_size` and quote-rate overrides are only accepted for configured instruments. Incomplete or unsupported Settings rows are rejected instead of falling through to guessed sizing.
 
 ## Status and error behavior
 

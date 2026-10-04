@@ -38,9 +38,9 @@
 ## Dependencies, Security, and Non-Functional Requirements
 
 - [x] CHK018 Are the CandleKit capabilities required from the selected release explicit, and is any acceptable fallback defined if the pinned package artifact lacks a documented React, replay, sync, or drawing API? [Plan §Technical Context; Plan §Design Decisions; Research §2; Research §Implementation-Time Validations]
-- [x] CHK019 Do the requirements define user ownership and isolation for replay snapshots, cursor state, and drawings as clearly as they define separation between Real and Backtest activity? [Spec §FR-001; Spec §FR-008; Spec §FR-020; Plan §Constitution Check; Plan §Design Decisions]
-- [x] CHK020 Is there a measurable responsiveness or capacity expectation for replaying the maximum one-year dataset at 20x with multiple chart tabs, or an explicit decision that no separate performance target is required? [Spec §FR-012; Spec §FR-025; Plan §Technical Context]
-  - Finding: The user chose no fixed tab maximum and no additional chart-tab capacity or rendering-performance target for v1. The existing 1x/5x/20x playback-rate requirement remains; no separate responsiveness guarantee is specified for an unbounded number of tabs.
+- [x] CHK019 Do the requirements define user ownership and isolation for run source manifests/cache references, cursor state, manual dataset revisions, and drawings as clearly as they define separation between Real and Backtest activity? [Spec §FR-001; Spec §FR-008; Spec §FR-020; Plan §Constitution Check; Plan §Design Decisions]
+- [x] CHK020 Is there a measurable responsiveness or capacity expectation for replaying the maximum one-year dataset at 30x with multiple chart tabs, or an explicit decision that no separate performance target is required? [Spec §FR-012; Spec §FR-025; Plan §Technical Context]
+  - Finding: The user chose no fixed tab maximum and no additional chart-tab capacity or rendering-performance target for v1. The implemented 1x/2x/5x/15x/30x playback-rate choices remain; no separate responsiveness guarantee is specified for an unbounded number of tabs.
 
 ## Notes
 

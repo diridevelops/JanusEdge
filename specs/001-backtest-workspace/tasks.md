@@ -8,11 +8,11 @@ description: "Implementation backlog for Backtest replay and simulated trading"
 
 **Prerequisites**: `plan.md` and `spec.md` are available. The project constitution remains an unratified Spec Kit placeholder and defines no project gates.
 
-**Scope**: This backlog carries forward implementation already recorded as complete and includes the replay chart follow-mode, chart-workspace UI refinements, run deletion, the one-month warm-up-history delta, random replay-period selection, Blind mode, and the newly specified User Story 9 simulated-trading work. It does not repeat the Real/Backtest separation, original run preparation, core replay transport, account integration, or initial drawing integration tasks. The old flat chart-tabs task is superseded by the dockable workspace work in User Story 3. These carry-forward notes reflect the prior task ledger, not a new code audit.
+**Scope**: This backlog carries forward the original replay/workspace work, deletion, warm-up, random selection, Blind mode, and simulated trading, then records the implemented shared cache, cache recovery, HistData source, portable Backtest backups, scale-in, linked trade chart cap, and keyboard transport updates. The old flat chart-tabs task is superseded by the dockable workspace work in User Story 3. Checked implementation items indicate source/test coverage exists; they do not assert that the full test suite or browser matrix was run in this documentation pass.
 
-**Tests**: Focused backend and frontend tests for the versioned workspace contract, migration, panel lifecycle, run deletion, warm-up history, random period selection, Blind mode, and simulated trading are recorded below. The full quickstart UI/browser scenario task remains open until those end-to-end scenarios have been run.
+**Tests**: Focused backend tests for the versioned workspace contract, migration, panel lifecycle, run deletion, warm-up, random selection, Blind mode, simulation, shared candle cache, manual import, linked trade charts, and backup/restore are tracked below. The full quickstart UI/browser scenario task remains open until those end-to-end scenarios have been run.
 
-**Organization**: Preserve existing story phases and task statuses, then add the follow-mode enhancement, chart UI refinement, run-deletion story, warm-up-history delta, random-period selection, Blind mode, and User Story 9 simulated trading after the carried-forward backlog. User Stories 1, 2, and 4 have no new tasks for their original scope because their work is recorded as complete in the prior task list.
+**Organization**: Preserve the original story phases and completion history, then record later implementation deltas in Phase 17. User Stories 1, 2, and 4 have no new tasks for their original scope because their work is recorded as complete in the prior task list.
 
 **Format**: `- [ ] T### [P?] [US#?] Description with file path`
 
@@ -46,7 +46,7 @@ No new tasks in this plan delta; the prior task list records this story's implem
 
 ## Phase 4: User Story 2 - Prepare a one-instrument replay (Priority: P1)
 
-**Goal**: Continue to use each ready run's immutable, user-owned one-minute snapshot and associated account.
+**Goal**: Continue to use each ready run's metadata-only manifest over user-owned cache data and its associated account.
 
 **Independent Test**: Prepare a supported instrument/range and verify preparation status, account association, candle coverage, and recoverable job state.
 
@@ -125,7 +125,7 @@ No new tasks in this plan delta; the prior task list records this story's implem
 
 ### Implementation
 
-- [X] T016 [US3] Implement pane-local follow tracking from the time-scale position and latest cursor-bounded chart bar; snap new/remounted panes to latest, follow replay cursor changes only while snapped, and preserve each detached pane's range as replay advances in `frontend/src/hooks/useBacktestChartSync.ts` and `frontend/src/utils/backtestChartFollow.ts`. Coalesce replay-driven scroll updates and use non-animated positioning at 20x; do not scroll horizontally for in-place updates to an active higher-timeframe bar.
+- [X] T016 [US3] Implement pane-local follow tracking from the time-scale position and latest cursor-bounded chart bar; snap new/remounted panes to latest, follow replay cursor changes only while snapped, and preserve each detached pane's range as replay advances in `frontend/src/hooks/useBacktestChartSync.ts` and `frontend/src/utils/backtestChartFollow.ts`. Coalesce replay-driven scroll updates and use non-animated positioning at 30x; do not scroll horizontally for in-place updates to an active higher-timeframe bar.
 - [X] T017 [US3] Add an accessible lower-right return-to-latest button that appears only when the pane is away from the latest revealed candle, restores follow when selected, and preserves the existing double-click time-axis snap behavior in `frontend/src/components/backtest/BacktestChartTab.tsx`, `frontend/src/components/backtest/CandleKitReplayChart.tsx`, and `frontend/src/styles/backtest-candlekit.css`.
 
 **Checkpoint**: Playback and manual cursor changes move each following pane to the latest revealed candle. Panned panes remain detached until brought back to the real-time edge; the button is available only while detached.
@@ -150,37 +150,37 @@ No new tasks in this plan delta; the prior task list records this story's implem
 
 **Goal**: Let the owner permanently remove a preparing or ready run together with its dedicated Backtest account, linked trades, and run-owned replay data, while preserving unrelated and Real records.
 
-**Independent Test**: Cancel a deletion confirmation and verify nothing changes. Confirm deletion of a ready run containing linked trades and verify that completion occurs only after its run/account/trade/dependent records are physically absent and its MinIO prefix is empty. Repeat during active preparation and after interrupting cleanup; the run must never become ready and cleanup must resume without touching another run or Real data.
+**Independent Test**: Cancel a deletion confirmation and verify nothing changes. Confirm deletion of a ready run containing linked trades and verify run/account/trade/dependent records are physically absent while shared candle-cache data remains. Repeat during active preparation and after interrupting cleanup; the run must never become ready and cleanup must resume without touching another run or Real data.
 
 ### Tests for User Story 6
 
-- [X] T021 [P] [US6] Add backend deletion tests for owner isolation, preparing-run worker fencing, restart recovery, and idempotent cleanup. On completion, assert the run/deletion marker, account, linked trade documents, trade-owned dependent records/files, and preparation/replay/workspace/drawing records are absent, and listing the run's MinIO prefix returns zero objects (including unreferenced objects) in `backend/tests/test_backtests/test_backtest_run_deletion.py`; confirm these tests fail before implementation.
+- [X] T021 [P] [US6] Add backend deletion tests for owner isolation, preparing-run worker fencing, restart recovery, and idempotent cleanup. On completion, assert the run/deletion marker, account, linked trade documents, trade-owned dependent records/files, and preparation/replay/workspace/drawing records are absent while shared cache records are retained in `backend/tests/test_backtests/test_backtest_run_deletion.py`.
 - [X] T022 [P] [US6] Add frontend tests for confirmation/cancel behavior, pending-deletion display, and list refresh/error handling in `frontend/src/components/backtest/BacktestRunList.test.tsx`; confirm these tests fail before implementation.
 
 ### Implementation for User Story 6
 
 - [X] T023 [US6] Add the durable owner-scoped `deleting` run state and authenticated `DELETE /api/backtest/runs/{run_id}` contract; fence replay, workspace, drawing, and preparation writes once deletion begins in `backend/app/backtests/repository.py`, `backend/app/backtests/service.py`, and `backend/app/backtests/routes.py`.
-- [X] T024 [P] [US6] Make the worker resume and idempotently purge deleting runs: physically remove every object under the run's MinIO prefix and verify it is empty, remove the preparation job, chart tabs/workspace, drawings, and every linked trade plus its dependent data, then remove the dedicated account and finally the run/deletion marker. Interim query filtering may hide pending resources but must not substitute for the purge. Implement in `backend/app/backtests/worker.py`, `backend/app/backtests/repository.py`, `backend/app/trades/service.py`, `backend/app/repositories/trade_repo.py`, and `backend/app/workspace_mode/service.py`.
+- [X] T024 [P] [US6] Make the worker resume and idempotently purge deleting runs: remove preparation/recovery jobs, chart tabs/workspace, drawings, simulation records, and every linked trade plus its dependent data, then remove the dedicated account and finally the run/deletion marker. Retain shared Dukascopy and manual dataset objects. Interim query filtering may hide pending resources but must not substitute for the purge. Implement in `backend/app/backtests/worker.py`, `backend/app/backtests/repository.py`, `backend/app/trades/service.py`, `backend/app/repositories/trade_repo.py`, and `backend/app/workspace_mode/service.py`.
 - [X] T025 [US6] Add the delete API/type handling and run-list confirmation flow; treat 202 as pending cleanup, show completion only after the run disappears following physical purge, keep cancel non-mutating, and prevent opening a deleting run in `frontend/src/api/backtests.api.ts`, `frontend/src/types/backtest.types.ts`, `frontend/src/components/backtest/BacktestRunList.tsx`, and `frontend/src/pages/BacktestRunListPage.tsx`.
 
-**Checkpoint**: A 202 response and interim hiding are treated only as pending cleanup. Confirm deletion completes only after the run/deletion marker, account, linked trades and dependent data are absent and the run's MinIO prefix is empty; cleanup survives restarts and no unrelated Backtest or Real data changes.
+**Checkpoint**: A 202 response and interim hiding are treated only as pending cleanup. Confirm deletion completes only after the run/deletion marker, account, linked trades and dependent data are absent; shared cache and manual datasets remain. Cleanup survives restarts and no unrelated Backtest or Real data changes.
 
 ---
 
 ## Phase 12: User Story 2 - Prepare chart warm-up history (Priority: P1)
 
-**Goal**: Include whatever one-minute history is available in the calendar month before the selected replay start without changing the user-selected replay period or its one-year limit.
+**Goal**: Include whatever one-minute history is available in the user-requested `warmup_days` before the selected replay start without changing the user-selected replay period or its one-year limit.
 
 **Independent Test**: Prepare runs with complete, partial, and unavailable warm-up history. Confirm available pre-start candles are retained, selected-period data alone determines readiness and coverage, and a run with no selected-period candles remains no-data even if earlier candles exist.
 
 ### Tests for User Story 2
 
-- [X] T026 [P] [US2] Add backend tests for preceding-calendar-month calculation (including end-of-month and daylight-saving boundaries), best-effort warm-up availability, and selected-period-only no-data/readiness behavior in `backend/tests/test_backtests/test_backtest_service.py`.
+- [X] T026 [P] [US2] Add backend tests for the nonnegative `warmup_days` boundary, source-specific date/timezone conversion, best-effort warm-up availability, and selected-period-only no-data/readiness behavior in `backend/tests/test_backtests/test_backtest_service.py`.
 ### Implementation for User Story 2
 
-- [X] T027 [US2] Calculate the warm-up boundary from the selected local start date, prepare and recover the extended UTC-date range, retain available context through selected replay data in the immutable snapshot, and keep readiness and reported replay coverage based only on the selected period in `backend/app/backtests/service.py`, `backend/app/backtests/preparation_jobs.py`, `backend/app/backtests/worker.py`, and `backend/app/backtests/snapshot_store.py`.
+- [X] T027 [US2] Calculate the warm-up boundary from the selected start date and `warmup_days` using the source-specific calendar, prepare and recover the extended UTC-date range, retain available context through manifest references, and keep readiness and reported replay coverage based only on the selected period in `backend/app/backtests/service.py`, `backend/app/backtests/preparation_jobs.py`, `backend/app/backtests/worker.py`, and `backend/app/backtests/snapshot_store.py`.
 
-**Checkpoint**: The immutable snapshot retains available warm-up and selected-period candles; missing warm-up does not block a run with selected-period data, and warm-up-only data remains a no-data result.
+**Checkpoint**: The source manifest references available warm-up and selected-period candles; missing warm-up does not block a run with selected-period data, and warm-up-only data remains a no-data result.
 
 ---
 
@@ -197,7 +197,7 @@ No new tasks in this plan delta; the prior task list records this story's implem
 
 ### Implementation for User Story 3
 
-- [X] T030 [US3] Persist and return the first eligible replay-source index with the ready run, initialize the saved cursor there, and reject cursor writes outside the selected replay interval while allowing candle reads from the full immutable context snapshot in `backend/app/backtests/schemas.py`, `backend/app/backtests/repository.py`, `backend/app/backtests/service.py`, and `backend/app/backtests/routes.py`.
+- [X] T030 [US3] Persist and return the first eligible replay-source index with the ready run, initialize the saved cursor there, and reject cursor writes outside the selected replay interval while allowing candle reads from the full manifest-referenced context in `backend/app/backtests/schemas.py`, `backend/app/backtests/repository.py`, `backend/app/backtests/service.py`, and `backend/app/backtests/routes.py`.
 - [X] T031 [US3] Load pre-start candles as chart context while initializing the shared replay controller at the returned replay-start index; keep playback, step, seek, progress, and completion inside the selected replay period in `frontend/src/types/backtest.types.ts`, `frontend/src/api/backtests.api.ts`, `frontend/src/hooks/useBacktestReplay.ts`, and `frontend/src/components/backtest/CandleKitReplayChart.tsx`.
 
 ---
@@ -264,10 +264,10 @@ No new tasks in this plan delta; the prior task list records this story's implem
 - [x] T045 [P] [US9] Define simulation request and response schemas in `backend/app/backtests/simulation_schemas.py` for operation kinds `submit_order`, `cancel_order`, `close_position`, `modify_protection`, `update_costs`, `advance`, `rewind`, and `reset`, with operation states `pending`, `cleanup_pending`, `committed`, and `rejected`; support only market/limit entries with order states `pending`, `filled`, and `cancelled`, require both entry protection prices, enforce finite instrument-precision prices and lots in 0.001 increments with a 0.001 minimum, and allow prices to be negative where the Blind normalization rules require it.
 - [x] T046 [US9] Persist run-scoped operations, orders, fills, open positions, and versioned cost profiles in `backend/app/backtests/simulation_repository.py` and add required indexes in `backend/app/db.py`; enforce unique `(user_id, run_id, client_operation_id)` and `(run_id, sequence)` operation keys, unique run/generation/position publication, committed-sequence visibility, and dedicated collections instead of unbounded arrays on BacktestRun.
 - [x] T047 [US9] Implement the run-level simulation operation gate and recovery flow in `backend/app/backtests/simulation_service.py`, `backend/app/backtests/repository.py`, and `backend/app/backtests/worker.py`; use compare-and-swap revisions and monotonic committed sequences, return the stored result for identical operation retries, return 409 when a key is reused with a different request, resume pending effects idempotently after restart, and reject mutations outside ready-run/owner scope or while deletion/reset fencing applies.
-- [x] T048 [P] [US9] Include immutable direct/inverse quote-to-USD one-minute conversion data for supported non-USD quote currencies during preparation and resolve the latest completed rate no later than each fill event in `backend/app/backtests/dukascopy_provider.py`, `backend/app/backtests/preparation_jobs.py`, `backend/app/backtests/snapshot_store.py`, `backend/app/backtests/worker.py`, and `backend/app/backtests/fx_conversion.py`; use rate 1 for USD quote currency and fail the affected operation when no eligible conversion observation exists.
+- [x] T048 [P] [US9] Add direct/inverse/configured quote-to-USD one-minute conversion references to the shared user cache and run manifest, then resolve the latest completed rate no later than each fill event in `backend/app/backtests/dukascopy_provider.py`, `backend/app/backtests/preparation_jobs.py`, `backend/app/backtests/snapshot_store.py`, `backend/app/backtests/worker.py`, and `backend/app/backtests/fx_conversion.py`; use rate 1 for USD quote currency and fail when no historical or valid source-specific fallback rate exists.
 - [x] T049 [P] [US9] Implement versioned per-run cost-profile validation and accounting in `backend/app/backtests/simulation_schemas.py`, `backend/app/backtests/simulation_repository.py`, and `backend/app/backtests/simulation_service.py`; require nonnegative `total_spread_pips`, `slippage_pips`, and `commission_usd_per_lot_per_side`, apply side-specific spread, adverse slippage and per-side commission once, apply profile changes only to future fills, keep configured limit-fill costs separate from the recorded limit price, report gross P&L after spread/slippage and net P&L after commission, and identify unset/zero profiles as excluded costs.
 - [x] T050 [US9] Implement order acceptance, sizing, and causal entry fills in `backend/app/backtests/simulation_engine.py` and `backend/app/backtests/simulation_service.py`; every entry requires both finite, instrument-precision stop-loss and take-profit prices on the correct sides; auto-size from current balance × Risk% / 100 and selected stop distance, round down to 0.001 lots, and reject if minimum size exceeds budget. Market entries accepted after candle N fill at the next available candle open without using N or the fill candle's range. Limit entries fill only when an eligible future candle's high-low range reaches the submitted price; a gap alone does not fill, and each filled limit entry records exactly its submitted price.
-- [x] T051 [US9] Implement bracket activation and position allocation in `backend/app/backtests/simulation_engine.py`; activate stop-loss and take-profit only after the entry-fill candle is fully processed, preserve their OCO link, fill a touched take-profit at its exact limit price only on eligible range touch, apply adverse opening prices to gapped protective stops, choose the stop when both OCO levels are touched in one candle, and reduce opposite-side fills FIFO before opening any separately protected excess position.
+- [x] T051 [US9] Implement bracket activation, scale-in, and position allocation in `backend/app/backtests/simulation_engine.py`; activate stop-loss and take-profit only after the entry-fill candle is fully processed, preserve their OCO link, fill a touched take-profit at its exact limit price only on eligible range touch, apply adverse opening prices to gapped protective stops, choose the stop when both OCO levels are touched in one candle, attach same-direction fills to the oldest open position while retaining its bracket, and reduce opposite-side fills FIFO before opening any separately protected excess position.
 - [x] T052 [US9] Implement `POST /api/backtest/runs/{run_id}/simulation/positions/{position_id}/close` in `backend/app/backtests/simulation_service.py` and `backend/app/backtests/routes.py`; close the full remaining position at the currently revealed candle close without advancing replay, apply close-event costs/FX, cancel both OCO children in the same committed operation, and make retries idempotent.
 - [x] T053 [US9] Implement `PUT /api/backtest/runs/{run_id}/simulation/positions/{position_id}/protection` in `backend/app/backtests/simulation_service.py` and `backend/app/backtests/routes.py`; accept stop, target, or both for an open position, validate finite instrument-precision prices against the current revealed close, preserve the OCO link and unmodified child, activate changes no earlier than the next unrevealed candle, and keep original initial-risk and R-analysis fields immutable.
 - [x] T054 [US9] On an actual stop-price change, idempotently reuse the user's `stop-moved` tag or create it under the system `General` category, save its id on the open position, and copy it to the closed Journal Trade; do not add the tag for target-only changes. Use `backend/app/backtests/simulation_service.py`, `backend/app/repositories/tag_repo.py`, `backend/app/repositories/tag_category_repo.py`, `backend/app/tags/categories.py`, `backend/app/models/tag_category.py`, and `backend/app/models/trade.py`.
@@ -282,6 +282,48 @@ No new tasks in this plan delta; the prior task list records this story's implem
 - [x] T063 [US9] Extend run reset and deletion cleanup for the new generation-scoped simulation operations, orders, fills, positions, linked executions, closed Backtest trades, and tag associations without affecting another run or Real activity; reset MUST preserve the latest run-level cost profile and immutable balance/risk settings, while deletion removes all run cost data. Clear run-owned tag references without deleting a reused user-owned tag or the General category in `backend/app/backtests/simulation_repository.py`, `backend/app/backtests/repository.py`, `backend/app/backtests/service.py`, `backend/app/backtests/worker.py`, `backend/app/trades/service.py`, and `backend/app/repositories/trade_repo.py`.
 
 **Checkpoint**: A ready run supports protected market/limit practice with exact range-touch limit fills, separate configured costs, durable idempotent operations, independent per-position chart indicators and controls for post-fill protection/BE/exit, immutable original risk, correctly tagged closed Journal trades, accurate run-account results, and reset/deletion isolation.
+
+---
+
+## Phase 17: Shared Sources, Recovery, and Portable Backtests
+
+**Purpose**: Record implemented source-reuse, manual-import, restore, linked-trade chart, and replay transport changes that supersede run-owned candle snapshot assumptions above.
+
+### Shared candle cache and downloader integration
+
+- [X] T064 [P] [US10] Store normalized Dukascopy COMB days and known-empty dates in a per-user/version/instrument/interval/side/date shared cache, coordinate concurrent misses with renewable leases, keep cache objects outside run deletion, and consume the downloader's aligned in-memory COMB API while preserving JanusEdge midpoint and volume transforms in `backend/app/backtests/candle_cache.py`, `backend/app/backtests/snapshot_store.py`, `backend/app/backtests/dukascopy_provider.py`, and `backend/tests/test_backtests/test_backtest_candle_cache.py`.
+
+### Missing-data recovery
+
+- [X] T065 [US10] Persist metadata-only run manifests that reference shared Dukascopy cache days or pinned manual revisions, expose availability/progress, queue only missing references after explicit user action, and preserve committed simulation state while remapping cursor/index state after recovery in `backend/app/backtests/service.py`, `backend/app/backtests/repository.py`, `backend/app/backtests/routes.py`, `backend/app/backtests/worker.py`, and `backend/tests/test_backtests/test_backtest_replay_routes.py`.
+
+### HistData manual import
+
+- [X] T066 [P] [US11] Parse fixed-UTC-5 headerless HistData M1 bid OHLCV, preview date ranges without mutation, require confirmation before conflicting timestamp replacement, version merged datasets, pin run revisions, constrain available/random dates, apply manual quote-to-USD fallback only where needed, and support equivalent-data re-upload recovery in `backend/app/backtests/manual_import.py`, `backend/app/backtests/routes.py`, `frontend/src/components/backtest/BacktestRunForm.tsx`, `frontend/src/api/backtests.api.ts`, and `backend/tests/test_backtests/test_backtest_manual_import.py`.
+
+### Settings archive integration
+
+- [X] T067 [P] [US12] Extend Settings backup format 1.1 to export ready/complete committed Backtest run/simulation/account/trade/execution/workspace/drawing state without candle bytes or worker state, restore with stable source identity and destination cache binding, retain format 1.0 support, and report created/reused counts in `backend/app/auth/backup_service.py`, `backend/app/auth/routes.py`, `backend/tests/test_auth/test_backup_routes.py`, and the Settings backup UI.
+
+### Linked trade charts
+
+- [X] T068 [US10] Serve linked Backtest trade-chart candles from the run's pinned source, clip the exclusive end to furthest reached candle plus one minute with legacy current-cursor fallback, aggregate 1m/5m/15m/1h UTC buckets after clipping, and preserve non-Backtest data sources in `backend/app/backtests/service.py`, `backend/app/backtests/routes.py`, `frontend/src/pages/TradeDetailPage.tsx`, and `backend/tests/test_backtests/test_backtest_replay_routes.py`.
+
+### Scale-in execution aggregation
+
+- [X] T069 [US9] Attach same-direction fills at execution time to the oldest open position on the instrument, preserve every fill as an execution, update weighted entry/size/risk/costs and protection quantities without replacing the existing bracket, and create a separate bracketed position only when no matching position remains open in `backend/app/backtests/simulation_effects.py` and `backend/tests/test_backtests/test_backtest_simulation.py`.
+
+### Replay transport and display follow-ups
+
+- [X] T070 [US3] Bind ArrowLeft/ArrowRight to the same speed-sized back/forward step as the visible transport and Space to play/pause while ignoring repeats, modifiers, and editable controls; keep manual step-forward available whenever replay navigation is permitted in `frontend/src/components/backtest/BacktestReplayControls.tsx`.
+- [X] T071 [US9] Align Backtest trade-detail precision and marker direction with Settings metadata, format replay date/time as weekday/month/day/year plus time, and present compact lot-weighted position labels with legible BE/close controls and vertical stop/target drag cursors in the trade-detail and replay chart components.
+
+### Artifact convergence
+
+- [X] T072 Update `spec.md`, `plan.md`, `data-model.md`, `contracts/backtest-api.md`, `research.md`, `quickstart.md`, and this task ledger to describe the current cache-manifest model, source-specific recovery, manual import, portable backups, scale-in behavior, high-water-capped trade charts, keyboard controls, separator-insensitive search, mapped manual trades, and remaining browser-validation scope.
+- [X] T073 Document the authenticated manual-trade conversion lookup and creation contracts, including Settings alias resolution, sizing/precision snapshots, route metadata, completed-bar eligibility, and the seven-day manual-lookup window.
+- [X] T074 Reconcile source-specific date/time and warm-up behavior across spec artifacts: Dukascopy uses the configured timezone, HistData manual import uses fixed UTC−5 without DST, and both honor `warmup_days` with a default of zero.
+- [X] T075 Reconcile the replay speed choices and step size with the implemented 1x/2x/5x/15x/30x transport and document the no-emoji segmented controls.
 
 ## Dependencies & Execution Order
 
