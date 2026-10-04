@@ -21,6 +21,7 @@ from app.models.import_batch import create_import_batch_doc
 from app.models.market_data import create_market_data_doc
 from app.models.media import create_media_doc
 from app.models.tag import create_tag_doc
+from app.models.tag_category import create_tag_category_doc
 from app.models.trade import create_trade_doc
 from app.models.trade_account import create_trade_account_doc
 from app.tick_data.parquet_store import MarketDataParquetStore
@@ -1457,9 +1458,20 @@ def test_restore_backtest_graph_remaps_and_reuses_run(client, app):
         assert mongo.db.executions.count_documents({"backtest_run_id": run_oid}) == 2
 
 
-def test_restore_accepts_legacy_v10_archive_without_backtests(client):
+def test_restore_accepts_legacy_v10_archive_without_backtests(client, app):
     """Format 1.0 backups still restore without adding run records."""
-    source_token, _ = _register_and_login(client, "legacy-v10-source")
+    from app.extensions import mongo
+
+    source_token, source_user_id = _register_and_login(client, "legacy-v10-source")
+    source_category_id = ObjectId()
+    with app.app_context():
+        legacy_tag = create_tag_doc(
+            user_id=ObjectId(source_user_id),
+            name="Legacy tag without category document",
+            category_id=source_category_id,
+        )
+        legacy_tag["_id"] = ObjectId()
+        mongo.db.tags.insert_one(legacy_tag)
     archive_bytes = _export_archive_bytes(client, source_token)
     rewritten = BytesIO()
     with zipfile.ZipFile(BytesIO(archive_bytes)) as source:
@@ -1473,16 +1485,118 @@ def test_restore_accepts_legacy_v10_archive_without_backtests(client):
     manifest["version"] = "1.0"
     manifest["counts"].pop("backtest_runs", None)
     payload.pop("backtests", None)
+    payload.pop("tag_categories", None)
     with zipfile.ZipFile(rewritten, "w", compression=zipfile.ZIP_DEFLATED) as target:
         target.writestr("manifest.json", json.dumps(manifest).encode("utf-8"))
         target.writestr("data.json", json_util.dumps(payload).encode("utf-8"))
         for name, contents in entries.items():
             target.writestr(name, contents)
 
-    destination_token, _ = _register_and_login(client, "legacy-v10-destination")
+    destination_token, destination_user_id = _register_and_login(
+        client, "legacy-v10-destination"
+    )
     response = _restore_archive(client, destination_token, rewritten.getvalue())
     assert response.status_code == 200
     assert response.get_json()["summary"]["backtest_runs"] == {"created": 0, "reused": 0}
+    with app.app_context():
+        restored_tag = mongo.db.tags.find_one(
+            {
+                "user_id": ObjectId(destination_user_id),
+                "name": "Legacy tag without category document",
+            }
+        )
+        restored_category = mongo.db.tag_categories.find_one(
+            {
+                "_id": restored_tag["category_id"],
+                "user_id": ObjectId(destination_user_id),
+            }
+        )
+        assert restored_category["system_key"] == "general"
+        assert restored_tag["category_id"] != source_category_id
+
+
+def test_backup_restores_tag_categories_with_destination_ids(client, app):
+    """Tag categories and tag references survive export, restore, and reimport."""
+    from app.extensions import mongo
+    from app.tags.categories import ensure_tag_categories
+
+    source_token, source_user_id = _register_and_login(
+        client, "tag-category-backup-source"
+    )
+    seeded = _seed_portable_backup_graph(app, source_user_id)
+
+    with app.app_context():
+        user_oid = ObjectId(source_user_id)
+        defaults = ensure_tag_categories(source_user_id)
+        trigger_category_id = defaults["triggers"]["_id"]
+        mongo.db.tag_categories.update_one(
+            {"_id": trigger_category_id},
+            {"$set": {"color": "#123456"}},
+        )
+        custom_category = create_tag_category_doc(
+            user_id=user_oid,
+            name="Custom Setups",
+            color="#13579B",
+        )
+        custom_category["_id"] = ObjectId()
+        mongo.db.tag_categories.insert_one(custom_category)
+        mongo.db.tags.update_one(
+            {"_id": seeded["tag_one"]["_id"]},
+            {"$set": {"category_id": custom_category["_id"]}},
+        )
+        mongo.db.tags.update_one(
+            {"_id": seeded["tag_two"]["_id"]},
+            {"$set": {"category_id": trigger_category_id}},
+        )
+
+    archive_bytes = _export_archive_bytes(client, source_token)
+    _, payload, _ = _parse_archive(archive_bytes)
+    exported_categories = {
+        category["name"]: category
+        for category in payload["tag_categories"]
+    }
+    assert len(exported_categories) == 4
+    assert exported_categories["Custom Setups"]["color"] == "#13579B"
+    assert exported_categories["Triggers"]["system_key"] == "triggers"
+    assert exported_categories["Triggers"]["color"] == "#123456"
+
+    destination_token, destination_user_id = _register_and_login(
+        client, "tag-category-backup-destination"
+    )
+    first_restore = _restore_archive(client, destination_token, archive_bytes)
+    assert first_restore.status_code == 200
+
+    with app.app_context():
+        destination_oid = ObjectId(destination_user_id)
+        categories = list(
+            mongo.db.tag_categories.find({"user_id": destination_oid})
+        )
+        category_by_name = {category["name"]: category for category in categories}
+        restored_tags = {
+            tag["name"]: tag
+            for tag in mongo.db.tags.find({"user_id": destination_oid})
+        }
+        assert len(categories) == 4
+        assert category_by_name["Custom Setups"]["color"] == "#13579B"
+        assert category_by_name["Triggers"]["color"] == "#123456"
+        assert restored_tags["Breakout"]["category_id"] == category_by_name[
+            "Custom Setups"
+        ]["_id"]
+        assert restored_tags["Review"]["category_id"] == category_by_name[
+            "Triggers"
+        ]["_id"]
+        assert restored_tags["Breakout"]["category_id"] != custom_category["_id"]
+        assert restored_tags["Review"]["category_id"] != trigger_category_id
+
+    second_restore = _restore_archive(client, destination_token, archive_bytes)
+    assert second_restore.status_code == 200
+    with app.app_context():
+        assert mongo.db.tag_categories.count_documents(
+            {"user_id": ObjectId(destination_user_id)}
+        ) == 4
+        assert mongo.db.tags.count_documents(
+            {"user_id": ObjectId(destination_user_id)}
+        ) == 2
 
 
 def test_restore_into_different_user_remaps_graph_and_media(

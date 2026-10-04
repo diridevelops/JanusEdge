@@ -36,6 +36,7 @@ from app.repositories.market_data_repo import (
 )
 from app.repositories.media_repo import MediaRepository
 from app.repositories.tag_repo import TagRepository
+from app.repositories.tag_category_repo import TagCategoryRepository
 from app.repositories.trade_repo import TradeRepository
 from app.repositories.user_repo import UserRepository
 from app.storage import (
@@ -44,11 +45,12 @@ from app.storage import (
     get_client,
     get_market_data_bucket,
 )
+from app.tags.categories import ensure_tag_categories
 from app.utils.errors import ValidationError
 from app.utils.trade_fingerprint import (
     build_trade_fingerprint,
 )
-from app.utils.validators import is_valid_timezone
+from app.utils.validators import is_valid_hex_color, is_valid_timezone
 
 
 BACKUP_ARCHIVE_TYPE = "janusedge-portable-backup"
@@ -66,6 +68,7 @@ class PortableBackupService:
         self.user_repo = UserRepository()
         self.account_repo = AccountRepository()
         self.tag_repo = TagRepository()
+        self.tag_category_repo = TagCategoryRepository()
         self.batch_repo = ImportBatchRepository()
         self.trade_repo = TradeRepository()
         self.execution_repo = ExecutionRepository()
@@ -230,9 +233,15 @@ class PortableBackupService:
             summary,
             reused_run_sources,
         )
+        tag_category_id_map, general_category_id = self._restore_tag_categories(
+            destination_user_id,
+            payload.get("tag_categories", []),
+        )
         tag_id_map = self._restore_tags(
             destination_user_id,
             payload["tags"],
+            tag_category_id_map,
+            general_category_id,
             summary,
         )
         batch_id_map = self._restore_import_batches(
@@ -443,6 +452,7 @@ class PortableBackupService:
                 or account.get("backtest_run_id") in exportable_run_ids
             ],
             "tags": self.tag_repo.find_by_user(user_id),
+            "tag_categories": self.tag_category_repo.find_by_user(user_id),
             "import_batches": self.batch_repo.find_by_ids(
                 referenced_batch_ids
             ),
@@ -955,6 +965,7 @@ class PortableBackupService:
 
             if archive_version == "1.0":
                 payload.setdefault("backtests", self._empty_backtest_payload())
+            payload.setdefault("tag_categories", [])
             self._validate_payload_structure(payload, archive_version)
 
             media_bytes: dict[str, bytes] = {}
@@ -1008,6 +1019,23 @@ class PortableBackupService:
             )
 
         self._validate_portable_settings(payload["settings"])
+        tag_categories = payload.get("tag_categories", [])
+        if not isinstance(tag_categories, list):
+            raise ValidationError("Backup archive tag categories are invalid.")
+        for category in tag_categories:
+            if (
+                not isinstance(category, dict)
+                or "_id" not in category
+                or not isinstance(category.get("name"), str)
+                or not category["name"].strip()
+                or not isinstance(category.get("color"), str)
+                or not is_valid_hex_color(category["color"])
+                or (
+                    category.get("system_key") is not None
+                    and not isinstance(category.get("system_key"), str)
+                )
+            ):
+                raise ValidationError("Backup archive tag categories are invalid.")
         backtests = payload.get("backtests")
         if archive_version == "1.1" and not isinstance(backtests, dict):
             raise ValidationError("Backup archive backtest payload is invalid.")
@@ -1164,15 +1192,85 @@ class PortableBackupService:
             account_id_map[str(source_doc["_id"])] = new_id
         return account_id_map
 
+    def _restore_tag_categories(
+        self,
+        destination_user_id: ObjectId,
+        category_docs: List[dict],
+    ) -> tuple[dict[str, ObjectId], ObjectId]:
+        """Restore tag categories and return the source-to-destination ID map."""
+        destination_user_id_str = str(destination_user_id)
+        default_categories = ensure_tag_categories(destination_user_id_str)
+        default_category_id = default_categories["general"]["_id"]
+        category_id_map: dict[str, ObjectId] = {}
+
+        for source_doc in category_docs:
+            source_id = source_doc["_id"]
+            source_system_key = source_doc.get("system_key")
+            if source_system_key:
+                existing = self.tag_category_repo.find_by_system_key(
+                    destination_user_id_str, source_system_key
+                )
+                if existing is None:
+                    existing = self.tag_category_repo.find_one(
+                        {
+                            "user_id": destination_user_id,
+                            "name": source_doc["name"],
+                        }
+                    )
+            else:
+                existing = self.tag_category_repo.find_one(
+                    {
+                        "user_id": destination_user_id,
+                        "name": source_doc["name"],
+                    }
+                )
+
+            if existing:
+                updates = {"color": source_doc["color"]}
+                if source_system_key and not existing.get("system_key"):
+                    updates["system_key"] = source_system_key
+                source_name = source_doc["name"]
+                if source_name != existing.get("name"):
+                    name_conflict = self.tag_category_repo.find_one(
+                        {
+                            "user_id": destination_user_id,
+                            "name": source_name,
+                            "_id": {"$ne": existing["_id"]},
+                        }
+                    )
+                    if not name_conflict:
+                        updates["name"] = source_name
+                self.tag_category_repo.update_one(
+                    str(existing["_id"]), {"$set": updates}
+                )
+                destination_category_id = existing["_id"]
+            else:
+                new_doc = deepcopy(source_doc)
+                destination_category_id = ObjectId()
+                new_doc["_id"] = destination_category_id
+                new_doc["user_id"] = destination_user_id
+                new_doc.pop("portable_backup_source", None)
+                self.tag_category_repo.insert_one(new_doc)
+
+            category_id_map[str(source_id)] = destination_category_id
+
+        return category_id_map, default_category_id
+
     def _restore_tags(
         self,
         destination_user_id: ObjectId,
         tag_docs: List[dict],
+        category_id_map: dict[str, ObjectId],
+        default_category_id: ObjectId,
         summary: dict,
     ) -> dict[str, ObjectId]:
         """Restore tags using tag name as the natural key."""
         tag_id_map: dict[str, ObjectId] = {}
         for source_doc in tag_docs:
+            source_category_id = source_doc.get("category_id")
+            destination_category_id = category_id_map.get(
+                str(source_category_id), default_category_id
+            )
             existing = self.tag_repo.find_one(
                 {
                     "user_id": destination_user_id,
@@ -1180,6 +1278,11 @@ class PortableBackupService:
                 }
             )
             if existing:
+                if str(source_category_id) in category_id_map:
+                    self.tag_repo.update_one(
+                        str(existing["_id"]),
+                        {"$set": {"category_id": destination_category_id}},
+                    )
                 summary["tags"]["reused"] += 1
                 tag_id_map[str(source_doc["_id"])] = existing[
                     "_id"
@@ -1190,6 +1293,7 @@ class PortableBackupService:
             new_id = ObjectId()
             new_doc["_id"] = new_id
             new_doc["user_id"] = destination_user_id
+            new_doc["category_id"] = destination_category_id
             self.tag_repo.insert_one(new_doc)
             summary["tags"]["created"] += 1
             tag_id_map[str(source_doc["_id"])] = new_id
