@@ -1,0 +1,63 @@
+import { createContext, useContext } from 'react';
+import type {
+  BacktestEntryOrderDraft,
+  BacktestEntryType,
+  BacktestTradeDirection,
+} from './backtestBracketMath';
+import type { BacktestOverlayPosition } from './BacktestPositionOverlay';
+import type { BacktestWorkingOrderOverlayItem } from './BacktestWorkingOrderOverlay';
+
+export interface BacktestSimulationPreviewUi {
+  visible: boolean;
+  entryType: BacktestEntryType;
+  direction: BacktestTradeDirection;
+  entryPrice: number;
+  stopLossPrice: number;
+  takeProfitPrice: number;
+  pricePrecision: number;
+  tickSize: number;
+  pipSize: number;
+  priceUnitLabel: string;
+  quantityLots: number | null;
+  autoSize: boolean;
+  riskBudgetUsd: number | null;
+  projectedRiskUsd: number | null;
+  projectedRewardUsd: number | null;
+  riskRewardRatio: number | null;
+  currentBalanceUsd: number;
+  canPlaceOrder: boolean;
+  orderPending: boolean;
+  invalidReason?: string;
+  onEntryPriceChange: (price: number) => void;
+  onStopLossPriceChange: (price: number) => void;
+  onTakeProfitPriceChange: (price: number) => void;
+  onPlaceOrder: (draft: BacktestEntryOrderDraft) => void;
+  onCancel: () => void;
+}
+
+export interface BacktestSimulationChartUi {
+  preview: BacktestSimulationPreviewUi;
+  positions: BacktestOverlayPosition[];
+  workingOrders: BacktestWorkingOrderOverlayItem[];
+  currentClose: number | null;
+  markPrice: number | null;
+  pricePrecision: number;
+  tickSize: number;
+  lotIncrement: number;
+  pipSize: number;
+  priceUnitLabel: string;
+  disabled: boolean;
+  onMoveStop: (positionId: string, displayedPrice: number) => void;
+  onMoveTarget: (positionId: string, displayedPrice: number) => void;
+  onBreakEven: (positionId: string, displayedPrice: number) => void;
+  onClose: (positionId: string) => void;
+  onCancelOrder: (orderId: string) => void;
+}
+
+const BacktestSimulationUiContext = createContext<BacktestSimulationChartUi | null>(null);
+
+export const BacktestSimulationUiProvider = BacktestSimulationUiContext.Provider;
+
+export function useBacktestSimulationChartUi() {
+  return useContext(BacktestSimulationUiContext);
+}

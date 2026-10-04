@@ -30,6 +30,7 @@ from app.repositories.trade_repo import TradeRepository
 from app.repositories.user_repo import UserRepository
 from app.utils.errors import NotFoundError, ValidationError
 from app.utils import upload_limits
+from app.workspace_mode.service import require_real_workspace
 from app.whatif.cache import clear_simulation_cache
 
 import_service = ImportService()
@@ -60,6 +61,7 @@ def upload():
     Returns: Parsed executions, errors, platform info.
     """
     user_id = get_jwt_identity()
+    require_real_workspace(user_id)
 
     if "file" not in request.files:
         raise ValidationError("No file provided.")
@@ -111,6 +113,7 @@ def reconstruct():
     Returns: {trades[]}
     """
     user_id = get_jwt_identity()
+    require_real_workspace(user_id)
     data = request.get_json()
     if not data:
         raise ValidationError("Request body is required.")
@@ -144,6 +147,7 @@ def finalize():
     Returns: Import summary.
     """
     user_id = get_jwt_identity()
+    require_real_workspace(user_id)
     data = request.get_json()
     if not data:
         raise ValidationError("Request body is required.")
@@ -214,6 +218,7 @@ def list_batches():
     Returns: {batches[]}
     """
     user_id = get_jwt_identity()
+    require_real_workspace(user_id)
     batches = batch_repo.find_by_user(user_id)
 
     return jsonify(
@@ -238,6 +243,7 @@ def get_batch(batch_id):
     Returns: {batch, trades[], executions[]}
     """
     user_id = get_jwt_identity()
+    require_real_workspace(user_id)
     batch = batch_repo.find_by_id(batch_id)
 
     if not batch:
@@ -284,6 +290,7 @@ def delete_batch(batch_id):
     Returns: {message}
     """
     user_id = get_jwt_identity()
+    require_real_workspace(user_id)
     batch = batch_repo.find_by_id(batch_id)
 
     if not batch:

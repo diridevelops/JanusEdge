@@ -1,0 +1,488 @@
+"""Authenticated Backtest run, catalog, and notice routes."""
+
+import json
+
+from flask import jsonify, request
+from flask_jwt_extended import get_jwt_identity, jwt_required
+from marshmallow import ValidationError as MarshmallowError
+
+from app.backtests import backtest_bp
+from app.backtests.simulation_effects import BacktestSimulationEffects
+from app.backtests.simulation_repository import BacktestSimulationRepository
+from app.backtests.simulation_schemas import (
+    AdvanceSimulationRequestSchema,
+    CancelOrderRequestSchema,
+    ClosePositionRequestSchema,
+    ModifyProtectionRequestSchema,
+    ResetSimulationRequestSchema,
+    RewindSimulationRequestSchema,
+    SubmitOrderRequestSchema,
+    UpdateRiskRequestSchema,
+)
+from app.backtests.simulation_service import SimulationService
+from app.backtests.schemas import serialize_backtest_value
+from app.backtests.service import BacktestService
+from app.market_data.symbol_mapper import (
+    get_default_instrument_mappings,
+    get_default_instrument_specs_version,
+)
+from app.utils.errors import ConflictError, NotFoundError, ValidationError
+from app.utils import upload_limits
+
+
+backtest_service = BacktestService()
+simulation_repository = BacktestSimulationRepository()
+simulation_effects = BacktestSimulationEffects(
+    backtest_repository=backtest_service.repository,
+    simulation_repository=simulation_repository,
+)
+simulation_service = SimulationService(
+    backtest_repository=backtest_service.repository,
+    simulation_repository=simulation_repository,
+)
+
+
+def _request_json() -> dict:
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        raise ValidationError("A JSON request body is required.")
+    return payload
+
+
+def _simulation_run_and_precision(user_id: str, run_id: str) -> tuple[dict, int | None]:
+    run = backtest_service.repository.find_owned_run(user_id, run_id)
+    if run is None:
+        raise NotFoundError("Backtest run not found.")
+    if run.get("status") == "deleting":
+        raise ConflictError("Backtest run is being deleted.")
+    backtest_service._require_cache_available(run)
+    metadata = run.get("instrument_metadata") or {}
+    precision = metadata.get("price_precision")
+    return run, precision if isinstance(precision, int) and not isinstance(precision, bool) else None
+
+
+def _simulation_payload(schema_type, user_id: str, run_id: str) -> dict:
+    run, precision = _simulation_run_and_precision(user_id, run_id)
+    tick_size = (run.get("instrument_metadata") or {}).get("tick_size")
+    try:
+        return schema_type(
+            instrument_precision=precision,
+            instrument_tick_size=tick_size,
+        ).load(_request_json())
+    except MarshmallowError as exc:
+        raise ValidationError("Validation failed.", details=exc.messages) from exc
+
+
+def _execute_simulation(run_id: str, kind: str, schema_type):
+    user_id = get_jwt_identity()
+    payload = _simulation_payload(schema_type, user_id, run_id)
+    response = simulation_service.execute_operation(
+        user_id,
+        run_id,
+        client_operation_id=payload["client_operation_id"],
+        expected_revision=payload["expected_revision"],
+        kind=kind,
+        request=payload,
+        effect_handler=simulation_effects.apply_operation,
+        cleanup_handler=simulation_effects.cleanup_generation,
+    )
+    return jsonify(serialize_backtest_value(response)), 200
+
+
+@backtest_bp.route("/instruments", methods=["GET"])
+@jwt_required()
+def list_instruments():
+    """Return the current catalog from the pinned downloader."""
+    return jsonify({"instruments": backtest_service.get_instruments()}), 200
+
+
+@backtest_bp.route("/instrument-specs", methods=["GET"])
+@jwt_required()
+def list_instrument_specs():
+    """Return the versioned Settings defaults for all catalog symbols."""
+    return jsonify(
+        {
+            "spec_version": get_default_instrument_specs_version(),
+            "instruments": get_default_instrument_mappings(),
+        }
+    ), 200
+
+
+@backtest_bp.route("/manual-instruments", methods=["GET"])
+@jwt_required()
+def list_manual_instruments():
+    return jsonify({"instruments": backtest_service.get_manual_instruments(
+        get_jwt_identity()
+    )}), 200
+
+
+@backtest_bp.route("/manual-datasets/<instrument>", methods=["GET"])
+@jwt_required()
+def get_manual_dataset(instrument: str):
+    return jsonify(backtest_service.get_manual_dataset(
+        get_jwt_identity(), instrument
+    )), 200
+
+
+@backtest_bp.route("/manual-import/preview", methods=["POST"])
+@jwt_required()
+def preview_manual_import():
+    instrument = request.form.get("instrument", "")
+    files = request.files.getlist("files")
+    for file_storage in files:
+        upload_limits.enforce_upload_file_size(
+            file_storage,
+            max_size_bytes=upload_limits.CSV_IMPORT_MAX_FILE_SIZE,
+            error_message="Each HistData file must be no larger than 500 MB.",
+        )
+    return jsonify(backtest_service.preview_manual_import(
+        get_jwt_identity(), instrument, files
+    )), 200
+
+
+@backtest_bp.route("/runs/manual", methods=["POST"])
+@jwt_required()
+def create_manual_run():
+    if not request.mimetype or not request.mimetype.startswith("multipart/form-data"):
+        raise ValidationError("A multipart form request is required.")
+    try:
+        payload = json.loads(request.form.get("settings", "{}"))
+    except (TypeError, ValueError) as exc:
+        raise ValidationError("Manual run settings must be valid JSON.") from exc
+    if not isinstance(payload, dict):
+        raise ValidationError("Manual run settings must be an object.")
+    files = request.files.getlist("files")
+    for file_storage in files:
+        upload_limits.enforce_upload_file_size(
+            file_storage,
+            max_size_bytes=upload_limits.CSV_IMPORT_MAX_FILE_SIZE,
+            error_message="Each HistData file must be no larger than 500 MB.",
+        )
+    try:
+        fallback = payload.get("quote_to_usd_fallback_rate")
+        if fallback not in (None, ""):
+            fallback = float(fallback)
+        else:
+            fallback = None
+        run = backtest_service.create_manual_run(
+            user_id=get_jwt_identity(),
+            instrument=payload.get("instrument"),
+            display_timezone=payload.get("display_timezone"),
+            start_date=payload.get("start_date"),
+            end_date=payload.get("end_date"),
+            period_selection=payload.get("period_selection", "manual"),
+            period_months=payload.get("period_months"),
+            warmup_days=payload.get("warmup_days", 0),
+            blind_mode=payload.get("blind_mode", False),
+            initial_balance_usd=payload.get("initial_balance_usd", 10_000),
+            risk_percent=payload.get("risk_percent", 1),
+            execution_costs=payload.get("execution_costs"),
+            files=files,
+            expected_dataset_revision=payload.get("expected_dataset_revision"),
+            confirm_overwrite=payload.get("confirm_overwrite", False),
+            quote_to_usd_fallback_rate=fallback,
+        )
+    except (TypeError, ValueError) as exc:
+        if isinstance(exc, (ValidationError, ConflictError, NotFoundError)):
+            raise
+        raise ValidationError("Manual run settings contain invalid values.") from exc
+    return jsonify({"run": serialize_backtest_value(run)}), 202
+
+
+@backtest_bp.route("/runs", methods=["POST"])
+@jwt_required()
+def create_run():
+    """Create the run/account/job records and return immediately."""
+    payload = _request_json()
+    run = backtest_service.create_run(
+        user_id=get_jwt_identity(),
+        instrument=payload.get("instrument"),
+        start_date=payload.get("start_date"),
+        end_date=payload.get("end_date"),
+        display_timezone=payload.get("display_timezone"),
+        period_selection=payload.get("period_selection"),
+        period_months=payload.get("period_months"),
+        warmup_days=payload.get("warmup_days", 0),
+        blind_mode=payload.get("blind_mode"),
+        initial_balance_usd=payload.get("initial_balance_usd", 10_000),
+        risk_percent=payload.get("risk_percent", 1.0),
+        execution_costs=payload.get("execution_costs"),
+    )
+    return jsonify({"run": serialize_backtest_value(run)}), 202
+
+
+@backtest_bp.route("/runs", methods=["GET"])
+@jwt_required()
+def list_runs():
+    return jsonify(
+        {"runs": backtest_service.list_runs(get_jwt_identity())}
+    ), 200
+
+
+@backtest_bp.route("/runs/<run_id>", methods=["GET"])
+@jwt_required()
+def get_run(run_id: str):
+    return jsonify(
+        {"run": backtest_service.get_run(get_jwt_identity(), run_id)}
+    ), 200
+
+
+@backtest_bp.route("/runs/<run_id>/cache-status", methods=["GET"])
+@jwt_required()
+def get_cache_status(run_id: str):
+    return jsonify(
+        serialize_backtest_value(
+            backtest_service.get_cache_status(get_jwt_identity(), run_id)
+        )
+    ), 200
+
+
+@backtest_bp.route("/runs/<run_id>/cache-recovery", methods=["POST"])
+@jwt_required()
+def start_cache_recovery(run_id: str):
+    return jsonify(
+        serialize_backtest_value(
+            backtest_service.start_cache_recovery(get_jwt_identity(), run_id)
+        )
+    ), 202
+
+
+@backtest_bp.route("/runs/<run_id>/manual-cache-recovery", methods=["POST"])
+@jwt_required()
+def restore_manual_cache(run_id: str):
+    files = [item for item in request.files.getlist("files") if item.filename]
+    if not files:
+        raise ValidationError("Choose the original HistData CSV files for this run.")
+    for item in files:
+        upload_limits.enforce_upload_file_size(
+            item,
+            max_size_bytes=upload_limits.CSV_IMPORT_MAX_FILE_SIZE,
+            error_message="Each HistData CSV file must be 500 MB or smaller.",
+        )
+    return jsonify(
+        serialize_backtest_value(
+            backtest_service.restore_manual_run_cache(
+                get_jwt_identity(), run_id, files
+            )
+        )
+    ), 200
+
+
+@backtest_bp.route("/runs/<run_id>", methods=["DELETE"])
+@jwt_required()
+def delete_run(run_id: str):
+    """Start permanent owner-scoped cleanup; 202 means pending, not done."""
+    run = backtest_service.delete_run(get_jwt_identity(), run_id)
+    return jsonify({"run": run}), 202
+
+
+@backtest_bp.route("/runs/<run_id>/candle-dates", methods=["GET"])
+@jwt_required()
+def list_candle_dates(run_id: str):
+    dates = backtest_service.get_available_candle_dates(
+        get_jwt_identity(),
+        run_id,
+        before=request.args.get("before"),
+        after=request.args.get("after"),
+    )
+    return jsonify({"dates": dates}), 200
+
+
+@backtest_bp.route("/runs/<run_id>/candles", methods=["GET"])
+@jwt_required()
+def get_candles_for_date(run_id: str):
+    candles = backtest_service.get_candles_for_date(
+        get_jwt_identity(), run_id, request.args.get("date")
+    )
+    return jsonify({"candles": candles}), 200
+
+
+@backtest_bp.route("/runs/<run_id>/chart-candles", methods=["GET"])
+@jwt_required()
+def get_chart_candles(run_id: str):
+    candles = backtest_service.get_chart_candles(
+        get_jwt_identity(),
+        run_id,
+        start=request.args.get("start"),
+        end=request.args.get("end"),
+        interval=request.args.get("interval", "1m"),
+    )
+    return jsonify({"candles": candles}), 200
+
+
+@backtest_bp.route("/runs/<run_id>/replay-position", methods=["PUT"])
+@jwt_required()
+def save_replay_position(run_id: str):
+    payload = _request_json()
+    user_id = get_jwt_identity()
+    run = backtest_service.repository.find_owned_run(user_id, run_id)
+    if run is None:
+        raise NotFoundError("Backtest run not found.")
+    control = run.get("simulation_control") or {}
+    if int(control.get("committed_sequence", 0)) > 0 or control.get("has_accepted_order"):
+        raise ConflictError("Use the simulation rewind operation to move the cursor.")
+    cursor = backtest_service.save_replay_position(
+        user_id,
+        run_id,
+        source_candle_index=payload.get("source_candle_index"),
+        time_ms=payload.get("time_ms"),
+        expected_revision=payload.get("expected_revision"),
+    )
+    return jsonify(
+        {"replay_cursor": serialize_backtest_value(cursor)}
+    ), 200
+
+
+@backtest_bp.route("/runs/<run_id>/simulation", methods=["GET"])
+@jwt_required()
+def get_simulation_state(run_id: str):
+    state = simulation_effects.get_state(get_jwt_identity(), run_id)
+    return jsonify(serialize_backtest_value(state)), 200
+
+
+@backtest_bp.route("/runs/<run_id>/simulation/orders", methods=["POST"])
+@jwt_required()
+def submit_simulation_order(run_id: str):
+    return _execute_simulation(run_id, "submit_order", SubmitOrderRequestSchema)
+
+
+@backtest_bp.route("/runs/<run_id>/simulation/orders/<order_id>/cancel", methods=["POST"])
+@jwt_required()
+def cancel_simulation_order(run_id: str, order_id: str):
+    payload = _simulation_payload(CancelOrderRequestSchema, get_jwt_identity(), run_id)
+    payload["order_id"] = order_id
+    response = simulation_service.execute_operation(
+        get_jwt_identity(), run_id,
+        client_operation_id=payload["client_operation_id"],
+        expected_revision=payload["expected_revision"], kind="cancel_order",
+        request=payload, effect_handler=simulation_effects.apply_operation,
+        cleanup_handler=simulation_effects.cleanup_generation,
+    )
+    return jsonify(serialize_backtest_value(response)), 200
+
+
+@backtest_bp.route("/runs/<run_id>/simulation/positions/<position_id>/close", methods=["POST"])
+@jwt_required()
+def close_simulation_position(run_id: str, position_id: str):
+    payload = _simulation_payload(ClosePositionRequestSchema, get_jwt_identity(), run_id)
+    payload["position_id"] = position_id
+    response = simulation_service.execute_operation(
+        get_jwt_identity(), run_id,
+        client_operation_id=payload["client_operation_id"],
+        expected_revision=payload["expected_revision"], kind="close_position",
+        request=payload, effect_handler=simulation_effects.apply_operation,
+        cleanup_handler=simulation_effects.cleanup_generation,
+    )
+    return jsonify(serialize_backtest_value(response)), 200
+
+
+@backtest_bp.route("/runs/<run_id>/simulation/positions/<position_id>/protection", methods=["PUT"])
+@jwt_required()
+def modify_simulation_protection(run_id: str, position_id: str):
+    payload = _simulation_payload(ModifyProtectionRequestSchema, get_jwt_identity(), run_id)
+    payload["position_id"] = position_id
+    response = simulation_service.execute_operation(
+        get_jwt_identity(), run_id,
+        client_operation_id=payload["client_operation_id"],
+        expected_revision=payload["expected_revision"], kind="modify_protection",
+        request=payload, effect_handler=simulation_effects.apply_operation,
+        cleanup_handler=simulation_effects.cleanup_generation,
+    )
+    return jsonify(serialize_backtest_value(response)), 200
+
+
+@backtest_bp.route("/runs/<run_id>/simulation/costs", methods=["PUT"])
+@jwt_required()
+def update_simulation_costs(run_id: str):
+    _simulation_run_and_precision(get_jwt_identity(), run_id)
+    raise ConflictError("Execution costs are fixed when the run is created.")
+
+
+@backtest_bp.route("/runs/<run_id>/simulation/risk", methods=["PUT"])
+@jwt_required()
+def update_simulation_risk(run_id: str):
+    return _execute_simulation(run_id, "update_risk", UpdateRiskRequestSchema)
+
+
+@backtest_bp.route("/runs/<run_id>/simulation/advance", methods=["POST"])
+@jwt_required()
+def advance_simulation(run_id: str):
+    return _execute_simulation(run_id, "advance", AdvanceSimulationRequestSchema)
+
+
+@backtest_bp.route("/runs/<run_id>/simulation/rewind", methods=["POST"])
+@jwt_required()
+def rewind_simulation(run_id: str):
+    return _execute_simulation(run_id, "rewind", RewindSimulationRequestSchema)
+
+
+@backtest_bp.route("/runs/<run_id>/simulation/reset", methods=["POST"])
+@jwt_required()
+def reset_simulation(run_id: str):
+    return _execute_simulation(run_id, "reset", ResetSimulationRequestSchema)
+
+
+@backtest_bp.route("/runs/<run_id>/chart-workspace", methods=["GET"])
+@jwt_required()
+def get_chart_workspace(run_id: str):
+    return jsonify(
+        backtest_service.get_chart_workspace(get_jwt_identity(), run_id)
+    ), 200
+
+
+@backtest_bp.route("/runs/<run_id>/chart-workspace", methods=["PUT"])
+@jwt_required()
+def save_chart_workspace(run_id: str):
+    payload = _request_json()
+    result = backtest_service.save_chart_workspace(
+        get_jwt_identity(),
+        run_id,
+        expected_revision=payload.get("expected_revision"),
+        workspace=payload.get("workspace"),
+    )
+    return jsonify(result), 200
+
+
+@backtest_bp.route("/runs/<run_id>/drawings", methods=["GET"])
+@jwt_required()
+def get_drawing_state(run_id: str):
+    drawing_state = backtest_service.get_drawing_state(
+        get_jwt_identity(),
+        run_id,
+        request.args.get("interval_minutes"),
+    )
+    return jsonify(drawing_state), 200
+
+
+@backtest_bp.route("/runs/<run_id>/drawings", methods=["PUT"])
+@jwt_required()
+def save_drawing_state(run_id: str):
+    drawing_state = backtest_service.save_drawing_state(
+        get_jwt_identity(),
+        run_id,
+        request.args.get("interval_minutes"),
+        _request_json(),
+    )
+    return jsonify(drawing_state), 200
+
+
+@backtest_bp.route("/runs/<run_id>/retry", methods=["POST"])
+@jwt_required()
+def retry_run(run_id: str):
+    run = backtest_service.retry_run(get_jwt_identity(), run_id)
+    return jsonify({"run": run}), 202
+
+
+@backtest_bp.route("/notices", methods=["GET"])
+@jwt_required()
+def list_notices():
+    return jsonify(
+        {"notices": backtest_service.list_notices(get_jwt_identity())}
+    ), 200
+
+
+@backtest_bp.route("/notices/<notice_id>", methods=["DELETE"])
+@jwt_required()
+def dismiss_notice(notice_id: str):
+    backtest_service.dismiss_notice(get_jwt_identity(), notice_id)
+    return jsonify({"message": "Preparation notice dismissed."}), 200

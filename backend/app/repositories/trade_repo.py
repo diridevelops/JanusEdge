@@ -20,6 +20,7 @@ class TradeRepository(BaseRepository):
         self,
         user_id: str,
         filters: dict = None,
+        workspace_mode: str = None,
         sort_by: str = "entry_time",
         sort_dir: int = -1,
         skip: int = 0,
@@ -45,6 +46,12 @@ class TradeRepository(BaseRepository):
         }
         if filters:
             query.update(filters)
+        if workspace_mode is not None:
+            query["trade_account_id"] = {
+                "$in": self._workspace_account_ids(
+                    user_id, workspace_mode
+                )
+            }
 
         return self.find_many(
             query,
@@ -54,7 +61,10 @@ class TradeRepository(BaseRepository):
         )
 
     def count_by_user(
-        self, user_id: str, filters: dict = None
+        self,
+        user_id: str,
+        filters: dict = None,
+        workspace_mode: str = None,
     ) -> int:
         """Count trades for a user with optional filters."""
         query = {
@@ -63,7 +73,27 @@ class TradeRepository(BaseRepository):
         }
         if filters:
             query.update(filters)
+        if workspace_mode is not None:
+            query["trade_account_id"] = {
+                "$in": self._workspace_account_ids(
+                    user_id, workspace_mode
+                )
+            }
         return self.count(query)
+
+    @staticmethod
+    def _workspace_account_ids(
+        user_id: str, workspace_mode: str
+    ) -> list[ObjectId]:
+        """Resolve account ids visible in one workspace."""
+        from app.repositories.account_repo import AccountRepository
+
+        return [
+            account["_id"]
+            for account in AccountRepository().find_by_user(
+                user_id, workspace_mode=workspace_mode
+            )
+        ]
 
     def soft_delete(self, trade_id: str) -> bool:
         """
@@ -108,7 +138,10 @@ class TradeRepository(BaseRepository):
         )
 
     def search_text(
-        self, user_id: str, query_text: str
+        self,
+        user_id: str,
+        query_text: str,
+        workspace_mode: str = None,
     ) -> List[dict]:
         """
         Full-text search on trades.
@@ -120,25 +153,41 @@ class TradeRepository(BaseRepository):
         Returns:
             List of matching trade documents.
         """
+        query = {
+            "user_id": ObjectId(user_id),
+            "status": {"$ne": "deleted"},
+            "$text": {"$search": query_text},
+        }
+        if workspace_mode is not None:
+            query["trade_account_id"] = {
+                "$in": self._workspace_account_ids(
+                    user_id, workspace_mode
+                )
+            }
         return self.find_many(
-            {
-                "user_id": ObjectId(user_id),
-                "status": {"$ne": "deleted"},
-                "$text": {"$search": query_text},
-            },
+            query,
             limit=50,
         )
 
     def distinct_symbols(
-        self, user_id: str
+        self,
+        user_id: str,
+        workspace_mode: str = None,
     ) -> List[str]:
         """Return sorted distinct symbols for a user's closed trades."""
+        query = {
+            "user_id": ObjectId(user_id),
+            "status": "closed",
+        }
+        if workspace_mode is not None:
+            query["trade_account_id"] = {
+                "$in": self._workspace_account_ids(
+                    user_id, workspace_mode
+                )
+            }
         symbols = self.collection.distinct(
             "symbol",
-            {
-                "user_id": ObjectId(user_id),
-                "status": "closed",
-            },
+            query,
         )
         return sorted(symbols)
 
@@ -178,3 +227,42 @@ class TradeRepository(BaseRepository):
         return [
             build_trade_fingerprint(trade) for trade in trades
         ]
+
+    def find_backtest_simulation_trades(
+        self,
+        user_id: str,
+        run_id,
+        reset_generation: int | None = None,
+    ) -> List[dict]:
+        """Find closed or soft-deleted simulation trades owned by one run.
+
+        This intentionally filters by run and (for reset) generation rather
+        than account, so cleanup remains correct if an account association is
+        missing or repaired independently.
+        """
+        query = {
+            "user_id": ObjectId(user_id),
+            "backtest_run_id": (
+                run_id if isinstance(run_id, ObjectId) else ObjectId(str(run_id))
+            ),
+        }
+        if reset_generation is not None:
+            query["simulation_generation"] = reset_generation
+        return self.find_many(query, sort=[("_id", 1)])
+
+    def count_backtest_simulation_trades(
+        self,
+        user_id: str,
+        run_id,
+        reset_generation: int | None = None,
+    ) -> int:
+        """Count remaining owner-scoped simulation trades after cleanup."""
+        query = {
+            "user_id": ObjectId(user_id),
+            "backtest_run_id": (
+                run_id if isinstance(run_id, ObjectId) else ObjectId(str(run_id))
+            ),
+        }
+        if reset_generation is not None:
+            query["simulation_generation"] = reset_generation
+        return self.count(query)

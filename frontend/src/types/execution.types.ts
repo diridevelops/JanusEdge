@@ -7,7 +7,7 @@ export interface Execution {
   trade_account_id: string;
   symbol: string;
   raw_symbol: string;
-  side: 'Buy' | 'Sell';
+  side: 'Buy' | 'Sell' | 'buy' | 'sell';
   quantity: number;
   price: number;
   commission: number;

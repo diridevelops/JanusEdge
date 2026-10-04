@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react';
 import { listAccounts } from '../../api/accounts.api';
 import { listTags } from '../../api/tags.api';
 import { getSymbols } from '../../api/trades.api';
+import { useWorkspaceMode } from '../../contexts/WorkspaceModeContext';
 import type { TradeAccount } from '../../types/account.types';
 import type { Tag } from '../../types/marketData.types';
+import type { WorkspaceMode } from '../../types/workspace.types';
 
 interface FilterBarProps {
   /** Current filter values. */
@@ -23,6 +25,8 @@ interface FilterBarProps {
   requireSymbol?: boolean;
   /** When false, hides the date range inputs while preserving shared filter shape. */
   showDateFilters?: boolean;
+  /** Called when the active workspace's account options have loaded. */
+  onAccountsLoaded?: (accounts: TradeAccount[], mode: WorkspaceMode) => void;
 }
 
 /** Global filter toolbar for trade list and analytics pages. */
@@ -32,15 +36,32 @@ export function FilterBar({
   onClearFilters,
   requireSymbol = false,
   showDateFilters = true,
+  onAccountsLoaded,
 }: FilterBarProps) {
+  const { activeMode } = useWorkspaceMode();
   const [accounts, setAccounts] = useState<TradeAccount[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
   const [symbols, setSymbols] = useState<string[]>([]);
 
   useEffect(() => {
+    let cancelled = false;
+    setAccounts([]);
     listAccounts()
-      .then(setAccounts)
-      .catch(() => {});
+      .then((loadedAccounts) => {
+        if (cancelled) return;
+        setAccounts(loadedAccounts);
+        onAccountsLoaded?.(loadedAccounts, activeMode);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAccounts([]);
+          onAccountsLoaded?.([], activeMode);
+        }
+      });
+    return () => { cancelled = true; };
+  }, [activeMode, onAccountsLoaded]);
+
+  useEffect(() => {
     listTags()
       .then(setTags)
       .catch(() => {});

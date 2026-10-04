@@ -1,4 +1,4 @@
-import { ArrowRight, LayoutDashboard, Upload } from 'lucide-react';
+import { ArrowRight, FlaskConical, LayoutDashboard, Upload } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 
@@ -22,6 +22,7 @@ import { PageHeader } from '../components/ui/PageHeader';
 import { Spinner } from '../components/ui/Spinner';
 import { useAuth } from '../hooks/useAuth';
 import { useFilters } from '../hooks/useFilters';
+import { useWorkspaceMode } from '../contexts/WorkspaceModeContext';
 import type {
     AnalyticsSummary,
     ApptByDayOfWeekEntry,
@@ -38,6 +39,7 @@ type DashboardTab = 'overview' | 'time-date' | 'evolution';
 /** Dashboard page — key stats, filters, and tabbed visualizations. */
 export function DashboardPage() {
   const { user } = useAuth();
+  const { activeMode } = useWorkspaceMode();
   const { filters, isReady, setFilters, clearFilters } = useFilters();
   const [loading, setLoading] = useState(true);
 
@@ -111,14 +113,32 @@ export function DashboardPage() {
   if (!hasTrades) {
     return (
       <div className="flex flex-col items-center justify-center h-96 space-y-4">
-        <Upload className="w-16 h-16 text-gray-300 dark:text-gray-600" />
-        <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Welcome to {APP_NAME}</h1>
-        <p className="text-gray-500 text-center max-w-md dark:text-gray-400">
-          Import your first trades to see analytics, charts, and performance metrics.
-        </p>
-        <Link to="/import" className="btn-primary inline-flex items-center gap-2">
-          Import Trades <ArrowRight className="w-4 h-4" />
-        </Link>
+        {activeMode === 'backtest' ? (
+          <FlaskConical className="w-16 h-16 text-gray-300 dark:text-gray-600" />
+        ) : (
+          <Upload className="w-16 h-16 text-gray-300 dark:text-gray-600" />
+        )}
+        {activeMode === 'backtest' ? (
+          <>
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Backtest workspace</h1>
+            <p className="max-w-md text-center text-gray-500 dark:text-gray-400">
+              Backtest runs and replay charts are available from the Backtest Runs page.
+            </p>
+            <Link to="/backtest/runs" className="btn-primary inline-flex items-center gap-2">
+              Open Backtest Runs <ArrowRight className="w-4 h-4" />
+            </Link>
+          </>
+        ) : (
+          <>
+            <h1 className="text-2xl font-bold text-gray-900 dark:text-gray-100">Welcome to {APP_NAME}</h1>
+            <p className="text-gray-500 text-center max-w-md dark:text-gray-400">
+              Import your first trades to see analytics, charts, and performance metrics.
+            </p>
+            <Link to="/import" className="btn-primary inline-flex items-center gap-2">
+              Import Trades <ArrowRight className="w-4 h-4" />
+            </Link>
+          </>
+        )}
       </div>
     );
   }

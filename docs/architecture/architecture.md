@@ -2,14 +2,16 @@
 
 ## Overview
 
-Janus Edge is a web application for importing futures execution exports, reconstructing trades, journaling them, attaching media, and analyzing results.
+Janus Edge is a web application for importing execution exports, reconstructing
+and journaling trades, attaching media, analyzing results, and replaying
+historical data in an isolated Backtest workspace.
 
 The codebase is organized as a monorepo with:
 
 - a React and TypeScript frontend in `frontend/`
 - a Flask backend in `backend/`
 - MongoDB for persisted application data
-- MinIO for media object storage
+- MinIO for media, imported market-data, and Backtest candle objects
 - Docker Compose for local orchestration
 
 ## System Diagram
@@ -23,13 +25,16 @@ graph TB
 	MinIO[(MinIO)]
 	CSV[NinjaTrader or Quantower CSV]
 	TickExport[NinjaTrader Tick Export]
+	HistData[HistData M1 CSV]
 
 	Trader --> Frontend
 	Frontend -->|REST /api| Backend
 	Trader -->|Upload| CSV
 	Trader -->|Upload| TickExport
+	Trader -->|Manual import| HistData
 	CSV -->|multipart upload| Frontend
 	TickExport -->|multipart upload| Frontend
+	HistData -->|multipart upload| Frontend
 	Backend --> Mongo
 	Backend --> MinIO
 ```
@@ -40,8 +45,9 @@ In local development, the main runtime pieces are:
 
 1. The Vite dev server on port `5173`
 2. The Flask API on port `5000`
-3. MongoDB on port `27017`
-4. MinIO on ports `9000` and `9001`
+3. The Backtest preparation/recovery worker, without a browser-facing port
+4. MongoDB on port `27017`
+5. MinIO on ports `9000` and `9001`
 
 When running the frontend in development mode, browser requests to `/api` are proxied by Vite to the Flask backend.
 
@@ -96,11 +102,29 @@ graph LR
 - What-if endpoints reuse persisted trade and stored market-data information to calculate stop overshoot statistics and wider-stop simulations. The stop-management simulator supports replay from stored 1-minute candles or stored raw ticks.
 - Monte Carlo simulation is computed in the backend and rendered by the frontend.
 
+### Backtest Runs
+
+- Backtest mode is separate from the Real workspace. Runs can use the shared
+  per-user Dukascopy cache or a versioned manual HistData dataset.
+- The preparation worker resolves cache references; the replay API commits
+  orders, fills, positions, balance, cursor, chart workspace, and drawings.
+  Charts and simulation read the same pinned run source.
+- Dukascopy candles and manual dataset revisions live in MinIO-backed,
+  per-user shared cache/revision stores; the run manifest stores references
+  and coverage rather than a second candle copy. Missing Dukascopy data is downloaded only after the user chooses
+  recovery. Missing manual data requires the matching CSV files.
+- A same-direction fill scales into the oldest open position on the same
+  instrument. Linked trade charts stop at the run's furthest replay candle.
+
 ### Backup and Restore
 
 - Export creates a ZIP archive containing `manifest.json`, `data.json`, and media binaries.
 - Restore merges that archive into the authenticated destination user.
 - Portable user settings such as timezones, starting equity, and symbol mappings are restored as part of that flow.
+- Format 1.1 includes ready/complete Backtest metadata and committed simulation
+  and chart state, but excludes Dukascopy/manual replay candle bytes. A restored
+  run reuses destination cache entries or uses the source-specific explicit
+  recovery flow. Format 1.0 remains supported without Backtest records.
 
 ## Import And Backup Flows
 
@@ -148,6 +172,7 @@ flowchart LR
 - `app/trades/`: trade CRUD and search
 - `app/analytics/`: reporting and Monte Carlo simulation
 - `app/market_data/`: stored market-data retrieval and candle access
+- `app/backtests/`: Dukascopy/manual data preparation, shared source cache, simulation, and chart-state APIs
 - `app/media/`: upload, listing, URL generation, and deletion for trade media
 - `app/whatif/`: stop analysis and simulation endpoints
 - `app/repositories/`: MongoDB data-access layer
@@ -168,10 +193,13 @@ MongoDB stores the application records for:
 - market-data dataset metadata
 - media metadata
 - audit logs
+- Backtest runs, cache/revision manifests, simulation state, chart workspaces, and drawings
 
 ### MinIO
 
-MinIO stores the binary media files for trade attachments.
+MinIO stores binary media files, imported market-data partitions, and Backtest
+replay/cache candles. Backtest runs keep references to candle data rather than
+copying it into a run-specific snapshot.
 
 The bucket is created automatically on backend startup if the MinIO client can connect and the bucket does not already exist.
 
@@ -181,8 +209,8 @@ The repository does not currently contain:
 
 - a production reverse proxy configuration
 - deployment manifests for Kubernetes or another orchestrator
-- a dedicated background job system
-- a separate worker process for imports or analytics
+- a general-purpose background job system shared across all features; Backtest uses its own durable MongoDB job records and worker
+- separate background workers for imports or analytics
 
 Those pieces should be treated as TODO items rather than current architecture guarantees.
 
@@ -194,9 +222,9 @@ Those pieces should be treated as TODO items rather than current architecture gu
 C4Context
 	title System Context Diagram — Janus Edge
 
-	Person(trader, "Trader", "A futures trader who imports trade execution files, journals trades, and reviews analytics")
+	Person(trader, "Trader", "A trader who imports or enters trades, reviews analytics, and replays historical markets")
 
-	System(janusedge, "Janus Edge Web App", "Trade journaling and analytics platform. React SPA + Flask API + MongoDB")
+	System(janusedge, "Janus Edge Web App", "Trade journal, analytics, and interactive Backtest replay. React SPA + Flask API + MongoDB + MinIO")
 
 	System_Ext(ninjatrader, "NinjaTrader", "Trading platform that exports execution-level CSV files")
 	System_Ext(ninjatraderticks, "NinjaTrader Tick Export", "Text exports containing raw tick market data")

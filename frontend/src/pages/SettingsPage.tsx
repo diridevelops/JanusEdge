@@ -14,13 +14,16 @@ import {
   updateTimezone,
   updateUsername,
 } from '../api/auth.api';
+import { getBacktestInstrumentSpecs } from '../api/backtests.api';
 import { createTag, createTagCategory, deleteTag, deleteTagCategory, listTagCategories, listTags, moveTag, updateTagCategory } from '../api/tags.api';
 import { PageHeader } from '../components/ui/PageHeader';
+import { filterInstrumentSearch } from '../utils/instrumentSearch';
 import { useAuth } from '../hooks/useAuth';
 import { useFilters } from '../hooks/useFilters';
 import { useToast } from '../hooks/useToast';
 import type {
   ForexSymbolMappings,
+  InstrumentSizingMappings,
   MarketDataMappings,
   RestoreSummary,
   SymbolMappings,
@@ -59,6 +62,7 @@ const RESTORE_SUMMARY_ITEMS: Array<{
   { key: 'trades', label: 'Trades' },
   { key: 'executions', label: 'Executions' },
   { key: 'media', label: 'Media' },
+  { key: 'backtest_runs', label: 'Backtest Runs' },
 ];
 
 function getErrorMessage(error: unknown, fallbackMessage: string): string {
@@ -89,8 +93,14 @@ interface ForexMappingRow {
   baseCurrency: string;
   quoteCurrency: string;
   pipSize: string;
-  pricePrecision: string;
+  tickSize: string;
   contractSize: string;
+  minLots: string;
+  lotIncrement: string;
+  quoteUnitScale: string;
+  reason: string;
+  specSource: string;
+  catalogGroup: string;
 }
 
 interface MarketDataMappingRow {
@@ -184,13 +194,7 @@ function createMappingRow(
 
 function createForexMappingRow(
   pair = '',
-  mapping?: Partial<{
-    base_currency: string;
-    quote_currency: string;
-    pip_size: number;
-    price_precision: number;
-    contract_size: number;
-  }>
+  mapping?: Partial<import('../types/auth.types').InstrumentSizingMappingEntry>
 ): ForexMappingRow {
   return {
     id: createRowId(),
@@ -198,10 +202,21 @@ function createForexMappingRow(
     baseCurrency: mapping?.base_currency ?? '',
     quoteCurrency: mapping?.quote_currency ?? '',
     pipSize: mapping?.pip_size != null ? String(mapping.pip_size) : '',
-    pricePrecision:
-      mapping?.price_precision != null ? String(mapping.price_precision) : '',
+    tickSize: mapping?.tick_size != null
+      ? String(mapping.tick_size)
+      : mapping?.price_precision != null
+        ? String(10 ** -mapping.price_precision)
+        : '',
     contractSize:
       mapping?.contract_size != null ? String(mapping.contract_size) : '',
+    minLots: mapping?.min_lots != null ? String(mapping.min_lots) : '',
+    lotIncrement: mapping?.lot_increment != null ? String(mapping.lot_increment) : '',
+    quoteUnitScale: mapping?.quote_currency_unit_scale != null
+      ? String(mapping.quote_currency_unit_scale)
+      : '1',
+    reason: mapping?.reason ?? '',
+    specSource: mapping?.spec_source ?? '',
+    catalogGroup: mapping?.catalog_group ?? '',
   };
 }
 
@@ -219,7 +234,7 @@ function createMarketDataMappingRow(
 function recordToMappingRows(entries: SymbolMappings): SymbolMappingRow[] {
   const rows: SymbolMappingRow[] = [];
   for (const [baseSymbol, mapping] of Object.entries(entries)) {
-    if (baseSymbol === 'forex' || !isFuturesMappingEntry(mapping)) {
+    if (baseSymbol === 'forex' || baseSymbol === 'instruments' || !isFuturesMappingEntry(mapping)) {
       continue;
     }
     rows.push(createMappingRow(
@@ -237,9 +252,51 @@ function isFuturesMappingEntry(mapping: unknown): mapping is { dollar_value_per_
 }
 
 function recordToForexMappingRows(
-  entries: ForexSymbolMappings | undefined
+  entries: ForexSymbolMappings | undefined,
+  instrumentEntries?: InstrumentSizingMappings,
+  catalogDefaults?: InstrumentSizingMappings
 ): ForexMappingRow[] {
-  const source = entries === undefined ? DEFAULT_FOREX_SYMBOL_MAPPINGS : entries;
+  const normalizeInstrumentKey = (instrument: string) =>
+    instrument.trim().toUpperCase().replace(/\//g, '-');
+  const source: InstrumentSizingMappings = {};
+  for (const [instrument, mapping] of Object.entries(catalogDefaults ?? {})) {
+    const key = normalizeInstrumentKey(instrument);
+    source[key] = { ...source[key], ...mapping };
+  }
+  const savedInstrumentMappings: InstrumentSizingMappings = {};
+  for (const [pair, mapping] of Object.entries(instrumentEntries ?? {})) {
+    const key = normalizeInstrumentKey(pair);
+    savedInstrumentMappings[key] = { ...savedInstrumentMappings[key], ...mapping };
+    source[key] = { ...source[key], ...mapping };
+  }
+  // Do not seed the table from built-in legacy Forex defaults; the unified
+  // catalog already supplies those instruments. Keep only actual legacy
+  // overrides so older customized profiles can still be migrated.
+  for (const [pair, mapping] of Object.entries(entries ?? {})) {
+    const key = normalizeInstrumentKey(pair);
+    const legacyDefault = Object.entries(DEFAULT_FOREX_SYMBOL_MAPPINGS)
+      .find(([defaultPair]) => normalizeInstrumentKey(defaultPair) === key)?.[1];
+    if (
+      legacyDefault
+      && mapping.base_currency === legacyDefault.base_currency
+      && mapping.quote_currency === legacyDefault.quote_currency
+      && mapping.pip_size === legacyDefault.pip_size
+      && mapping.price_precision === legacyDefault.price_precision
+      && mapping.contract_size === legacyDefault.contract_size
+    ) {
+      continue;
+    }
+    const savedInstrument = savedInstrumentMappings[key];
+    const legacyTickSize = mapping.price_precision != null
+      ? 10 ** -mapping.price_precision
+      : undefined;
+    const tickSize = savedInstrument?.tick_size ?? legacyTickSize;
+    source[key] = {
+      ...source[key],
+      ...mapping,
+      ...(tickSize != null ? { tick_size: tickSize } : {}),
+    };
+  }
   return Object.entries(source).map(([pair, mapping]) =>
     createForexMappingRow(pair, mapping)
   );
@@ -280,9 +337,19 @@ function updateForexMappingRow(
   return rows.map((row) => (row.id === rowId ? { ...row, [field]: value } : row));
 }
 
+function decimalPrecisionFromTick(tickSize: number): number | null {
+  if (!Number.isFinite(tickSize) || tickSize <= 0) return null;
+  const [coefficient = '', exponentText] = tickSize.toString().toLowerCase().split('e');
+  const exponent = exponentText ? Number(exponentText) : 0;
+  const fractionalDigits = coefficient.split('.')[1]?.length ?? 0;
+  const precision = Math.max(0, fractionalDigits - exponent);
+  return Number.isInteger(precision) && precision <= 15 ? precision : null;
+}
+
 function buildSymbolMappings(
   futuresRows: SymbolMappingRow[],
-  forexRows: ForexMappingRow[]
+  instrumentRows: ForexMappingRow[],
+  legacyForexMappings: ForexSymbolMappings = DEFAULT_FOREX_SYMBOL_MAPPINGS
 ): SymbolMappings {
   const result: SymbolMappings = {};
 
@@ -315,54 +382,113 @@ function buildSymbolMappings(
     };
   }
 
+  const instruments: InstrumentSizingMappings = {};
   const forex: ForexSymbolMappings = {};
-  for (const row of forexRows) {
-    const pair = row.pair.trim().toUpperCase();
+  const legacyForexPairs = new Set(
+    Object.keys(legacyForexMappings).map((pair) => pair.toUpperCase().replace(/\//g, '-'))
+  );
+  const seenInstrumentAliases = new Set<string>();
+  for (const row of instrumentRows) {
+    const instrument = row.pair.trim().toUpperCase();
     const baseCurrency = row.baseCurrency.trim().toUpperCase();
     const quoteCurrency = row.quoteCurrency.trim().toUpperCase();
     const pipSize = row.pipSize.trim();
-    const pricePrecision = row.pricePrecision.trim();
+    const tickSize = row.tickSize.trim();
     const contractSize = row.contractSize.trim();
+    const minLots = row.minLots.trim();
+    const lotIncrement = row.lotIncrement.trim();
+    const quoteUnitScale = row.quoteUnitScale.trim();
 
-    if (!pair && !baseCurrency && !quoteCurrency && !pipSize && !pricePrecision && !contractSize) {
+    if (!instrument && !baseCurrency && !quoteCurrency && !pipSize && !tickSize
+      && !contractSize && !minLots && !lotIncrement) {
       continue;
     }
 
-    if (!pair || !baseCurrency || !quoteCurrency || !pipSize || !pricePrecision) {
-      throw new Error('Each forex mapping row must include a pair, base currency, quote currency, pip size, and price precision.');
+    if (!instrument || !baseCurrency || !quoteCurrency || !quoteUnitScale) {
+      throw new Error('Each instrument row must include an instrument, base unit, quote currency, and quote-currency USD scale.');
     }
 
-    const pairParts = pair.split('/');
-    if (!/^[A-Z]{3}\/[A-Z]{3}$/.test(pair) || pairParts[0] !== baseCurrency || pairParts[1] !== quoteCurrency) {
-      throw new Error(`Forex pair ${pair} must use the form AAA/BBB and match its base and quote currencies.`);
+    if (!/^[A-Z0-9][A-Z0-9._/-]{0,63}$/.test(instrument)) {
+      throw new Error(`Instrument ${instrument} contains unsupported characters.`);
     }
 
-    if (Object.prototype.hasOwnProperty.call(forex, pair)) {
-      throw new Error(`Duplicate forex pair: ${pair}`);
+    const normalizedInstrument = instrument.replace(/\//g, '-');
+    if (seenInstrumentAliases.has(normalizedInstrument)) {
+      throw new Error(`Duplicate instrument mapping: ${instrument}`);
+    }
+    seenInstrumentAliases.add(normalizedInstrument);
+    if (!/^[A-Z0-9][A-Z0-9.+_ -]{0,23}$/.test(baseCurrency)) {
+      throw new Error(`Base asset/unit for ${instrument} must be a short label.`);
+    }
+    if (!/^[A-Z]{3}$/.test(quoteCurrency)) {
+      throw new Error(`Quote currency for ${instrument} must be a three-letter currency code.`);
     }
 
     const numericPipSize = Number(pipSize);
-    const numericPricePrecision = Number(pricePrecision);
-    const numericContractSize = Number(contractSize || '100000');
-    if (!Number.isFinite(numericPipSize) || numericPipSize <= 0) {
-      throw new Error(`Pip size must be a number greater than zero for ${pair}.`);
+    const numericTickSize = Number(tickSize);
+    const numericPricePrecision = tickSize ? decimalPrecisionFromTick(numericTickSize) : null;
+    const numericContractSize = Number(contractSize);
+    const numericMinLots = Number(minLots);
+    const numericLotIncrement = Number(lotIncrement);
+    const numericQuoteUnitScale = Number(quoteUnitScale);
+    if (pipSize && (!Number.isFinite(numericPipSize) || numericPipSize <= 0)) {
+      throw new Error(`Pip size must be a number greater than zero for ${instrument}.`);
     }
-    if (!Number.isInteger(numericPricePrecision) || numericPricePrecision < 0) {
-      throw new Error(`Price precision must be a non-negative whole number for ${pair}.`);
+    if (tickSize && (!Number.isFinite(numericTickSize) || numericTickSize <= 0)) {
+      throw new Error(`Tick size must be a number greater than zero for ${instrument}.`);
     }
-    if (!Number.isFinite(numericContractSize) || numericContractSize <= 0) {
-      throw new Error(`Contract size must be a number greater than zero for ${pair}.`);
+    if (tickSize && numericPricePrecision == null) {
+      throw new Error(`Tick size must imply a price precision from 0 to 15 for ${instrument}.`);
+    }
+    if (contractSize && (!Number.isFinite(numericContractSize) || numericContractSize <= 0)) {
+      throw new Error(`Contract size must be a number greater than zero for ${instrument}.`);
+    }
+    if (minLots && (!Number.isFinite(numericMinLots) || numericMinLots <= 0)) {
+      throw new Error(`Minimum lots must be a number greater than zero for ${instrument}.`);
+    }
+    if (lotIncrement && (!Number.isFinite(numericLotIncrement) || numericLotIncrement <= 0)) {
+      throw new Error(`Lot increment must be a number greater than zero for ${instrument}.`);
+    }
+    if (!Number.isFinite(numericQuoteUnitScale) || numericQuoteUnitScale <= 0) {
+      throw new Error(`Quote-currency USD scale must be a number greater than zero for ${instrument}.`);
     }
 
-    forex[pair] = {
+    const complete = Boolean(pipSize && tickSize && numericPricePrecision != null && contractSize && minLots && lotIncrement);
+    const mapping: import('../types/auth.types').InstrumentSizingMappingEntry = {
       base_currency: baseCurrency,
       quote_currency: quoteCurrency,
-      pip_size: numericPipSize,
-      price_precision: numericPricePrecision,
-      contract_size: numericContractSize,
+      quote_currency_unit_scale: numericQuoteUnitScale,
+      pip_size: pipSize ? numericPipSize : null,
+      tick_size: tickSize ? numericTickSize : null,
+      contract_size: contractSize ? numericContractSize : null,
+      min_lots: minLots ? numericMinLots : null,
+      lot_increment: lotIncrement ? numericLotIncrement : null,
+      supported_for_simulation: complete,
+      reason: complete ? null : (row.reason || 'Complete verified pricing and lot-size settings are required.'),
+      spec_source: row.specSource || null,
+      catalog_group: row.catalogGroup || null,
     };
+
+    instruments[normalizedInstrument] = mapping;
+
+    const forexPair = normalizedInstrument.match(/^([A-Z]{3})-([A-Z]{3})$/);
+    const isKnownForex = row.catalogGroup === 'FX_CROSSES'
+      || row.catalogGroup === 'FX_MAJORS'
+      || row.catalogGroup === 'FX_RSRV'
+      || legacyForexPairs.has(normalizedInstrument);
+    if (complete && forexPair && isKnownForex
+      && forexPair[1] === baseCurrency && forexPair[2] === quoteCurrency) {
+      forex[`${forexPair[1]}/${forexPair[2]}`] = {
+        base_currency: baseCurrency,
+        quote_currency: quoteCurrency,
+        pip_size: numericPipSize,
+        price_precision: numericPricePrecision!,
+        contract_size: numericContractSize,
+      };
+    }
   }
 
+  result.instruments = instruments;
   result.forex = forex;
 
   return result;
@@ -447,6 +573,9 @@ export function SettingsPage() {
   // Symbol mappings
   const [symbolMappingRows, setSymbolMappingRows] = useState<SymbolMappingRow[]>([]);
   const [forexMappingRows, setForexMappingRows] = useState<ForexMappingRow[]>([]);
+  const [instrumentSpecDefaults, setInstrumentSpecDefaults] = useState<InstrumentSizingMappings>({});
+  const [instrumentSearch, setInstrumentSearch] = useState('');
+  const [instrumentPage, setInstrumentPage] = useState(0);
   const [symbolMappingsLoading, setSymbolMappingsLoading] = useState(false);
 
   // Market-data mappings
@@ -470,6 +599,17 @@ export function SettingsPage() {
 
   const restoreMarketDataSummary =
     restoreSummary?.market_data_datasets ?? restoreSummary?.market_data_cache ?? null;
+  const instrumentPageSize = 100;
+  const filteredInstrumentRows = filterInstrumentSearch(
+    forexMappingRows,
+    instrumentSearch,
+    (row) => [row.pair, row.baseCurrency, row.quoteCurrency]
+  );
+  const instrumentPageCount = Math.max(1, Math.ceil(filteredInstrumentRows.length / instrumentPageSize));
+  const displayedInstrumentRows = filteredInstrumentRows.slice(
+    instrumentPage * instrumentPageSize,
+    (instrumentPage + 1) * instrumentPageSize,
+  );
 
   useEffect(() => {
     setUsername(user?.username ?? '');
@@ -490,10 +630,26 @@ export function SettingsPage() {
   ]);
 
   useEffect(() => {
+    let active = true;
+    getBacktestInstrumentSpecs()
+      .then((specs) => {
+        if (active) setInstrumentSpecDefaults(specs.instruments);
+      })
+      .catch(() => {
+        // Preserve editable saved/legacy rows if the catalog defaults are unavailable.
+      });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
     const symbolMappings = user?.symbol_mappings ?? EMPTY_SYMBOL_MAPPINGS;
     setSymbolMappingRows(recordToMappingRows(symbolMappings));
-    setForexMappingRows(recordToForexMappingRows(symbolMappings.forex));
-  }, [user?.symbol_mappings]);
+    setForexMappingRows(recordToForexMappingRows(
+      symbolMappings.forex,
+      symbolMappings.instruments,
+      instrumentSpecDefaults,
+    ));
+  }, [user?.symbol_mappings, instrumentSpecDefaults]);
 
   useEffect(() => {
     const marketDataMappings = user?.market_data_mappings ?? EMPTY_MARKET_DATA_MAPPINGS;
@@ -661,7 +817,11 @@ export function SettingsPage() {
 
     let symbolMappings: SymbolMappings;
     try {
-      symbolMappings = buildSymbolMappings(symbolMappingRows, forexMappingRows);
+      symbolMappings = buildSymbolMappings(
+        symbolMappingRows,
+        forexMappingRows,
+        user?.symbol_mappings.forex ?? DEFAULT_FOREX_SYMBOL_MAPPINGS,
+      );
     } catch (error: unknown) {
       addToast(
         'error',
@@ -1006,7 +1166,7 @@ export function SettingsPage() {
             Symbol Mappings
           </h2>
           <p className="text-xs text-gray-500 dark:text-gray-400">
-            Configure Futures base symbols and Forex instruments used by analytics, market-data lookup, and manual closed-trade entry.
+            Configure legacy Futures point values and exact Dukascopy CFD sizing rules. CFD price precision, contract units per lot, and quote-currency conversion settings are frozen into each new backtest run.
           </p>
           <p className="text-xs text-gray-500 dark:text-gray-400">
             Changes apply to future trade imports, stop-analysis calculations, and backup exports.
@@ -1124,21 +1284,37 @@ export function SettingsPage() {
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
               <div>
                 <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100">
-                  Forex
+                  CFD Instrument Sizing
                 </h3>
                 <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                  Configure canonical pairs for manual closed-trade entry. Prices use the configured pipette precision; contract size defaults to 100,000 base-currency units when omitted.
+                  The versioned Dukascopy catalog seeds this table. One lot represents the configured contract size in base units (one share for AAPL, one coin for BTC/USD, or the documented CFD multiplier). Incomplete symbols remain disabled until their verified price and lot rules are filled in. Existing runs keep their frozen settings.
                 </p>
               </div>
+              <label className="w-full max-w-sm text-xs text-gray-500 dark:text-gray-400">
+                Find an instrument
+                <input
+                  type="search"
+                  className={`${COMPACT_INPUT_CLASS_NAME} mt-1 w-full`}
+                  value={instrumentSearch}
+                  onChange={(event) => {
+                    setInstrumentSearch(event.target.value);
+                    setInstrumentPage(0);
+                  }}
+                  placeholder="EUR-USD, AAPL.US-USD, BTC"
+                />
+              </label>
             </div>
+            <p className="text-xs text-gray-500 dark:text-gray-400">
+              Showing {displayedInstrumentRows.length} of {filteredInstrumentRows.length} matching instruments.
+            </p>
 
             <div
               className={`overflow-auto rounded-lg border border-gray-200 dark:border-gray-700 ${MAPPINGS_TABLE_MAX_HEIGHT_CLASS}`}
             >
-              <table className="min-w-[60rem] divide-y divide-gray-200 text-sm dark:divide-gray-700">
+              <table className="min-w-[92rem] divide-y divide-gray-200 text-sm dark:divide-gray-700">
                 <thead className="bg-gray-50 dark:bg-gray-800">
                   <tr>
-                    {['Pair', 'Base Currency', 'Quote Currency', 'Pip Size', 'Price Precision', 'Contract Size', 'Action'].map((heading) => (
+                    {['Instrument', 'Base Asset / Unit', 'Quote Currency', 'Pip / Point Size', 'Tick Size', 'Contract Size (units / lot)', 'Minimum Lots', 'Lot Increment', 'USD per Quote Unit', 'Status', 'Action'].map((heading) => (
                       <th
                         key={heading}
                         className="sticky top-0 z-10 bg-gray-50 px-3 py-2 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:bg-gray-800 dark:text-gray-400"
@@ -1150,7 +1326,7 @@ export function SettingsPage() {
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
                   {forexMappingRows.length > 0 ? (
-                    forexMappingRows.map((row) => (
+                    displayedInstrumentRows.map((row) => (
                       <tr key={row.id} className="bg-white align-top dark:bg-gray-800">
                         <td className="px-3 py-2">
                           <input
@@ -1158,7 +1334,7 @@ export function SettingsPage() {
                             className={COMPACT_INPUT_CLASS_NAME}
                             value={row.pair}
                             onChange={(event) => setForexMappingRows((current) => updateForexMappingRow(current, row.id, 'pair', event.target.value))}
-                            placeholder="EUR/USD"
+                            placeholder="AAPL.US-USD"
                           />
                         </td>
                         <td className="px-3 py-2">
@@ -1167,7 +1343,7 @@ export function SettingsPage() {
                             className={COMPACT_INPUT_CLASS_NAME}
                             value={row.baseCurrency}
                             onChange={(event) => setForexMappingRows((current) => updateForexMappingRow(current, row.id, 'baseCurrency', event.target.value))}
-                            placeholder="EUR"
+                            placeholder="shares"
                           />
                         </td>
                         <td className="px-3 py-2">
@@ -1187,18 +1363,18 @@ export function SettingsPage() {
                             className={COMPACT_INPUT_CLASS_NAME}
                             value={row.pipSize}
                             onChange={(event) => setForexMappingRows((current) => updateForexMappingRow(current, row.id, 'pipSize', event.target.value))}
-                            placeholder="0.0001"
+                            placeholder="0.01"
                           />
                         </td>
                         <td className="px-3 py-2">
                           <input
                             type="number"
                             min="0"
-                            step="1"
+                            step="any"
                             className={COMPACT_INPUT_CLASS_NAME}
-                            value={row.pricePrecision}
-                            onChange={(event) => setForexMappingRows((current) => updateForexMappingRow(current, row.id, 'pricePrecision', event.target.value))}
-                            placeholder="5"
+                            value={row.tickSize}
+                            onChange={(event) => setForexMappingRows((current) => updateForexMappingRow(current, row.id, 'tickSize', event.target.value))}
+                            placeholder="0.001"
                           />
                         </td>
                         <td className="px-3 py-2">
@@ -1209,8 +1385,52 @@ export function SettingsPage() {
                             className={COMPACT_INPUT_CLASS_NAME}
                             value={row.contractSize}
                             onChange={(event) => setForexMappingRows((current) => updateForexMappingRow(current, row.id, 'contractSize', event.target.value))}
-                            placeholder="100000"
+                            placeholder="1"
                           />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            type="number"
+                            min="0"
+                            step="any"
+                            className={COMPACT_INPUT_CLASS_NAME}
+                            value={row.minLots}
+                            onChange={(event) => setForexMappingRows((current) => updateForexMappingRow(current, row.id, 'minLots', event.target.value))}
+                            placeholder="1"
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            type="number"
+                            min="0"
+                            step="any"
+                            className={COMPACT_INPUT_CLASS_NAME}
+                            value={row.lotIncrement}
+                            onChange={(event) => setForexMappingRows((current) => updateForexMappingRow(current, row.id, 'lotIncrement', event.target.value))}
+                            placeholder="1"
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            type="number"
+                            min="0"
+                            step="any"
+                            className={COMPACT_INPUT_CLASS_NAME}
+                            value={row.quoteUnitScale}
+                            onChange={(event) => setForexMappingRows((current) => updateForexMappingRow(current, row.id, 'quoteUnitScale', event.target.value))}
+                            placeholder="1"
+                          />
+                        </td>
+                        <td className="max-w-64 px-3 py-2 text-xs">
+                          <span className={row.pipSize && row.tickSize && row.contractSize && row.minLots && row.lotIncrement
+                            ? 'font-medium text-green-700 dark:text-green-400'
+                            : 'font-medium text-amber-700 dark:text-amber-400'}>
+                            {row.pipSize && row.tickSize && row.contractSize && row.minLots && row.lotIncrement
+                              ? 'Ready'
+                              : 'Needs values'}
+                          </span>
+                          {row.reason && <p className="mt-1 max-w-64 text-gray-500 dark:text-gray-400" title={row.specSource || undefined}>{row.reason}</p>}
+                          {row.specSource && <p className="mt-1 text-gray-400 dark:text-gray-500" title={row.specSource}>{row.specSource}</p>}
                         </td>
                         <td className="px-3 py-2 text-right">
                           <button
@@ -1226,8 +1446,8 @@ export function SettingsPage() {
                     ))
                   ) : (
                     <tr className="bg-white dark:bg-gray-800">
-                      <td colSpan={7} className="px-3 py-4 text-xs text-gray-500 dark:text-gray-400">
-                        No forex mappings configured.
+                      <td colSpan={11} className="px-3 py-4 text-xs text-gray-500 dark:text-gray-400">
+                        No instruments match this search.
                       </td>
                     </tr>
                   )}
@@ -1239,11 +1459,22 @@ export function SettingsPage() {
               <button
                 type="button"
                 className="btn-secondary inline-flex items-center gap-2"
-                onClick={() => setForexMappingRows((current) => [...current, createForexMappingRow()])}
+                onClick={() => {
+                  setForexMappingRows((current) => [...current, createForexMappingRow()]);
+                  setInstrumentSearch('');
+                  setInstrumentPage(Math.floor(forexMappingRows.length / instrumentPageSize));
+                }}
               >
                 <Plus className="h-4 w-4" aria-hidden="true" />
-                Add Forex Pair
+                Add Instrument
               </button>
+              {instrumentPageCount > 1 && (
+                <div className="mt-3 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                  <button type="button" className="btn-secondary" disabled={instrumentPage <= 0} onClick={() => setInstrumentPage((page) => Math.max(0, page - 1))}>Previous</button>
+                  <span>Page {instrumentPage + 1} of {instrumentPageCount}</span>
+                  <button type="button" className="btn-secondary" disabled={instrumentPage + 1 >= instrumentPageCount} onClick={() => setInstrumentPage((page) => Math.min(instrumentPageCount - 1, page + 1))}>Next</button>
+                </div>
+              )}
             </div>
           </div>
 
@@ -1445,7 +1676,7 @@ export function SettingsPage() {
             </p>
           </div>
           <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200">
-            Restore merges data into the current account. Existing accounts, tags, and import batches are reused when possible, and duplicate trades are skipped.
+            Restore merges data into the current account. Existing accounts, tags, and import batches are reused when possible, and duplicate trades are skipped. Backups include ready and completed backtest runs with their saved trading and chart state, but not Dukascopy replay or conversion candles. Restored runs reuse matching local candle data or offer to download missing dates.
           </div>
         </div>
 

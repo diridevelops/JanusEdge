@@ -24,7 +24,8 @@ There are two supported local workflows in the repository today.
 
 ### Option 1: Full Docker Compose
 
-This starts MongoDB, MinIO, the Flask backend, and the Vite frontend in containers.
+This starts MongoDB, MinIO, the Flask backend, the Backtest preparation/recovery
+worker, and the Vite frontend in containers.
 
 ```bash
 cp .env.example .env
@@ -64,7 +65,14 @@ uv sync
 uv run flask run --port 5000
 ```
 
-Then run the frontend locally in a second shell:
+Run the Backtest preparation and cache-recovery worker in another terminal:
+
+```bash
+cd backend
+uv run python -m app.backtests.worker
+```
+
+Then run the frontend locally in another shell:
 
 ```bash
 cd frontend
@@ -77,6 +85,7 @@ This mixed mode uses:
 
 - MongoDB at `mongodb://localhost:27017/janusedge`
 - MinIO at `localhost:9000`
+- Backtest preparation/recovery worker with no browser-facing port
 - Flask at `http://localhost:5000`
 - Vite at `http://localhost:5173`
 
@@ -108,7 +117,7 @@ cd ../frontend
 npm install
 ```
 
-If Flask or Vite were already running, stop and start them again after these commands so they pick up the new code.
+If Flask, the Backtest worker, or Vite were already running, stop and start them again after these commands so they pick up the new code.
 
 ## Environment Files
 
@@ -164,6 +173,7 @@ Follow logs for a service:
 
 ```bash
 docker compose logs -f backend
+docker compose logs -f backtest-worker
 docker compose logs -f frontend
 docker compose logs -f mongo
 docker compose logs -f minio

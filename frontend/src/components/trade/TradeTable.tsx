@@ -87,9 +87,13 @@ export function TradeTable({ trades, sortBy, sortDir, onSortChange }: TradeTable
   }
 
   function renderTradePrice(trade: Trade, value: number): string {
-    return trade.instrument_type === 'forex' && trade.price_precision != null
+    return ['forex', 'cfd'].includes(String(trade.instrument_type).toLowerCase()) && trade.price_precision != null
       ? formatPrice(value, trade.price_precision)
       : formatCurrency(value);
+  }
+
+  function isLotBasedTrade(trade: Trade): boolean {
+    return ['forex', 'cfd'].includes(String(trade.instrument_type).toLowerCase());
   }
 
   if (trades.length === 0) {
@@ -164,7 +168,7 @@ export function TradeTable({ trades, sortBy, sortDir, onSortChange }: TradeTable
                 </span>
               </td>
               <td className="px-4 py-2.5 text-right text-gray-900 dark:text-gray-100">
-                {trade.instrument_type === 'forex'
+                {isLotBasedTrade(trade)
                   ? formatQuantity(trade.lot_size ?? trade.total_quantity)
                   : trade.total_quantity}
               </td>
@@ -180,12 +184,12 @@ export function TradeTable({ trades, sortBy, sortDir, onSortChange }: TradeTable
                 }`}
               >
                 <div>{formatCurrency(trade.net_pnl)}</div>
-                {trade.instrument_type === 'forex' && trade.native_pnl != null && (
+                {isLotBasedTrade(trade) && trade.native_pnl != null && (
                   <div className="text-xs font-normal text-gray-500 dark:text-gray-400">
                     Native: {formatCurrency(trade.native_pnl, trade.native_pnl_currency ?? 'USD')}
                     {' · '}
                     {trade.pips != null
-                      ? `${trade.pips >= 0 ? '+' : ''}${formatPips(trade.pips)} pips`
+                      ? `${trade.pips >= 0 ? '+' : ''}${formatPips(trade.pips)} ${trade.instrument_type === 'forex' ? 'pips' : 'price steps'}`
                       : '—'}
                   </div>
                 )}

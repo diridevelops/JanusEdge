@@ -12,6 +12,8 @@ import zipfile
 from bson import ObjectId, json_util
 
 from app.auth.schemas import BackupManifestSchema
+from app.backtests.candle_cache import BacktestCandleCache
+from app.extensions import mongo
 from app.market_data.symbol_mapper import (
     get_effective_market_data_mappings,
     get_effective_symbol_mappings,
@@ -34,6 +36,7 @@ from app.repositories.market_data_repo import (
 )
 from app.repositories.media_repo import MediaRepository
 from app.repositories.tag_repo import TagRepository
+from app.repositories.tag_category_repo import TagCategoryRepository
 from app.repositories.trade_repo import TradeRepository
 from app.repositories.user_repo import UserRepository
 from app.storage import (
@@ -42,15 +45,16 @@ from app.storage import (
     get_client,
     get_market_data_bucket,
 )
+from app.tags.categories import ensure_tag_categories
 from app.utils.errors import ValidationError
 from app.utils.trade_fingerprint import (
     build_trade_fingerprint,
 )
-from app.utils.validators import is_valid_timezone
+from app.utils.validators import is_valid_hex_color, is_valid_timezone
 
 
 BACKUP_ARCHIVE_TYPE = "janusedge-portable-backup"
-BACKUP_ARCHIVE_VERSION = "1.0"
+BACKUP_ARCHIVE_VERSION = "1.1"
 MANIFEST_PATH = "manifest.json"
 DATA_PATH = "data.json"
 MEDIA_PREFIX = "media"
@@ -64,6 +68,7 @@ class PortableBackupService:
         self.user_repo = UserRepository()
         self.account_repo = AccountRepository()
         self.tag_repo = TagRepository()
+        self.tag_category_repo = TagCategoryRepository()
         self.batch_repo = ImportBatchRepository()
         self.trade_repo = TradeRepository()
         self.execution_repo = ExecutionRepository()
@@ -200,6 +205,7 @@ class PortableBackupService:
             "trades": {"created": 0, "skipped": 0},
             "executions": {"created": 0, "skipped": 0},
             "media": {"created": 0, "skipped": 0},
+            "backtest_runs": {"created": 0, "reused": 0},
             "market_data_datasets": {
                 "upserted": 0,
                 "objects_restored": 0,
@@ -207,14 +213,35 @@ class PortableBackupService:
             "settings": {"updated": settings_updated},
         }
 
+        backtest_data = payload.get("backtests") or self._empty_backtest_payload()
+        backtest_run_id_map, reused_run_sources = self._prepare_backtest_run_ids(
+            destination_user_id,
+            backtest_data["runs"],
+        )
+
         account_id_map = self._restore_accounts(
             destination_user_id,
             payload["accounts"],
             summary,
+            backtest_run_id_map=backtest_run_id_map,
+        )
+        created_run_sources = self._restore_backtest_runs(
+            destination_user_id,
+            backtest_data["runs"],
+            backtest_run_id_map,
+            account_id_map,
+            summary,
+            reused_run_sources,
+        )
+        tag_category_id_map, general_category_id = self._restore_tag_categories(
+            destination_user_id,
+            payload.get("tag_categories", []),
         )
         tag_id_map = self._restore_tags(
             destination_user_id,
             payload["tags"],
+            tag_category_id_map,
+            general_category_id,
             summary,
         )
         batch_id_map = self._restore_import_batches(
@@ -234,15 +261,34 @@ class PortableBackupService:
             batch_id_map,
             existing_trade_fingerprints,
             summary,
+            backtest_run_id_map=backtest_run_id_map,
+            reused_run_sources=reused_run_sources,
+            backtest_run_docs=backtest_data["runs"],
+        )
+        self._reserve_open_position_trade_ids(
+            backtest_data.get("simulation_positions", []),
+            trade_id_map,
+            created_run_sources,
         )
 
-        self._restore_executions(
+        execution_id_map = self._restore_executions(
             destination_user_id,
             payload["executions"],
             trade_id_map,
             account_id_map,
             batch_id_map,
             summary,
+            backtest_run_id_map=backtest_run_id_map,
+            reused_run_sources=reused_run_sources,
+        )
+        self._restore_backtest_children(
+            destination_user_id,
+            backtest_data,
+            backtest_run_id_map,
+            account_id_map,
+            trade_id_map,
+            execution_id_map,
+            created_run_sources,
         )
         self._restore_media(
             user_id,
@@ -250,6 +296,9 @@ class PortableBackupService:
             trade_id_map,
             media_bytes,
             summary,
+            reused_backtest_trade_sources=self._reused_backtest_trade_sources(
+                payload["trades"], reused_run_sources
+            ),
         )
         self._restore_market_data(
             payload["market_data_datasets"],
@@ -269,10 +318,79 @@ class PortableBackupService:
             raise ValidationError("User not found.")
 
         trades = self.trade_repo.find_exportable_by_user(user_id)
+        backtests = self._collect_backtest_data(user_id)
+        exportable_run_ids = {
+            run["_id"] for run in backtests["runs"]
+        }
+        trades = [
+            trade
+            for trade in trades
+            if trade.get("backtest_run_id") is None
+            or trade.get("backtest_run_id") in exportable_run_ids
+        ]
+        runs_by_id = {run["_id"]: run for run in backtests["runs"]}
+        for trade in trades:
+            run_id = trade.get("backtest_run_id")
+            if run_id is None:
+                continue
+            run = runs_by_id.get(run_id)
+            if run is None:
+                continue
+            origin = run["portable_origin"]
+            portable_trade = trade.get("portable_backup_source") or {}
+            trade["portable_backup_source"] = {
+                "source_user_id": str(
+                    portable_trade.get("source_user_id", origin["source_user_id"])
+                ),
+                "source_run_id": str(
+                    portable_trade.get("source_run_id", origin["source_run_id"])
+                ),
+                "source_trade_id": str(
+                    portable_trade.get("source_trade_id", trade["_id"])
+                ),
+            }
         trade_ids = [trade["_id"] for trade in trades]
-        executions = self.execution_repo.find_by_trade_ids(
-            trade_ids
-        )
+        executions_by_id = {
+            str(execution["_id"]): execution
+            for execution in self.execution_repo.find_by_trade_ids(trade_ids)
+        }
+        runs_by_id = {run["_id"]: run for run in backtests["runs"]}
+        for execution_id, execution in list(executions_by_id.items()):
+            source_run_id = execution.get("backtest_run_id")
+            if source_run_id is None:
+                continue
+            run = runs_by_id.get(source_run_id)
+            committed_sequence = int(
+                ((run or {}).get("simulation_control") or {}).get(
+                    "committed_sequence", 0
+                )
+            )
+            if (
+                run is None
+                or execution.get("simulation_committed") is not True
+                or int(execution.get("simulation_operation_sequence", 0))
+                > committed_sequence
+            ):
+                executions_by_id.pop(execution_id, None)
+        if runs_by_id:
+            for execution in mongo.db.executions.find(
+                {
+                    "user_id": ObjectId(user_id),
+                    "backtest_run_id": {"$in": list(runs_by_id)},
+                    "simulation_committed": True,
+                }
+            ):
+                run = runs_by_id.get(execution.get("backtest_run_id"))
+                if run is None:
+                    continue
+                committed_sequence = int(
+                    (run.get("simulation_control") or {}).get(
+                        "committed_sequence", 0
+                    )
+                )
+                if int(execution.get("simulation_operation_sequence", 0)) <= committed_sequence:
+                    executions_by_id[str(execution["_id"])] = execution
+        executions = list(executions_by_id.values())
         media_docs = self.media_repo.find_by_trade_ids(
             trade_ids
         )
@@ -327,8 +445,14 @@ class PortableBackupService:
                     )
                 ),
             },
-            "accounts": self.account_repo.find_by_user(user_id),
+            "accounts": [
+                account
+                for account in self.account_repo.find_by_user(user_id)
+                if account.get("backtest_run_id") is None
+                or account.get("backtest_run_id") in exportable_run_ids
+            ],
             "tags": self.tag_repo.find_by_user(user_id),
+            "tag_categories": self.tag_category_repo.find_by_user(user_id),
             "import_batches": self.batch_repo.find_by_ids(
                 referenced_batch_ids
             ),
@@ -340,7 +464,412 @@ class PortableBackupService:
                     user.get("market_data_mappings")
                 )
             ),
+            "backtests": backtests,
         }
+
+    @staticmethod
+    def _empty_backtest_payload() -> dict:
+        """Return the stable 1.1 backtest payload shape."""
+        return {
+            "runs": [],
+            "simulation_operations": [],
+            "simulation_orders": [],
+            "simulation_positions": [],
+            "simulation_cost_profiles": [],
+            "chart_tabs": [],
+            "chart_workspaces": [],
+            "drawing_states": [],
+        }
+
+    def _collect_backtest_data(self, user_id: str) -> dict:
+        """Export ready runs and only the simulation records they committed."""
+        user_oid = ObjectId(user_id)
+        runs = list(
+            mongo.db.backtest_runs.find(
+                {
+                    "user_id": user_oid,
+                    "status": {"$in": ["ready", "complete"]},
+                    "snapshot": {"$ne": None},
+                }
+            )
+        )
+        runs_by_id = {}
+        portable_runs = []
+        committed_by_run = {}
+        for run in runs:
+            origin = run.get("portable_origin") or {}
+            if not origin.get("source_user_id") or not origin.get("source_run_id"):
+                origin = {
+                    "source_user_id": str(user_id),
+                    "source_run_id": str(run["_id"]),
+                }
+            else:
+                origin = {
+                    "source_user_id": str(origin["source_user_id"]),
+                    "source_run_id": str(origin["source_run_id"]),
+                }
+            committed = int(
+                (run.get("simulation_control") or {}).get(
+                    "committed_sequence", 0
+                )
+            )
+            committed_by_run[run["_id"]] = committed
+            portable = deepcopy(run)
+            portable["portable_origin"] = origin
+            if isinstance(portable.get("snapshot"), dict):
+                portable["snapshot"] = self._portable_snapshot(
+                    portable["snapshot"]
+                )
+            for transient in (
+                "preparation_job_id",
+                "preparation_lease_owner",
+                "preparation_lease_expires_at",
+                "deletion_lease_owner",
+                "deletion_lease_expires_at",
+                "cache_recovery",
+                "cache_refreshed_at",
+                "progress",
+            ):
+                portable.pop(transient, None)
+            control = deepcopy(portable.get("simulation_control") or {})
+            control["committed_sequence"] = committed
+            control["pending_operation_id"] = None
+            portable["simulation_control"] = control
+            runs_by_id[run["_id"]] = portable
+            portable_runs.append(portable)
+
+        run_ids = list(runs_by_id)
+        if not run_ids:
+            return self._empty_backtest_payload()
+
+        def scoped_records(collection_name: str) -> list[dict]:
+            return list(
+                mongo.db[collection_name].find(
+                    {"user_id": user_oid, "run_id": {"$in": run_ids}}
+                )
+            )
+
+        operations = [
+            item
+            for item in scoped_records("backtest_simulation_operations")
+            if int(item.get("sequence", -1))
+            <= committed_by_run.get(item.get("run_id"), -1)
+            and item.get("state") in {"committed", "rejected"}
+            and item.get("final_state", item.get("state"))
+            in {"committed", "rejected"}
+        ]
+        orders = [
+            item
+            for item in scoped_records("backtest_simulation_orders")
+            if int(item.get("operation_sequence", -1))
+            <= committed_by_run.get(item.get("run_id"), -1)
+        ]
+        positions = [
+            item
+            for item in scoped_records("backtest_simulation_positions")
+            if int(item.get("operation_sequence", -1))
+            <= committed_by_run.get(item.get("run_id"), -1)
+        ]
+        cost_profiles = [
+            item
+            for item in scoped_records("backtest_simulation_cost_profiles")
+            if int(item.get("operation_sequence", -1))
+            <= committed_by_run.get(item.get("run_id"), -1)
+        ]
+
+        return {
+            "runs": portable_runs,
+            "simulation_operations": operations,
+            "simulation_orders": orders,
+            "simulation_positions": positions,
+            "simulation_cost_profiles": cost_profiles,
+            "chart_tabs": scoped_records("backtest_chart_tabs"),
+            "chart_workspaces": scoped_records("backtest_chart_workspaces"),
+            "drawing_states": scoped_records("backtest_drawing_states"),
+        }
+
+    @classmethod
+    def _portable_snapshot(cls, value):
+        """Strip source-specific object keys while keeping cache-day manifests."""
+        if isinstance(value, list):
+            return [cls._portable_snapshot(item) for item in value]
+        if not isinstance(value, dict):
+            return deepcopy(value)
+
+        if (
+            value.get("instrument")
+            and value.get("utc_date")
+            and any(key in value for key in ("sha256", "candle_count", "cache_key"))
+        ):
+            allowed = (
+                "source",
+                "cache_version",
+                "instrument",
+                "utc_date",
+                "sha256",
+                "data_sha256",
+                "outcome",
+                "candle_count",
+            )
+            return {
+                key: deepcopy(value[key])
+                for key in allowed
+                if key in value
+            }
+
+        return {
+            key: cls._portable_snapshot(item)
+            for key, item in value.items()
+            if key not in {"object_key", "source_object_key", "cache_key"}
+        }
+
+    def _prepare_backtest_run_ids(
+        self, destination_user_id: ObjectId, run_docs: List[dict]
+    ) -> tuple[dict[str, ObjectId], set[str]]:
+        """Map portable source run identities to existing or new run IDs."""
+        run_id_map: dict[str, ObjectId] = {}
+        reused_sources: set[str] = set()
+        for source_doc in run_docs:
+            source_id = str(source_doc["_id"])
+            origin = source_doc["portable_origin"]
+            existing = mongo.db.backtest_runs.find_one(
+                {
+                    "user_id": destination_user_id,
+                    "portable_origin.source_user_id": str(
+                        origin["source_user_id"]
+                    ),
+                    "portable_origin.source_run_id": str(
+                        origin["source_run_id"]
+                    ),
+                }
+            )
+            if existing:
+                run_id_map[source_id] = existing["_id"]
+                reused_sources.add(source_id)
+            else:
+                run_id_map[source_id] = ObjectId()
+        return run_id_map, reused_sources
+
+    def _bind_snapshot_cache(self, snapshot: dict, user_id: ObjectId) -> tuple[dict, bool]:
+        """Bind portable cache-day manifests to exact destination cache refs."""
+        cache = BacktestCandleCache()
+        resolved: dict[tuple[str, str, str, str], dict | None] = {}
+        has_missing = False
+
+        def resolve(ref: dict) -> dict:
+            nonlocal has_missing
+            key = (
+                str(ref.get("source", "dukascopy")),
+                str(ref.get("cache_version", "")),
+                str(ref.get("instrument", "")).upper(),
+                str(ref.get("utc_date", "")),
+            )
+            if key not in resolved:
+                destination_ref = None
+                try:
+                    from datetime import date
+                    if key[0] == "manual":
+                        from app.backtests.manual_import import ManualCandleDatasetStore
+
+                        destination_ref = ManualCandleDatasetStore().find_matching_ref(
+                            user_id=user_id,
+                            instrument=key[2],
+                            utc_date=key[3],
+                            data_sha256=str(
+                                ref.get("data_sha256") or ref.get("sha256", "")
+                            ),
+                        )
+                    else:
+                        destination_ref = cache.get_reference(
+                            user_id=user_id,
+                            instrument=key[2],
+                            utc_date=date.fromisoformat(key[3]),
+                        )
+                except (ValueError, KeyError, RuntimeError):
+                    destination_ref = None
+                manual_content_matches = (
+                    destination_ref is not None
+                    and (
+                        destination_ref.get("data_sha256") == ref.get("data_sha256")
+                        if ref.get("data_sha256")
+                        else destination_ref.get("sha256") == ref.get("sha256")
+                    )
+                )
+                matches = (
+                    destination_ref is not None
+                    and destination_ref.get("cache_version") == ref.get("cache_version")
+                    and (
+                        manual_content_matches
+                        if key[0] == "manual"
+                        else destination_ref.get("sha256") == ref.get("sha256")
+                    )
+                    and destination_ref.get("outcome") == ref.get("outcome")
+                    and destination_ref.get("candle_count") == ref.get("candle_count")
+                    and all(key[1:])
+                )
+                resolved[key] = destination_ref if matches else None
+                if not matches:
+                    has_missing = True
+            destination_ref = resolved[key]
+            if destination_ref is not None:
+                return destination_ref
+            return {
+                key: deepcopy(ref[key])
+                for key in (
+                    "source",
+                    "cache_version",
+                    "instrument",
+                    "utc_date",
+                    "sha256",
+                    "data_sha256",
+                    "outcome",
+                    "candle_count",
+                )
+                if key in ref
+            }
+
+        def walk(value):
+            if isinstance(value, list):
+                return [walk(item) for item in value]
+            if not isinstance(value, dict):
+                return deepcopy(value)
+            if (
+                value.get("instrument")
+                and value.get("utc_date")
+                and any(key in value for key in ("sha256", "candle_count"))
+            ):
+                return resolve(value)
+            return {
+                key: walk(item)
+                for key, item in value.items()
+                if key not in {"object_key", "source_object_key", "cache_key"}
+            }
+
+        return walk(snapshot), has_missing
+
+    def _restore_backtest_runs(
+        self,
+        destination_user_id: ObjectId,
+        run_docs: List[dict],
+        run_id_map: dict[str, ObjectId],
+        account_id_map: dict[str, ObjectId],
+        summary: dict,
+        reused_sources: set[str],
+    ) -> set[str]:
+        """Insert new run metadata and bind its destination candle cache."""
+        created_sources = set()
+        for source_doc in run_docs:
+            source_id = str(source_doc["_id"])
+            if source_id in reused_sources:
+                summary["backtest_runs"]["reused"] += 1
+                continue
+
+            run_id = run_id_map[source_id]
+            new_doc = deepcopy(source_doc)
+            new_doc["_id"] = run_id
+            new_doc["user_id"] = destination_user_id
+            source_account_id = source_doc.get("account_id")
+            new_doc["account_id"] = (
+                account_id_map.get(str(source_account_id))
+                if source_account_id is not None
+                else None
+            )
+            snapshot = source_doc.get("snapshot")
+            if isinstance(snapshot, dict):
+                new_doc["snapshot"], missing = self._bind_snapshot_cache(
+                    snapshot, destination_user_id
+                )
+            else:
+                missing = True
+            new_doc["cache_availability"] = "missing" if missing else "available"
+            new_doc["cache_recovery"] = {
+                "state": "idle",
+                "missing_references": [],
+                "completed": 0,
+                "total": 0,
+            }
+            new_doc.pop("cache_refreshed_at", None)
+            control = deepcopy(new_doc.get("simulation_control") or {})
+            control["pending_operation_id"] = None
+            new_doc["simulation_control"] = control
+            for transient in (
+                "preparation_job_id",
+                "preparation_lease_owner",
+                "preparation_lease_expires_at",
+                "deletion_lease_owner",
+                "deletion_lease_expires_at",
+                "progress",
+            ):
+                new_doc.pop(transient, None)
+            try:
+                mongo.db.backtest_runs.insert_one(new_doc)
+            except Exception as exc:
+                # A unique portable-origin index makes concurrent restores
+                # converge on the run inserted by the other request.
+                from pymongo.errors import DuplicateKeyError
+
+                if not isinstance(exc, DuplicateKeyError):
+                    raise
+                origin = source_doc["portable_origin"]
+                existing = mongo.db.backtest_runs.find_one(
+                    {
+                        "user_id": destination_user_id,
+                        "portable_origin.source_user_id": origin["source_user_id"],
+                        "portable_origin.source_run_id": origin["source_run_id"],
+                    }
+                )
+                if existing is None:
+                    raise
+                mongo.db.trade_accounts.update_many(
+                    {
+                        "user_id": destination_user_id,
+                        "backtest_run_id": run_id,
+                    },
+                    {"$set": {"backtest_run_id": existing["_id"]}},
+                )
+                run_id_map[source_id] = existing["_id"]
+                reused_sources.add(source_id)
+                summary["backtest_runs"]["reused"] += 1
+                continue
+            created_sources.add(source_id)
+            summary["backtest_runs"]["created"] += 1
+        return created_sources
+
+    @staticmethod
+    def _reused_backtest_trade_sources(
+        trade_docs: List[dict], reused_run_sources: set[str]
+    ) -> set[str]:
+        """Identify source trades whose run graph was already restored."""
+        return {
+            str(trade["_id"])
+            for trade in trade_docs
+            if trade.get("backtest_run_id") is not None
+            and str(trade["backtest_run_id"]) in reused_run_sources
+        }
+
+    @staticmethod
+    def _reserve_open_position_trade_ids(
+        position_docs: List[dict],
+        trade_id_map: dict[str, ObjectId],
+        created_run_sources: set[str],
+    ) -> None:
+        """Preserve future trade IDs for positions without a trade document.
+
+        A simulated trade is published to the trades collection only after its
+        position closes. Until then, committed fills and the position already
+        refer to the future trade ID. Reserve a destination ID for that link so
+        the close operation can later publish its trade under the same ID.
+        """
+        for position in position_docs:
+            source_run_id = position.get("run_id")
+            if (
+                source_run_id is None
+                or str(source_run_id) not in created_run_sources
+            ):
+                continue
+            source_trade_id = position.get("simulated_trade_id")
+            if source_trade_id is not None:
+                trade_id_map.setdefault(str(source_trade_id), ObjectId())
 
     def _build_manifest(self, payload: dict) -> dict:
         """Create the backup manifest metadata."""
@@ -360,6 +889,7 @@ class PortableBackupService:
                 "market_data_datasets": len(
                     payload["market_data_datasets"]
                 ),
+                "backtest_runs": len(payload.get("backtests", {}).get("runs", [])),
             },
         }
 
@@ -459,17 +989,16 @@ class PortableBackupService:
                     "Backup manifest is invalid."
                 ) from exc
 
-            if (
-                validated_manifest["archive_type"]
-                != BACKUP_ARCHIVE_TYPE
-                or validated_manifest["version"]
-                != BACKUP_ARCHIVE_VERSION
-            ):
+            archive_version = validated_manifest["version"]
+            if validated_manifest["archive_type"] != BACKUP_ARCHIVE_TYPE:
                 raise ValidationError(
                     "Backup archive version is not supported."
                 )
 
-            self._validate_payload_structure(payload)
+            if archive_version == "1.0":
+                payload.setdefault("backtests", self._empty_backtest_payload())
+            payload.setdefault("tag_categories", [])
+            self._validate_payload_structure(payload, archive_version)
 
             media_bytes: dict[str, bytes] = {}
             for media_doc in payload["media"]:
@@ -500,7 +1029,9 @@ class PortableBackupService:
                 market_data_bytes,
             )
 
-    def _validate_payload_structure(self, payload: dict) -> None:
+    def _validate_payload_structure(
+        self, payload: dict, archive_version: str = "1.0"
+    ) -> None:
         """Validate the data payload shape before restore."""
         required_keys = {
             "settings",
@@ -520,6 +1051,57 @@ class PortableBackupService:
             )
 
         self._validate_portable_settings(payload["settings"])
+        tag_categories = payload.get("tag_categories", [])
+        if not isinstance(tag_categories, list):
+            raise ValidationError("Backup archive tag categories are invalid.")
+        for category in tag_categories:
+            if (
+                not isinstance(category, dict)
+                or "_id" not in category
+                or not isinstance(category.get("name"), str)
+                or not category["name"].strip()
+                or not isinstance(category.get("color"), str)
+                or not is_valid_hex_color(category["color"])
+                or (
+                    category.get("system_key") is not None
+                    and not isinstance(category.get("system_key"), str)
+                )
+            ):
+                raise ValidationError("Backup archive tag categories are invalid.")
+        backtests = payload.get("backtests")
+        if archive_version == "1.1" and not isinstance(backtests, dict):
+            raise ValidationError("Backup archive backtest payload is invalid.")
+        if backtests is not None:
+            expected = set(self._empty_backtest_payload())
+            if (
+                not isinstance(backtests, dict)
+                or not expected.issubset(backtests)
+                or any(not isinstance(backtests[key], list) for key in expected)
+            ):
+                raise ValidationError("Backup archive backtest payload is invalid.")
+            run_ids = set()
+            origins = set()
+            for run in backtests["runs"]:
+                if not isinstance(run, dict) or "_id" not in run:
+                    raise ValidationError("Backup archive backtest run is invalid.")
+                source_run_id = str(run["_id"])
+                if source_run_id in run_ids:
+                    raise ValidationError("Backup archive has duplicate backtest runs.")
+                run_ids.add(source_run_id)
+                origin = run.get("portable_origin")
+                if not isinstance(origin, dict) or not origin.get("source_user_id") or not origin.get("source_run_id"):
+                    raise ValidationError("Backup archive backtest run identity is invalid.")
+                origin_key = (str(origin["source_user_id"]), str(origin["source_run_id"]))
+                if origin_key in origins:
+                    raise ValidationError("Backup archive has duplicate backtest run identities.")
+                origins.add(origin_key)
+
+            for key in expected - {"runs"}:
+                for document in backtests[key]:
+                    if not isinstance(document, dict) or "run_id" not in document:
+                        raise ValidationError("Backup archive backtest records are invalid.")
+                    if str(document["run_id"]) not in run_ids:
+                        raise ValidationError("Backup archive backtest record has an unknown run.")
 
     def _validate_portable_settings(self, settings: dict) -> None:
         """Validate portable settings that may be restored."""
@@ -602,16 +1184,28 @@ class PortableBackupService:
         destination_user_id: ObjectId,
         account_docs: List[dict],
         summary: dict,
+        *,
+        backtest_run_id_map: dict[str, ObjectId] | None = None,
     ) -> dict[str, ObjectId]:
         """Restore accounts using account name as the natural key."""
+        backtest_run_id_map = backtest_run_id_map or {}
         account_id_map: dict[str, ObjectId] = {}
         for source_doc in account_docs:
-            existing = self.account_repo.find_one(
-                {
+            source_run_id = source_doc.get("backtest_run_id")
+            if source_run_id is not None:
+                destination_run_id = backtest_run_id_map.get(str(source_run_id))
+                if destination_run_id is None:
+                    continue
+                account_query = {
+                    "user_id": destination_user_id,
+                    "backtest_run_id": destination_run_id,
+                }
+            else:
+                account_query = {
                     "user_id": destination_user_id,
                     "account_name": source_doc["account_name"],
                 }
-            )
+            existing = self.account_repo.find_one(account_query)
             if existing:
                 summary["accounts"]["reused"] += 1
                 account_id_map[str(source_doc["_id"])] = existing[
@@ -623,20 +1217,92 @@ class PortableBackupService:
             new_id = ObjectId()
             new_doc["_id"] = new_id
             new_doc["user_id"] = destination_user_id
+            if source_run_id is not None:
+                new_doc["backtest_run_id"] = destination_run_id
             self.account_repo.insert_one(new_doc)
             summary["accounts"]["created"] += 1
             account_id_map[str(source_doc["_id"])] = new_id
         return account_id_map
 
+    def _restore_tag_categories(
+        self,
+        destination_user_id: ObjectId,
+        category_docs: List[dict],
+    ) -> tuple[dict[str, ObjectId], ObjectId]:
+        """Restore tag categories and return the source-to-destination ID map."""
+        destination_user_id_str = str(destination_user_id)
+        default_categories = ensure_tag_categories(destination_user_id_str)
+        default_category_id = default_categories["general"]["_id"]
+        category_id_map: dict[str, ObjectId] = {}
+
+        for source_doc in category_docs:
+            source_id = source_doc["_id"]
+            source_system_key = source_doc.get("system_key")
+            if source_system_key:
+                existing = self.tag_category_repo.find_by_system_key(
+                    destination_user_id_str, source_system_key
+                )
+                if existing is None:
+                    existing = self.tag_category_repo.find_one(
+                        {
+                            "user_id": destination_user_id,
+                            "name": source_doc["name"],
+                        }
+                    )
+            else:
+                existing = self.tag_category_repo.find_one(
+                    {
+                        "user_id": destination_user_id,
+                        "name": source_doc["name"],
+                    }
+                )
+
+            if existing:
+                updates = {"color": source_doc["color"]}
+                if source_system_key and not existing.get("system_key"):
+                    updates["system_key"] = source_system_key
+                source_name = source_doc["name"]
+                if source_name != existing.get("name"):
+                    name_conflict = self.tag_category_repo.find_one(
+                        {
+                            "user_id": destination_user_id,
+                            "name": source_name,
+                            "_id": {"$ne": existing["_id"]},
+                        }
+                    )
+                    if not name_conflict:
+                        updates["name"] = source_name
+                self.tag_category_repo.update_one(
+                    str(existing["_id"]), {"$set": updates}
+                )
+                destination_category_id = existing["_id"]
+            else:
+                new_doc = deepcopy(source_doc)
+                destination_category_id = ObjectId()
+                new_doc["_id"] = destination_category_id
+                new_doc["user_id"] = destination_user_id
+                new_doc.pop("portable_backup_source", None)
+                self.tag_category_repo.insert_one(new_doc)
+
+            category_id_map[str(source_id)] = destination_category_id
+
+        return category_id_map, default_category_id
+
     def _restore_tags(
         self,
         destination_user_id: ObjectId,
         tag_docs: List[dict],
+        category_id_map: dict[str, ObjectId],
+        default_category_id: ObjectId,
         summary: dict,
     ) -> dict[str, ObjectId]:
         """Restore tags using tag name as the natural key."""
         tag_id_map: dict[str, ObjectId] = {}
         for source_doc in tag_docs:
+            source_category_id = source_doc.get("category_id")
+            destination_category_id = category_id_map.get(
+                str(source_category_id), default_category_id
+            )
             existing = self.tag_repo.find_one(
                 {
                     "user_id": destination_user_id,
@@ -644,6 +1310,11 @@ class PortableBackupService:
                 }
             )
             if existing:
+                if str(source_category_id) in category_id_map:
+                    self.tag_repo.update_one(
+                        str(existing["_id"]),
+                        {"$set": {"category_id": destination_category_id}},
+                    )
                 summary["tags"]["reused"] += 1
                 tag_id_map[str(source_doc["_id"])] = existing[
                     "_id"
@@ -654,6 +1325,7 @@ class PortableBackupService:
             new_id = ObjectId()
             new_doc["_id"] = new_id
             new_doc["user_id"] = destination_user_id
+            new_doc["category_id"] = destination_category_id
             self.tag_repo.insert_one(new_doc)
             summary["tags"]["created"] += 1
             tag_id_map[str(source_doc["_id"])] = new_id
@@ -699,10 +1371,85 @@ class PortableBackupService:
         batch_id_map: dict[str, ObjectId],
         existing_trade_fingerprints: set[str],
         summary: dict,
+        *,
+        backtest_run_id_map: dict[str, ObjectId] | None = None,
+        reused_run_sources: set[str] | None = None,
+        backtest_run_docs: List[dict] | None = None,
     ) -> dict[str, ObjectId]:
         """Restore trades and skip duplicates by stable fingerprint."""
+        backtest_run_id_map = backtest_run_id_map or {}
+        reused_run_sources = reused_run_sources or set()
+        run_docs_by_source_id = {
+            str(run["_id"]): run for run in (backtest_run_docs or [])
+        }
         trade_id_map: dict[str, ObjectId] = {}
         for source_doc in trade_docs:
+            source_run_id = source_doc.get("backtest_run_id")
+            if source_run_id is not None:
+                source_run_id_text = str(source_run_id)
+                destination_run_id = backtest_run_id_map.get(source_run_id_text)
+                if destination_run_id is None:
+                    summary["trades"]["skipped"] += 1
+                    continue
+                source_run = run_docs_by_source_id.get(source_run_id_text)
+                origin = (source_run or {}).get("portable_origin") or {}
+                portable_identity = source_doc.get("portable_backup_source") or {
+                    "source_user_id": str(origin.get("source_user_id", "")),
+                    "source_run_id": str(origin.get("source_run_id", "")),
+                    "source_trade_id": str(source_doc["_id"]),
+                }
+                identity_query = {
+                    "user_id": destination_user_id,
+                    "backtest_run_id": destination_run_id,
+                    "portable_backup_source.source_user_id": str(
+                        portable_identity.get("source_user_id", "")
+                    ),
+                    "portable_backup_source.source_run_id": str(
+                        portable_identity.get("source_run_id", "")
+                    ),
+                    "portable_backup_source.source_trade_id": str(
+                        portable_identity.get("source_trade_id", "")
+                    ),
+                }
+                existing_backtest_trade = mongo.db.trades.find_one(identity_query)
+                if existing_backtest_trade:
+                    trade_id_map[str(source_doc["_id"])] = existing_backtest_trade["_id"]
+                    summary["trades"]["skipped"] += 1
+                    continue
+                if source_run_id_text in reused_run_sources:
+                    summary["trades"]["skipped"] += 1
+                    continue
+
+                new_doc = deepcopy(source_doc)
+                source_id = str(source_doc["_id"])
+                new_id = ObjectId()
+                new_doc["_id"] = new_id
+                new_doc["user_id"] = destination_user_id
+                new_doc["backtest_run_id"] = destination_run_id
+                new_doc["trade_account_id"] = account_id_map[
+                    str(source_doc["trade_account_id"])
+                ]
+                new_doc["portable_backup_source"] = {
+                    "source_user_id": str(portable_identity["source_user_id"]),
+                    "source_run_id": str(portable_identity["source_run_id"]),
+                    "source_trade_id": str(portable_identity["source_trade_id"]),
+                }
+                import_batch_id = source_doc.get("import_batch_id")
+                new_doc["import_batch_id"] = (
+                    batch_id_map[str(import_batch_id)]
+                    if import_batch_id is not None
+                    else None
+                )
+                new_doc["tag_ids"] = [
+                    tag_id_map[str(tag_id)]
+                    for tag_id in source_doc.get("tag_ids", [])
+                    if str(tag_id) in tag_id_map
+                ]
+                self.trade_repo.insert_one(new_doc)
+                trade_id_map[source_id] = new_id
+                summary["trades"]["created"] += 1
+                continue
+
             fingerprint = build_trade_fingerprint(source_doc)
             if fingerprint in existing_trade_fingerprints:
                 summary["trades"]["skipped"] += 1
@@ -741,23 +1488,43 @@ class PortableBackupService:
         account_id_map: dict[str, ObjectId],
         batch_id_map: dict[str, ObjectId],
         summary: dict,
-    ) -> None:
-        """Restore executions for inserted trades only."""
+        *,
+        backtest_run_id_map: dict[str, ObjectId] | None = None,
+        reused_run_sources: set[str] | None = None,
+    ) -> dict[str, ObjectId]:
+        """Restore executions, including published fills for new backtest runs."""
+        backtest_run_id_map = backtest_run_id_map or {}
+        reused_run_sources = reused_run_sources or set()
+        execution_id_map: dict[str, ObjectId] = {}
         for source_doc in execution_docs:
+            source_run_id = source_doc.get("backtest_run_id")
+            if source_run_id is not None:
+                source_run_id_text = str(source_run_id)
+                if source_run_id_text not in backtest_run_id_map:
+                    summary["executions"]["skipped"] += 1
+                    continue
+                if source_run_id_text in reused_run_sources:
+                    summary["executions"]["skipped"] += 1
+                    continue
             source_trade_id = source_doc.get("trade_id")
-            if source_trade_id is None or str(source_trade_id) not in trade_id_map:
+            if source_trade_id is not None and str(source_trade_id) not in trade_id_map:
+                summary["executions"]["skipped"] += 1
+                continue
+            source_account_id = source_doc.get("trade_account_id")
+            if source_account_id is not None and str(source_account_id) not in account_id_map:
                 summary["executions"]["skipped"] += 1
                 continue
 
             new_doc = deepcopy(source_doc)
-            new_doc["_id"] = ObjectId()
+            new_id = ObjectId()
+            new_doc["_id"] = new_id
             new_doc["user_id"] = destination_user_id
-            new_doc["trade_id"] = trade_id_map[
-                str(source_trade_id)
-            ]
-            new_doc["trade_account_id"] = account_id_map[
-                str(source_doc["trade_account_id"])
-            ]
+            if source_trade_id is not None:
+                new_doc["trade_id"] = trade_id_map[str(source_trade_id)]
+            if source_account_id is not None:
+                new_doc["trade_account_id"] = account_id_map[str(source_account_id)]
+            if source_run_id is not None:
+                new_doc["backtest_run_id"] = backtest_run_id_map[str(source_run_id)]
             import_batch_id = source_doc.get("import_batch_id")
             new_doc["import_batch_id"] = (
                 batch_id_map[str(import_batch_id)]
@@ -765,7 +1532,69 @@ class PortableBackupService:
                 else None
             )
             self.execution_repo.insert_one(new_doc)
+            execution_id_map[str(source_doc["_id"])] = new_id
             summary["executions"]["created"] += 1
+        return execution_id_map
+
+    def _restore_backtest_children(
+        self,
+        destination_user_id: ObjectId,
+        backtest_data: dict,
+        run_id_map: dict[str, ObjectId],
+        account_id_map: dict[str, ObjectId],
+        trade_id_map: dict[str, ObjectId],
+        execution_id_map: dict[str, ObjectId],
+        created_run_sources: set[str],
+    ) -> None:
+        """Restore committed run journals, entity versions, and chart state."""
+        collections = {
+            "simulation_operations": "backtest_simulation_operations",
+            "simulation_orders": "backtest_simulation_orders",
+            "simulation_positions": "backtest_simulation_positions",
+            "simulation_cost_profiles": "backtest_simulation_cost_profiles",
+            "chart_tabs": "backtest_chart_tabs",
+            "chart_workspaces": "backtest_chart_workspaces",
+            "drawing_states": "backtest_drawing_states",
+        }
+        for payload_key, collection_name in collections.items():
+            for source_doc in backtest_data.get(payload_key, []):
+                source_run_id = str(source_doc.get("run_id"))
+                if source_run_id not in created_run_sources:
+                    continue
+                new_doc = deepcopy(source_doc)
+                new_doc["_id"] = ObjectId()
+                new_doc["user_id"] = destination_user_id
+                new_doc["run_id"] = run_id_map[source_run_id]
+
+                source_account_id = new_doc.get("trade_account_id")
+                if source_account_id is not None:
+                    mapped_account_id = account_id_map.get(str(source_account_id))
+                    if mapped_account_id is None:
+                        raise ValidationError(
+                            "Backup backtest state references an unknown account."
+                        )
+                    new_doc["trade_account_id"] = mapped_account_id
+
+                if payload_key == "simulation_positions":
+                    source_trade_id = new_doc.get("simulated_trade_id")
+                    if source_trade_id is not None:
+                        mapped_trade_id = trade_id_map.get(str(source_trade_id))
+                        if mapped_trade_id is None:
+                            raise ValidationError(
+                                "Backup backtest position references an unknown trade."
+                            )
+                        new_doc["simulated_trade_id"] = mapped_trade_id
+                    remapped_fill_ids = []
+                    for source_fill_id in new_doc.get("entry_fill_ids", []):
+                        mapped_fill_id = execution_id_map.get(str(source_fill_id))
+                        if mapped_fill_id is None:
+                            raise ValidationError(
+                                "Backup backtest position references an unknown fill."
+                            )
+                        remapped_fill_ids.append(mapped_fill_id)
+                    new_doc["entry_fill_ids"] = remapped_fill_ids
+
+                mongo.db[collection_name].insert_one(new_doc)
 
     def _restore_media(
         self,
@@ -774,14 +1603,20 @@ class PortableBackupService:
         trade_id_map: dict[str, ObjectId],
         media_bytes: dict[str, bytes],
         summary: dict,
+        *,
+        reused_backtest_trade_sources: set[str] | None = None,
     ) -> None:
         """Restore media objects and metadata for inserted trades only."""
         client = get_client()
         bucket = get_bucket()
         ensure_bucket_exists(client, bucket)
 
+        reused_backtest_trade_sources = reused_backtest_trade_sources or set()
         for source_doc in media_docs:
             source_trade_id = source_doc.get("trade_id")
+            if str(source_trade_id) in reused_backtest_trade_sources:
+                summary["media"]["skipped"] += 1
+                continue
             if source_trade_id is None or str(source_trade_id) not in trade_id_map:
                 summary["media"]["skipped"] += 1
                 continue

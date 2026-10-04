@@ -63,15 +63,15 @@ def create_trade_doc(
         execution_count: Number of fills.
         source: 'imported' or 'manual'.
         status: 'open', 'closed', or 'deleted'.
-        instrument_type: 'futures' or 'forex'.
-        lot_size: Forex lot size when applicable.
-        base_currency: Forex base currency when applicable.
-        quote_currency: Forex quote currency when applicable.
-        pip_size: Forex pip size when applicable.
-        price_precision: Forex decimal-place precision when applicable.
-        contract_size: Base-currency units per standard lot.
-        pip_value_per_standard_lot: Native quote-currency pip value.
-        pips: Signed pip movement.
+        instrument_type: 'futures', 'forex', or configured 'cfd'.
+        lot_size: Contract lot size when applicable.
+        base_currency: Contract base asset or unit when applicable.
+        quote_currency: Contract quote currency when applicable.
+        pip_size: Configured price step when applicable.
+        price_precision: Configured decimal-place precision when applicable.
+        contract_size: Base units represented by one lot.
+        pip_value_per_standard_lot: Native quote-currency step value.
+        pips: Signed movement in configured price steps.
         native_pnl: Gross P&L in the quote currency.
         native_pnl_currency: Currency of native_pnl.
         quote_to_usd_rate: USD per one quote-currency unit.

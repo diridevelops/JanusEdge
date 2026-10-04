@@ -1,5 +1,5 @@
 import { List, Plus, Upload } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { listTrades } from '../api/trades.api';
 import { FilterBar } from '../components/filters/FilterBar';
@@ -9,11 +9,15 @@ import { Pagination } from '../components/ui/Pagination';
 import { Spinner } from '../components/ui/Spinner';
 import { useToast } from '../hooks/useToast';
 import { useFilters } from '../hooks/useFilters';
+import { useWorkspaceMode } from '../contexts/WorkspaceModeContext';
+import type { TradeAccount } from '../types/account.types';
+import type { WorkspaceMode } from '../types/workspace.types';
 import type { Trade } from '../types/trade.types';
 import { DEFAULT_PAGE_SIZE } from '../utils/constants';
 
 /** Trade list page — filterable, sortable table of trades. */
 export function TradeListPage() {
+  const { activeMode } = useWorkspaceMode();
   const location = useLocation();
   const navigate = useNavigate();
   const {
@@ -63,7 +67,34 @@ export function TradeListPage() {
   const [totalItems, setTotalItems] = useState(0);
   const [sortBy, setSortBy] = useState('entry_time');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [accountOptions, setAccountOptions] = useState<{
+    mode: WorkspaceMode;
+    accounts: TradeAccount[];
+  } | null>(null);
   const { addToast } = useToast();
+
+  const handleAccountsLoaded = useCallback((accounts: TradeAccount[], mode: WorkspaceMode) => {
+    setAccountOptions({ mode, accounts });
+  }, []);
+
+  const accountOptionsAreCurrent = accountOptions?.mode === activeMode;
+  const activeAccounts = useMemo(
+    () => (accountOptionsAreCurrent && accountOptions ? accountOptions.accounts : []),
+    [accountOptions, accountOptionsAreCurrent]
+  );
+  const selectedBacktestAccount = activeMode === 'backtest'
+    ? activeAccounts.find((account) => (
+      account.id === filters.account && Boolean(account.backtest_run_id)
+    ))
+    : undefined;
+
+  useEffect(() => {
+    if (!accountOptionsAreCurrent || !filters.account) return;
+    if (!activeAccounts.some((account) => account.id === filters.account)) {
+      setFilters({ account: '' });
+      setPage(1);
+    }
+  }, [accountOptionsAreCurrent, activeAccounts, filters.account, setFilters]);
 
   useEffect(() => {
     if (!isReady) return;
@@ -135,7 +166,7 @@ export function TradeListPage() {
   useEffect(() => {
     if (!isReady) return;
     fetchTrades();
-  }, [fetchTrades, isReady]);
+  }, [activeMode, fetchTrades, isReady]);
 
   function handleSortChange(column: string) {
     if (sortBy === column) {
@@ -171,13 +202,17 @@ export function TradeListPage() {
           <Link to="/market-data/import" className="btn-secondary text-sm inline-flex items-center gap-1">
             Market Data <Upload className="h-4 w-4" />
           </Link>
-          <Link to="/import" className="btn-primary text-sm inline-flex items-center gap-1">
-            Import Trades <Upload className="h-4 w-4" />
-          </Link>
-          <Link to="/trades/new" className="btn-primary inline-flex items-center gap-1.5">
-            <Plus className="h-4 w-4" />
-            New Trade
-          </Link>
+          {activeMode === 'real' && (
+            <>
+              <Link to="/import" className="btn-primary text-sm inline-flex items-center gap-1">
+                Import Trades <Upload className="h-4 w-4" />
+              </Link>
+              <Link to="/trades/new" className="btn-primary inline-flex items-center gap-1.5">
+                <Plus className="h-4 w-4" />
+                New Trade
+              </Link>
+            </>
+          )}
         </div>
       </div>
 
@@ -186,7 +221,25 @@ export function TradeListPage() {
         filters={filters}
         onFilterChange={handleFilterChange}
         onClearFilters={handleClearFilters}
+        onAccountsLoaded={handleAccountsLoaded}
       />
+
+      {selectedBacktestAccount && (
+        <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm dark:border-blue-900 dark:bg-blue-950/40">
+          <div>
+            <p className="font-medium text-blue-900 dark:text-blue-100">Selected Backtest run</p>
+            <p className="mt-0.5 text-blue-800 dark:text-blue-200">
+              {selectedBacktestAccount.display_name || selectedBacktestAccount.account_name}
+            </p>
+          </div>
+          <Link
+            to={`/backtest/runs/${encodeURIComponent(selectedBacktestAccount.backtest_run_id!)}/replay`}
+            className="font-medium text-blue-700 underline underline-offset-2 hover:text-blue-900 dark:text-blue-300 dark:hover:text-blue-100"
+          >
+            Open replay
+          </Link>
+        </section>
+      )}
 
       {/* Trade table */}
       {isLoading ? (
@@ -195,12 +248,25 @@ export function TradeListPage() {
         </div>
       ) : (
         <>
-          <TradeTable
-            trades={trades}
-            sortBy={sortBy}
-            sortDir={sortDir}
-            onSortChange={handleSortChange}
-          />
+          {activeMode === 'backtest' && trades.length === 0 ? (
+            <div className="rounded-xl border border-gray-200 bg-white px-6 py-12 text-center dark:border-gray-700 dark:bg-gray-900" role="status">
+              <p className="text-lg font-medium text-gray-900 dark:text-gray-100">
+                {selectedBacktestAccount ? 'No trades for this Backtest run yet' : 'No Backtest trades yet'}
+              </p>
+              <p className="mt-1 text-sm text-gray-600 dark:text-gray-400">
+                {selectedBacktestAccount
+                  ? 'This run is available for candle replay. Trade recording is not available yet.'
+                  : 'Backtest runs can be replayed, but trade recording is not available yet.'}
+              </p>
+            </div>
+          ) : (
+            <TradeTable
+              trades={trades}
+              sortBy={sortBy}
+              sortDir={sortDir}
+              onSortChange={handleSortChange}
+            />
+          )}
           {totalPages > 1 && (
             <Pagination
               page={page}

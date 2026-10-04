@@ -4,6 +4,7 @@ export interface Trade {
   user_id: string;
   trade_account_id: string;
   import_batch_id: string | null;
+  backtest_run_id?: string | null;
   symbol: string;
   raw_symbol: string;
   side: 'Long' | 'Short';
@@ -21,6 +22,21 @@ export interface Trade {
   native_pnl?: number | null;
   native_pnl_currency?: string | null;
   quote_to_usd_rate?: number | null;
+  tick_size?: number | null;
+  min_lots?: number | null;
+  lot_increment?: number | null;
+  quote_currency_unit_scale?: number | null;
+  instrument_mapping_source?: 'settings' | 'legacy_forex' | 'catalog' | null;
+  conversion_rate_source?: 'identity' | 'manual' | 'historical' | null;
+  conversion_rate_time?: string | null;
+  conversion_route?: Array<{
+    from_currency: string;
+    to_currency: string;
+    instrument: string;
+    direction: 'direct' | 'inverse';
+    rate?: number;
+    rate_time?: string;
+  }>;
   avg_entry_price: number;
   avg_exit_price: number;
   gross_pnl: number;
@@ -32,7 +48,7 @@ export interface Trade {
   exit_time: string;
   holding_time_seconds: number;
   execution_count: number;
-  source: 'imported' | 'manual';
+  source: 'imported' | 'manual' | 'backtest';
   status: 'open' | 'closed' | 'deleted';
   tag_ids: string[];
   strategy: string | null;
@@ -88,6 +104,25 @@ export interface ManualTradeRequest {
   account?: string;
   tags?: string[];
   notes?: string;
+}
+
+/** Historical quote-currency conversion quote for a manual trade. */
+export interface ManualTradeConversionRateResponse {
+  available: boolean;
+  canonical_symbol: string;
+  quote_currency: string | null;
+  quote_to_usd_rate: number | null;
+  quote_currency_unit_scale?: number | null;
+  rate_time: string | null;
+  route: Array<{
+    instrument?: string;
+    direction?: 'direct' | 'inverse';
+    from_currency?: string;
+    to_currency?: string;
+    rate?: number;
+    rate_time?: string;
+  }>;
+  reason: string | null;
 }
 
 /** Payload for updating a trade. */

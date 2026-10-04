@@ -1,14 +1,27 @@
 import { useAuth } from '../../hooks/useAuth';
 import type { Execution } from '../../types/execution.types';
-import { formatCurrency, formatDateTime } from '../../utils/formatters';
+import { formatCurrency, formatDateTime, formatPrice } from '../../utils/formatters';
 
 interface ExecutionListProps {
   /** Executions for one trade. */
   executions: Execution[];
+  /** Configured decimal precision for this instrument's prices. */
+  pricePrecision?: number | null;
+}
+
+function sideBadgeClassName(side: string): string {
+  switch (side.trim().toLowerCase()) {
+    case 'buy':
+      return 'bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400';
+    case 'sell':
+      return 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400';
+    default:
+      return 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300';
+  }
 }
 
 /** Execution table for trade detail page. */
-export function ExecutionList({ executions }: ExecutionListProps) {
+export function ExecutionList({ executions, pricePrecision }: ExecutionListProps) {
   const { user } = useAuth();
   if (executions.length === 0) {
     return (
@@ -50,11 +63,7 @@ export function ExecutionList({ executions }: ExecutionListProps) {
               </td>
               <td className="px-4 py-2">
                 <span
-                  className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${
-                    exec.side === 'Buy'
-                      ? 'bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                      : 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400'
-                  }`}
+                  className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${sideBadgeClassName(exec.side)}`}
                 >
                   {exec.side}
                 </span>
@@ -63,7 +72,7 @@ export function ExecutionList({ executions }: ExecutionListProps) {
                 {exec.quantity}
               </td>
               <td className="px-4 py-2 text-right text-gray-900 dark:text-gray-100">
-                {formatCurrency(exec.price)}
+                {formatPrice(exec.price, pricePrecision ?? 2)}
               </td>
               <td className="px-4 py-2 text-right text-gray-500 dark:text-gray-400">
                 {formatCurrency(exec.commission)}

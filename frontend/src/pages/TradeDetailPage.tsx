@@ -1,7 +1,6 @@
 import { ArrowLeft, RefreshCw, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { getOHLC } from '../api/marketData.api';
 import { deleteTrade, getTrade, getTradeRunningPnL } from '../api/trades.api';
 import { CandlestickChart } from '../components/charts/CandlestickChart';
 import { RunningPnLChart } from '../components/charts/RunningPnLChart';
@@ -29,11 +28,13 @@ import {
   formatQuantity,
 } from '../utils/formatters';
 import { getTradeRMultiple } from '../utils/tradeMetrics';
+import { getTradeChartCandles } from '../utils/tradeChartData';
 
-const ALL_INTERVALS: ChartInterval[] = ['1m', '5m', '15m', '1h'];
+type TradeChartInterval = Exclude<ChartInterval, '1d'>;
+const ALL_INTERVALS: TradeChartInterval[] = ['1m', '5m', '15m', '1h'];
 
 /** Pick the most relevant chart interval based on trade duration. */
-function bestInterval(holdingSeconds: number): ChartInterval {
+function bestInterval(holdingSeconds: number): TradeChartInterval {
   if (holdingSeconds < 20 * 60) return '1m';
   if (holdingSeconds < 60 * 60) return '5m';
   if (holdingSeconds < 4 * 60 * 60) return '15m';
@@ -42,6 +43,10 @@ function bestInterval(holdingSeconds: number): ChartInterval {
 
 function getMarketDataFailureMessage(): string {
   return 'No stored market data was found for this trade window. Import a NinjaTrader tick-data file from Market Data to populate candles for this symbol.';
+}
+
+function getBacktestChartFailureMessage(): string {
+  return 'No candles were found in the linked backtest run for this trade window.';
 }
 
 function getRunningPnLEmptyStateMessage(
@@ -189,7 +194,9 @@ export function TradeDetailPage() {
       chartRequestIdRef.current = requestId;
       setIsChartLoading(true);
       setChartError(null);
-      const failureMessage = getMarketDataFailureMessage();
+      const failureMessage = tradeToLoad.backtest_run_id
+        ? getBacktestChartFailureMessage()
+        : getMarketDataFailureMessage();
       const { forceRefresh = false, notifyOnMissing = false } = options;
 
       try {
@@ -219,14 +226,13 @@ export function TradeDetailPage() {
 
         const results = await Promise.allSettled(
           ALL_INTERVALS.map(async (iv) => {
-            const data = await getOHLC({
-              symbol: tradeToLoad.symbol,
-              raw_symbol: tradeToLoad.raw_symbol,
-              interval: iv,
-              start: dayStart.toISOString(),
-              end: dayEnd.toISOString(),
-              force_refresh: forceRefresh,
-            });
+            const data = await getTradeChartCandles(
+              tradeToLoad,
+              iv,
+              dayStart.toISOString(),
+              dayEnd.toISOString(),
+              forceRefresh
+            );
 
             return {
               interval: iv,
@@ -383,9 +389,19 @@ export function TradeDetailPage() {
     if (!trade) return;
     const ok = await fetchAllCharts(trade, { forceRefresh: true });
     if (ok === true) {
-      addToast('success', 'Stored candles refreshed');
+      addToast(
+        'success',
+        trade.backtest_run_id
+          ? 'Backtest candles reloaded from the run snapshot'
+          : 'Stored candles refreshed'
+      );
     } else if (ok === false) {
-      addToast('error', getMarketDataFailureMessage());
+      addToast(
+        'error',
+        trade.backtest_run_id
+          ? getBacktestChartFailureMessage()
+          : getMarketDataFailureMessage()
+      );
     }
   }
 
@@ -421,6 +437,8 @@ export function TradeDetailPage() {
       </div>
     );
   }
+
+  const isContractTrade = ['forex', 'cfd'].includes(String(trade.instrument_type).toLowerCase());
 
   return (
     <div className="space-y-6">
@@ -464,10 +482,10 @@ export function TradeDetailPage() {
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-9 gap-4 text-sm">
           <div>
             <p className="text-xs text-gray-500 uppercase dark:text-gray-400">
-              {trade.instrument_type === 'forex' ? 'Lots' : 'Quantity'}
+              {isContractTrade ? 'Lots' : 'Quantity'}
             </p>
             <p className="font-semibold text-gray-900 dark:text-gray-100">
-              {trade.instrument_type === 'forex'
+              {isContractTrade
                 ? formatQuantity(trade.lot_size ?? trade.total_quantity)
                 : trade.total_quantity}
             </p>
@@ -475,7 +493,7 @@ export function TradeDetailPage() {
           <div>
             <p className="text-xs text-gray-500 uppercase dark:text-gray-400">Avg Entry</p>
             <p className="font-semibold text-gray-900 dark:text-gray-100">
-              {trade.instrument_type === 'forex' && trade.price_precision != null
+              {isContractTrade && trade.price_precision != null
                 ? formatPrice(trade.avg_entry_price, trade.price_precision)
                 : formatCurrency(trade.avg_entry_price)}
             </p>
@@ -483,7 +501,7 @@ export function TradeDetailPage() {
           <div>
             <p className="text-xs text-gray-500 uppercase dark:text-gray-400">Avg Exit</p>
             <p className="font-semibold text-gray-900 dark:text-gray-100">
-              {trade.instrument_type === 'forex' && trade.price_precision != null
+              {isContractTrade && trade.price_precision != null
                 ? formatPrice(trade.avg_exit_price, trade.price_precision)
                 : formatCurrency(trade.avg_exit_price)}
             </p>
@@ -493,7 +511,7 @@ export function TradeDetailPage() {
             <p className={`font-semibold ${trade.gross_pnl >= 0 ? 'text-profit' : 'text-loss'}`}>
               {formatCurrency(trade.gross_pnl)}
             </p>
-            {trade.instrument_type === 'forex' && trade.native_pnl != null && (
+            {isContractTrade && trade.native_pnl != null && (
               <p className="text-xs text-gray-500 dark:text-gray-400">
                 Native: {formatCurrency(trade.native_pnl, trade.native_pnl_currency ?? 'USD')}
               </p>
@@ -538,13 +556,13 @@ export function TradeDetailPage() {
               {formatDuration(trade.holding_time_seconds)}
             </p>
           </div>
-          {trade.instrument_type === 'forex' && (
+          {isContractTrade && (
             <>
               <div>
-                <p className="text-xs text-gray-500 uppercase dark:text-gray-400">Pips</p>
+                <p className="text-xs text-gray-500 uppercase dark:text-gray-400">{trade.instrument_type === 'forex' ? 'Pips' : 'Price Steps'}</p>
                 <p className={`font-semibold ${trade.pips != null && trade.pips >= 0 ? 'text-profit' : 'text-loss'}`}>
                   {trade.pips != null
-                    ? `${trade.pips >= 0 ? '+' : ''}${formatPips(trade.pips)} ${Math.abs(trade.pips) === 1 ? 'pip' : 'pips'}`
+                    ? `${trade.pips >= 0 ? '+' : ''}${formatPips(trade.pips)} ${trade.instrument_type === 'forex' ? (Math.abs(trade.pips) === 1 ? 'pip' : 'pips') : 'price steps'}`
                     : '—'}
                 </p>
               </div>
@@ -572,7 +590,9 @@ export function TradeDetailPage() {
               onClick={handleRefreshChartData}
               disabled={isChartLoading}
               className="inline-flex items-center gap-1.5 text-xs font-medium text-gray-600 hover:text-gray-800 disabled:opacity-50 dark:text-gray-400 dark:hover:text-gray-200"
-              title="Reload stored candles for this trade day"
+              title={trade.backtest_run_id
+                ? 'Reload candles from the linked backtest snapshot'
+                : 'Reload stored candles for this trade day'}
             >
               <RefreshCw className={`h-4 w-4 ${isChartLoading ? 'animate-spin' : ''}`} />
               Refresh Data
@@ -586,7 +606,7 @@ export function TradeDetailPage() {
             avgEntryPrice={trade.avg_entry_price}
             avgExitPrice={trade.avg_exit_price}
             pricePrecision={
-              trade.instrument_type === 'forex'
+              isContractTrade
                 ? trade.price_precision ?? 2
                 : 2
             }
@@ -646,7 +666,7 @@ export function TradeDetailPage() {
           <h2 className="text-sm font-semibold text-gray-900 uppercase tracking-wider mb-3 dark:text-gray-100">
             Executions ({executions.length})
           </h2>
-          <ExecutionList executions={executions} />
+          <ExecutionList executions={executions} pricePrecision={trade.price_precision} />
         </div>
 
         {/* Notes and Tags */}

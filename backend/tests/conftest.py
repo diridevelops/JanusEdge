@@ -54,6 +54,9 @@ class InMemoryMinio:
         self.get_object = MagicMock(
             side_effect=self._get_object
         )
+        self.stat_object = MagicMock(
+            side_effect=self._stat_object
+        )
         self.remove_object = MagicMock(
             side_effect=self._remove_object
         )
@@ -93,6 +96,11 @@ class InMemoryMinio:
         return _ObjectResponse(
             self.objects[(bucket, object_name)]["payload"]
         )
+
+    def _stat_object(self, bucket: str, object_name: str):
+        """Confirm a stored object exists, as MinIO stat_object does."""
+        payload = self.objects[(bucket, object_name)]["payload"]
+        return SimpleNamespace(size=len(payload))
 
     def _remove_object(
         self, bucket: str, object_name: str

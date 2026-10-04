@@ -5,6 +5,7 @@ from urllib.parse import urlsplit
 
 from flask import Flask
 from minio import Minio
+from minio.error import S3Error
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +22,20 @@ def _ensure_bucket(client: Minio, bucket: str) -> None:
     """Create a bucket when it does not already exist."""
 
     if not client.bucket_exists(bucket):
-        client.make_bucket(bucket)
-        logger.info("Created MinIO bucket: %s", bucket)
+        try:
+            client.make_bucket(bucket)
+        except S3Error as exc:
+            # A cache recovery can be running in multiple workers after a
+            # storage volume was recreated. Treat another worker's successful
+            # bucket creation as success rather than failing its restore.
+            if exc.code not in {
+                "BucketAlreadyOwnedByYou",
+                "BucketAlreadyExists",
+            }:
+                raise
+            logger.info("MinIO bucket was created concurrently: %s", bucket)
+        else:
+            logger.info("Created MinIO bucket: %s", bucket)
         return
 
     logger.info("MinIO bucket already exists: %s", bucket)

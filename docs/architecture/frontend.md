@@ -14,7 +14,8 @@ It provides the user-facing workflows for:
 - dedicated market-data import for NinjaTrader tick-data files
 - calendar and analytics pages
 - what-if analysis and Monte Carlo simulation
-- settings, point-value symbol mappings, and backup restore
+- Backtest run creation, interactive replay, saved chart workspaces, and simulated trades
+- settings, instrument sizing mappings, and backup restore
 
 Important naming note: the current frontend display name is hard-coded as `Janus Edge` in `src/utils/constants.ts`. The `VITE_APP_NAME` environment variable exists in example files and Docker Compose, but the current frontend source does not read it.
 
@@ -184,6 +185,30 @@ That page:
 - polls batch progress until completion or failure
 - uses the same backend market-data store consumed by trade charts and what-if analysis
 
+### Backtest Runs
+
+The `/backtest/runs` page creates Dukascopy runs or runs from HistData Manual
+import. The instrument combobox is case- and separator-insensitive. Manual
+import uses complete instrument sizing rows from Settings; it previews selected
+file dates and cached coverage and asks for confirmation before replacing
+conflicting timestamps. The form retains the shared run settings, including
+blind mode, execution costs, warm-up, and date/random period selection.
+
+`BacktestReplayPage` coordinates one replay controller across a persistent
+CandleKit chart workspace. The transport supports 1×, 2×, 5×, 15×, and 30×;
+Left/Right Arrow step through replay, and Space toggles play/pause when focus
+is outside editable controls. Chart tabs, layout, intervals, drawings, and the
+cursor are persisted through Backtest API routes. Position controls are
+derived from committed simulation state; same-side fills scale into the oldest
+open position for that instrument and retain its stop and target.
+
+The replay UI checks its run's shared source cache before mounting the chart.
+It asks before restoring missing Dukascopy dates or matching manual CSV data,
+and shows a dismissible history-change notice after Dukascopy recovery. Trade
+details for a Backtest-linked closed trade load candles from that run and cap
+the chart at its furthest reached candle. Real trade charts retain their
+existing market-data adapter.
+
 On the What-if stop-management tab, the frontend shows tick-data availability
 in the wicked-out list and lets the user choose the What-If replay source:
 
@@ -229,9 +254,14 @@ The settings page currently includes:
 - trading timezone
 - display timezone
 - starting equity
-- separate Futures and Forex symbol-mapping editors
-- forex pair precision, pip-size, currency, and contract-size fields
+- Futures point-value, Forex, and CFD Instrument Sizing mappings
+- instrument contract sizing, lot limits, quote currency, tick size, and price precision
+- separator-insensitive instrument search across pair, base, and quote fields
 - backup export and restore
+
+Manual-trade entry can resolve a configured Settings instrument and prefill its
+quote-currency conversion from completed one-minute data at or before exit
+time; the user can edit the returned rate or enter a manual fallback.
 
 ## Local Development Workflow
 

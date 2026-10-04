@@ -1,0 +1,294 @@
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+
+export interface BacktestOverlayPosition {
+  id: string;
+  side: 'long' | 'short';
+  remainingLots: number;
+  weightedEntryPrice: number;
+  stopLossPrice: number;
+  takeProfitPrice: number;
+  initialRiskUsd: number;
+  unrealizedPnlUsd: number | null;
+  stopMoved: boolean;
+}
+
+interface BacktestPositionOverlayProps {
+  positions: readonly BacktestOverlayPosition[];
+  pricePrecision: number;
+  lotIncrement?: number;
+  tickSize?: number;
+  pipSize?: number;
+  priceUnitLabel?: string;
+  currentClose: number | null;
+  markPrice?: number | null;
+  priceToCoordinate: (price: number) => number | null;
+  coordinateToPrice: (y: number) => number | null;
+  onMoveStop: (positionId: string, price: number) => void;
+  onMoveTarget: (positionId: string, price: number) => void;
+  onBreakEven: (positionId: string, price: number) => void;
+  onClose: (positionId: string) => void;
+  disabled?: boolean;
+}
+
+interface ActiveDrag {
+  pointerId: number;
+  positionId: string;
+  level: 'stop' | 'target';
+  startPrice: number;
+  startPointerPrice: number;
+}
+
+const usd = new Intl.NumberFormat('en-US', {
+  style: 'currency', currency: 'USD', maximumFractionDigits: 2,
+});
+
+function formatSignedAmount(value: number, precision: number): string {
+  const rounded = Number(value.toFixed(precision));
+  const sign = rounded > 0 ? '+' : rounded < 0 ? '-' : '';
+  return `${sign}${Math.abs(rounded).toFixed(precision)}`;
+}
+
+function getIncrementDecimalPlaces(increment: number): number {
+  if (!Number.isFinite(increment) || increment <= 0) return 3;
+  const [coefficient = '', exponentText] = increment.toString().toLowerCase().split('e');
+  const exponent = Number(exponentText ?? 0);
+  const fractionalDigits = coefficient.split('.')[1]?.length ?? 0;
+  return Math.max(0, Math.min(100, fractionalDigits - exponent));
+}
+
+function formatPositionPnlInInstrumentUnits(
+  position: BacktestOverlayPosition,
+  currentClose: number | null,
+  pipSize: number,
+  pricePrecision: number,
+  priceUnitLabel: string
+): string {
+  if (currentClose == null || !Number.isFinite(currentClose)) return '—';
+  const priceMove = position.side === 'long'
+    ? currentClose - position.weightedEntryPrice
+    : position.weightedEntryPrice - currentClose;
+  if (!Number.isFinite(priceMove)) return '—';
+  if (Number.isFinite(pipSize) && pipSize > 0) {
+    const unitLabel = ['point', 'points', 'pt', 'pts'].includes(priceUnitLabel.trim().toLowerCase())
+      ? 'pts.'
+      : priceUnitLabel;
+    return `${formatSignedAmount(priceMove / pipSize, 1)} ${unitLabel}`;
+  }
+  return `${formatSignedAmount(priceMove, pricePrecision)} price`;
+}
+
+/** Keep a stop on the safe side of the latest close while allowing it past entry. */
+export function clampPositionStopPrice(
+  side: BacktestOverlayPosition['side'],
+  candidate: number,
+  entryPrice: number,
+  currentClose: number | null,
+  pricePrecision: number,
+  configuredTickSize?: number
+): number {
+  const reference = currentClose != null && Number.isFinite(currentClose) ? currentClose : entryPrice;
+  const tick = Number.isFinite(configuredTickSize) && (configuredTickSize ?? 0) > 0
+    ? Number(configuredTickSize)
+    : 10 ** -pricePrecision;
+  const boundary = side === 'long' ? reference - tick : reference + tick;
+  const bounded = side === 'long' ? Math.min(candidate, boundary) : Math.max(candidate, boundary);
+  const steps = side === 'long'
+    ? Math.floor(bounded / tick + 1e-10)
+    : Math.ceil(bounded / tick - 1e-10);
+  return Number((steps * tick).toPrecision(15));
+}
+
+/** Per-position chart levels. Entry stays fixed; stop and target edits are scoped by id. */
+export function BacktestPositionOverlay({
+  positions,
+  pricePrecision,
+  lotIncrement = 0.001,
+  tickSize: configuredTickSize,
+  pipSize = 0,
+  priceUnitLabel = 'pips',
+  currentClose,
+  markPrice,
+  priceToCoordinate,
+  coordinateToPrice,
+  onMoveStop,
+  onMoveTarget,
+  onBreakEven,
+  onClose,
+  disabled = false,
+}: BacktestPositionOverlayProps) {
+  const tickSize = Number.isFinite(configuredTickSize) && (configuredTickSize ?? 0) > 0
+    ? Number(configuredTickSize)
+    : 10 ** -pricePrecision;
+  const lotPrecision = getIncrementDecimalPlaces(lotIncrement);
+  const layerRef = useRef<HTMLDivElement>(null);
+  const [height, setHeight] = useState(0);
+  const [drag, setDrag] = useState<ActiveDrag | null>(null);
+  const [dragPrice, setDragPrice] = useState<number | null>(null);
+
+  useEffect(() => {
+    const element = layerRef.current;
+    if (!element) return;
+    const update = () => setHeight(element.getBoundingClientRect().height);
+    update();
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(update);
+    observer?.observe(element);
+    window.addEventListener('resize', update);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('resize', update);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!drag) return;
+    const move = (event: PointerEvent) => {
+      if (event.pointerId !== drag.pointerId) return;
+      const bounds = layerRef.current?.getBoundingClientRect();
+      if (!bounds) return;
+      const nextPointer = coordinateToPrice(event.clientY - bounds.top);
+      if (nextPointer == null || !Number.isFinite(nextPointer)) return;
+      const delta = nextPointer - drag.startPointerPrice;
+      const position = positions.find((item) => item.id === drag.positionId);
+      if (!position) return;
+      if (drag.level === 'stop') {
+        const candidate = drag.startPrice + delta;
+        setDragPrice(clampPositionStopPrice(
+          position.side,
+          candidate,
+          position.weightedEntryPrice,
+          currentClose,
+          pricePrecision,
+          tickSize,
+        ));
+      } else {
+        const candidate = drag.startPrice + delta;
+        const bounded = position.side === 'long'
+          ? Math.max(candidate, position.weightedEntryPrice + tickSize)
+          : Math.min(candidate, position.weightedEntryPrice - tickSize);
+        setDragPrice(Number((Math.round(bounded / tickSize) * tickSize).toPrecision(15)));
+      }
+    };
+    const up = (event: PointerEvent) => {
+      if (event.pointerId !== drag.pointerId) return;
+      if (dragPrice != null) {
+        if (drag.level === 'stop') onMoveStop(drag.positionId, dragPrice);
+        else onMoveTarget(drag.positionId, dragPrice);
+      }
+      setDrag(null);
+      setDragPrice(null);
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+    return () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+    };
+  }, [coordinateToPrice, currentClose, drag, dragPrice, onMoveStop, onMoveTarget, positions, pricePrecision, tickSize]);
+
+  return (
+    <div ref={layerRef} className="pointer-events-none absolute inset-0 z-20 overflow-hidden" data-testid="backtest-position-overlay">
+      {positions.map((position, index) => {
+        const levels = [
+          { name: 'entry' as const, price: position.weightedEntryPrice, color: '#0ea5a5', style: 'solid' },
+          { name: 'stop' as const, price: position.stopLossPrice, color: '#f43f5e', style: 'dashed' },
+          { name: 'target' as const, price: position.takeProfitPrice, color: '#10b981', style: 'solid' },
+        ];
+        const beAllowed = currentClose != null && Number.isFinite(currentClose)
+          && (position.side === 'long'
+            ? currentClose > position.weightedEntryPrice
+            : currentClose < position.weightedEntryPrice);
+
+        return (
+          <div key={position.id} data-position-id={position.id} aria-label={`${position.side} position ${position.id}`}>
+            {levels.map((level) => {
+              const displayedPrice = drag?.positionId === position.id
+                && drag.level === level.name && dragPrice != null
+                ? dragPrice
+                : level.price;
+              const y = priceToCoordinate(displayedPrice);
+              if (y == null || !Number.isFinite(y) || y < 0 || y > height) return null;
+              const draggable = level.name !== 'entry';
+              return (
+                <div key={level.name} className="absolute left-[38px] right-[54px] pointer-events-none" style={{ top: y }}>
+                  <div style={{ borderTop: `1px ${level.style} ${level.color}`, opacity: 0.9 }} />
+                  {draggable ? (
+                    <button
+                      type="button"
+                      disabled={disabled}
+                      className="pointer-events-auto absolute -top-3 left-0 max-w-[42%] cursor-ns-resize truncate rounded px-1.5 py-0.5 text-[10px] font-semibold text-white shadow"
+                      style={{ backgroundColor: level.color, marginTop: index * 15 }}
+                      aria-label={`Move ${level.name === 'stop' ? 'stop-loss' : 'take-profit'} for position ${position.id}, ${level.price.toFixed(pricePrecision)}`}
+                      onPointerDown={(event: ReactPointerEvent<HTMLButtonElement>) => {
+                        const bounds = layerRef.current?.getBoundingClientRect();
+                        if (!bounds) return;
+                        const pointerPrice = coordinateToPrice(event.clientY - bounds.top);
+                        if (pointerPrice == null || !Number.isFinite(pointerPrice)) return;
+                        event.preventDefault();
+                        event.stopPropagation();
+                        setDrag({
+                          pointerId: event.pointerId,
+                          positionId: position.id,
+                          level: level.name,
+                          startPrice: level.price,
+                          startPointerPrice: pointerPrice,
+                        });
+                        setDragPrice(level.price);
+                      }}
+                      onKeyDown={(event) => {
+                        if (disabled || (event.key !== 'ArrowUp' && event.key !== 'ArrowDown')) return;
+                        event.preventDefault();
+                        const delta = event.key === 'ArrowUp' ? 1 : -1;
+                        const next = level.price + delta * tickSize;
+                        if (level.name === 'stop') {
+                          onMoveStop(position.id, clampPositionStopPrice(
+                            position.side,
+                            next,
+                            position.weightedEntryPrice,
+                            currentClose,
+                            pricePrecision,
+                            tickSize,
+                          ));
+                        }
+                        else onMoveTarget(position.id, Number((Math.round(next / tickSize) * tickSize).toPrecision(15)));
+                      }}
+                    >
+                      {level.name === 'stop' ? 'SL' : 'TP'} {displayedPrice.toFixed(pricePrecision)}
+                    </button>
+                  ) : (
+                    <div
+                      role="group"
+                      aria-label={`${position.side} position controls for ${position.id}`}
+                      data-testid={`position-entry-label-${position.id}`}
+                      className="pointer-events-auto absolute -top-3 left-0 inline-flex max-w-full items-center gap-0.5 whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] font-semibold text-white shadow"
+                      style={{ backgroundColor: level.color }}
+                    >
+                      <span className="min-w-0 truncate">
+                        {position.side.toUpperCase()} - {position.remainingLots.toFixed(lotPrecision)} lot @{position.weightedEntryPrice.toFixed(pricePrecision)} -{' '}
+                      </span>
+                      <span
+                        className="px-1"
+                        title={`USD unrealized P&L ${position.unrealizedPnlUsd == null ? 'unavailable' : usd.format(position.unrealizedPnlUsd)}`}
+                      >
+                        P&amp;L {formatPositionPnlInInstrumentUnits(
+                          position,
+                          markPrice === undefined ? currentClose : markPrice,
+                          pipSize,
+                          pricePrecision,
+                          priceUnitLabel,
+                        )}
+                      </span>
+                      <button type="button" className="cursor-pointer rounded border border-white/70 bg-slate-950/80 px-1.5 py-0.5 font-bold leading-none text-white shadow-sm hover:bg-slate-700 focus-visible:outline focus-visible:outline-1 focus-visible:outline-white disabled:cursor-not-allowed disabled:opacity-40" aria-label={`Move stop to break-even for position ${position.id}`} title="Move stop to entry" disabled={!beAllowed || disabled} onClick={() => onBreakEven(position.id, position.weightedEntryPrice)}>BE</button>
+                      <button type="button" className="cursor-pointer rounded border border-rose-200 bg-rose-700 px-1.5 py-0.5 font-bold leading-none text-white shadow-sm hover:bg-rose-600 focus-visible:outline focus-visible:outline-1 focus-visible:outline-white disabled:cursor-not-allowed disabled:opacity-40" aria-label={`Close position ${position.id}`} title="Close this position" disabled={disabled} onClick={() => onClose(position.id)}>X</button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
