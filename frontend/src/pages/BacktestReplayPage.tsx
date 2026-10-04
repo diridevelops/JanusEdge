@@ -68,6 +68,7 @@ function ignoreRejectedMutation(promise: Promise<unknown>): void {
 /** Fetch the selected ready run; preparing runs remain on the run-list route. */
 export function BacktestReplayPage() {
   const { runId } = useParams<{ runId: string }>();
+  const { isReplayMaximized } = useOutletContext<AppLayoutOutletContext>();
   const [run, setRun] = useState<BacktestRunDetail | null>(null);
   const [dismissedCacheNoticeKey, setDismissedCacheNoticeKey] = useState<
     string | null
@@ -337,7 +338,7 @@ export function BacktestReplayPage() {
     : null;
 
   return (
-    <div className="space-y-3">
+    <div className={isReplayMaximized ? 'flex h-full min-h-0 flex-col space-y-3 overflow-hidden' : 'space-y-3'}>
       {cacheNoticeKey && dismissedCacheNoticeKey !== cacheNoticeKey && (
         <div className="flex items-start justify-between gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200">
           <p role="status">
@@ -859,7 +860,7 @@ function BacktestReplayWorkspaceRun({
   return (
     <div
       className={isReplayMaximized
-        ? 'backtest-candlekit backtest-replay-maximized flex h-full min-h-0 w-full max-w-none flex-col overflow-hidden'
+        ? 'backtest-candlekit backtest-replay-maximized flex min-h-0 w-full max-w-none flex-1 flex-col overflow-hidden'
         : 'backtest-candlekit mx-auto max-w-[1800px] space-y-4'}
       style={chartOverlayStyle}
     >

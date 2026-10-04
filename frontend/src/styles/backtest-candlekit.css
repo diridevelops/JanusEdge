@@ -838,6 +838,7 @@
   min-height: 0;
   flex: 1;
   grid-template-columns: minmax(0, 1fr) clamp(240px, 30vw, 350px);
+  grid-template-rows: minmax(0, 1fr);
   align-items: stretch;
   overflow: hidden;
 }
@@ -845,6 +846,12 @@
 .backtest-simulation-layout-maximized .backtest-simulation-chart-column,
 .backtest-simulation-layout-maximized .backtest-simulation-sidebar {
   min-height: 0;
+}
+
+.backtest-simulation-layout-maximized .backtest-simulation-sidebar-content > .backtest-entry-panel {
+  height: auto;
+  min-height: 240px;
+  flex: 1 1 0%;
 }
 
 @media (min-width: 1280px) {
